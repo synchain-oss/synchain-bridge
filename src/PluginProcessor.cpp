@@ -107,19 +107,19 @@ void SynchainBridgeAudioProcessor::prepareToPlay(double sampleRate, int samplesP
     // Note: WebSocket server is started via the editor's "Start Bridge" button
     // (message thread), NOT here on the audio thread.
 
-    // 交织立体声 staging 改为单声道、容量 2*maxBlock floats（#169）：不依赖声道内存
+    // 交织立体声 staging 改为单声道、容量 2*maxBlock floats（Synchain issue 169）：不依赖声道内存
     // 连续性，且给 processBlock 的越界夹取一个稳定上界。
     mMaxBlockSamples = juce::jmax(0, samplesPerBlock);
     mWorkBuffer.setSize(1, 2 * mMaxBlockSamples, false, true, false);
 
-    // #168：预分配 SPSC ring 的定长 slot 池（数据源与 mWorkBuffer 同为交织 2*maxBlock）。
+    // Synchain issue 168：预分配 SPSC ring 的定长 slot 池（数据源与 mWorkBuffer 同为交织 2*maxBlock）。
     // 允许分配（JUCE 保证 prepareToPlay 与 processBlock 串行）；后台发送线程另绑 start()/stop()。
     mBridgeServer.prepareStreaming(mMaxBlockSamples, 32);
 }
 
 void SynchainBridgeAudioProcessor::releaseResources()
 {
-    // #168：释放 ring slot 池（受 mStreamMutex 保护，与后台发送线程互斥）。
+    // Synchain issue 168：释放 ring slot 池（受 mStreamMutex 保护，与后台发送线程互斥）。
     mBridgeServer.releaseStreaming();
 }
 
@@ -134,7 +134,7 @@ void SynchainBridgeAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer
     if (!mBridgeServer.isRunning())
         return; // standby: no metering, no send
 
-    // 防越界（#169）：宿主可能给出比 prepareToPlay 宣告更大的块（或在 prepare 前回调）。
+    // 防越界（Synchain issue 169）：宿主可能给出比 prepareToPlay 宣告更大的块（或在 prepare 前回调）。
     // 夹取到已预分配容量上界；绝不在音频线程重新分配。numChannels<=0 无有效声道 → 早退。
     jassert(numChannels > 0 && numSamples <= mMaxBlockSamples);
     numSamples = juce::jmin(numSamples, mMaxBlockSamples);
@@ -154,7 +154,7 @@ void SynchainBridgeAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer
     }
 
     // Meter reflects the post-gain (streamed) signal.
-    // #168：音频线程只做无锁零分配握把——原子发布电平 + push 进 SPSC ring；
+    // Synchain issue 168：音频线程只做无锁零分配握把——原子发布电平 + push 进 SPSC ring；
     // 组帧 / 加锁快照 / WS 发送全部移到后台发送线程。删除了原 getClientCount() 的锁与
     // sendMeterLevels/sendPcmPacket 的分配+锁+同步发送。发送门控由 pushMeter/pushPcm
     // 内部读 mAudioClientCount（原子）完成。
