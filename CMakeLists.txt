@@ -6,7 +6,10 @@ set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-project(SynchainBridgeVST VERSION 1.3.1)
+project(SynchainBridgeVST VERSION 1.4.0)
+
+# Export compile_commands.json for clangd / clang-tidy (08 §3.2)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 # --- JUCE Setup ---
 # Point this to your local JUCE installation, or use FetchContent
@@ -97,22 +100,22 @@ find_path(IXWEBSOCKET_INCLUDE_DIR ixwebsocket/IXWebSocketServer.h REQUIRED)
 
 # --- Source Files ---
 target_sources(SynchainBridgeVST PRIVATE
-  PluginProcessor.h
-  PluginProcessor.cpp
-  WebViewEditor.h
-  WebViewEditor.cpp
-  BridgeApi.h
-  VstBridgeServer.h
-  VstBridgeServer.cpp
-  AudioMeter.h
-  AudioMeter.cpp
-  WebSocketProtocol.h
-  WebSocketProtocol.cpp
+  src/PluginProcessor.h
+  src/PluginProcessor.cpp
+  src/WebViewEditor.h
+  src/WebViewEditor.cpp
+  src/BridgeApi.h
+  src/VstBridgeServer.h
+  src/VstBridgeServer.cpp
+  src/AudioMeter.h
+  src/AudioMeter.cpp
+  src/WebSocketProtocol.h
+  src/WebSocketProtocol.cpp
 )
 
 # --- Include Directories ---
 target_include_directories(SynchainBridgeVST PRIVATE
-  ${CMAKE_CURRENT_SOURCE_DIR}
+  ${CMAKE_CURRENT_SOURCE_DIR}/src
   ${IXWEBSOCKET_INCLUDE_DIR}
 )
 
