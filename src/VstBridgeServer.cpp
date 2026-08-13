@@ -13,7 +13,7 @@ namespace synchain
 namespace
 {
 // CSWSH 防护：只放行 Synchain 自己确切的来源，阻止用户浏览器里的任意第三方站点
-// 静默连上本地端口偷 DAW 母线实时 PCM。白名单（#167）：
+// 静默连上本地端口偷 DAW 母线实时 PCM。白名单（Synchain issue 167）：
 //   - localhost / 127.0.0.1 / [::1]（本地开发/预览，任意 scheme/端口）
 //   - https://synchain.cn|.ca 、https://www.synchain.cn|.ca 、https://dev.synchain.cn|.ca（精确 host）
 //   - https://synchain-git-<branch>-dl-snows-projects.vercel.app（Vercel 预览，
@@ -113,7 +113,7 @@ int VstBridgeServer::start(int port)
             mServer->start();
             mRunning = true;
             mPort = tryPort;
-            // 后台线程生命周期绑 start()/stop()（#168/#170）：mServer 就绪后再起线程；
+            // 后台线程生命周期绑 start()/stop()（Synchain issue 168/Synchain issue 170）：mServer 就绪后再起线程；
             // stop() 里先 join 再 reset(mServer) —— 反复 start/stop 都干净重建，杜绝对
             // mServer 的 use-after-free / data race。slot 池预分配另在 prepareStreaming。
             startSenderThread();
@@ -134,7 +134,7 @@ void VstBridgeServer::stop()
 
     mRunning = false;
 
-    // 关键顺序（#168/#170）：后台发送/心跳线程会解引用 mServer（getClients/sendBinary/
+    // 关键顺序（Synchain issue 168/Synchain issue 170）：后台发送/心跳线程会解引用 mServer（getClients/sendBinary/
     // send/close），必须在 mServer.reset() 之前先停并 join 它们，否则并发访问已析构的
     // mServer → UAF/data race（编辑器 Stop Bridge 走 message 线程，与后台线程并发）。
     stopSenderThread();
@@ -178,7 +178,7 @@ void VstBridgeServer::onClientMessage(std::shared_ptr<ix::ConnectionState> /*con
             client.close(4403, "origin not allowed");
             return;
         }
-        // 通过 origin 校验：登记心跳时间戳 + 递增音频发送门控计数（#168/#170）。
+        // 通过 origin 校验：登记心跳时间戳 + 递增音频发送门控计数（Synchain issue 168/Synchain issue 170）。
         // 计数漂移由心跳线程用 getClients().size() 周期校正兜底。
         {
             std::lock_guard<std::mutex> lock(mClientsMutex);
@@ -237,7 +237,7 @@ void VstBridgeServer::onClientMessage(std::shared_ptr<ix::ConnectionState> /*con
             break;
         }
         case MessageType::Pong: {
-            // #170：更新该连接的最后 pong 时刻，供心跳线程判定存活。
+            // Synchain issue 170：更新该连接的最后 pong 时刻，供心跳线程判定存活。
             std::lock_guard<std::mutex> lock(mClientsMutex);
             auto pit = mLastPongMs.find(&client);
             if (pit != mLastPongMs.end())
@@ -346,7 +346,7 @@ void VstBridgeServer::sendError(const juce::String& code, const juce::String& me
 }
 
 // =============================================================================
-// #168 实时安全 PCM/电平交接
+// Synchain issue 168 实时安全 PCM/电平交接
 // =============================================================================
 
 void VstBridgeServer::prepareStreaming(int maxBlockSize, int numSlots)
@@ -514,7 +514,7 @@ void VstBridgeServer::senderThreadRun()
 }
 
 // =============================================================================
-// #170 服务端应用层心跳（独立线程）
+// Synchain issue 170 服务端应用层心跳（独立线程）
 // =============================================================================
 
 void VstBridgeServer::startHeartbeatThread()
@@ -584,7 +584,7 @@ void VstBridgeServer::heartbeatThreadRun()
             }
         }
 
-        // 用真实连接数校正音频发送门控（#168 计数漂移兜底）。
+        // 用真实连接数校正音频发送门控（Synchain issue 168 计数漂移兜底）。
         mAudioClientCount.store(liveCount, std::memory_order_relaxed);
 
         // 组一次 ping 帧，锁外发送 / 关连接（用 shared_ptr 副本，对象保活）。

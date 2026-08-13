@@ -1,7 +1,6 @@
 # Synchain Bridge — 桥接契约（冻结）
 
-> 本文件是 VST 插件条线的**接口契约**，由 P0（`feat/vst-bridge-contract`）冻结。
-> P1/P2a/P2b/P3 各子支线必须严格遵守；如需改动契约，先在主支线更新本文件 + `BridgeApi.h` + `web/bridge.js` 并知会所有子支线。
+> 本文件是插件端与 Synchain 网页客户端之间的**接口契约真源**；改动流程见 §五。
 > C++ 常量真源见 `BridgeApi.h`。
 
 插件里存在**两条独立的桥**，切勿混淆：
@@ -11,7 +10,7 @@
 | 作用 | 驱动插件窗口 UI（本地进程内） | 把 DAW 音频推流给外部 Creative Space 浏览器客户端 |
 | 传输 | JUCE 原生集成 `window.__JUCE__`（`withNativeFunction` / `emitEvent`） | 本地 WebSocket（ixwebsocket，`127.0.0.1`） |
 | 数据源 | processor 原子量（电平/状态**不走 WebSocket**） | PCM 二进制帧 + JSON |
-| 契约方 | `WebViewEditor.cpp` ↔ `web/bridge.js` | `VstBridgeServer.cpp` ↔ `lib/vst-bridge.ts` |
+| 契约方 | `WebViewEditor.cpp` ↔ `web/bridge.js` | `VstBridgeServer.cpp` ↔ Synchain 网页应用（闭源） |
 
 ---
 
@@ -51,7 +50,7 @@
 
 ---
 
-## 二、桥 #2：WS 浏览器协议不变量（改动后必须仍满足 `lib/vst-bridge.ts`）
+## 二、桥 #2：WS 浏览器协议不变量（改动后必须仍满足 Synchain 网页应用的 WS 客户端实现）
 
 本次所有插件改动**只增不改**协议，对浏览器客户端零破坏。
 
@@ -68,10 +67,10 @@
 6. `settings`：`{type:"settings", sampleRate:int, bufferSize:int, channels:int, opusBitrate:int}` 四字段**名字/类型不变**；**新增 `latencyMs:number` 为可选附加字段**（旧客户端 `??` 兜底忽略）。
 7. `handshake`：`{type:"handshake", projectId, userId, username}`。
 8. `ping`/`pong`：plugin 发 `{type:"ping", timestamp}`，browser 回 `{type:"pong", timestamp}`。
-   - **心跳时序（#170，非 wire 破坏——仅把已冻结的 ping/pong 契约真正实现）**：服务端独立线程每 ~5s 向每个连接发 `ping` 并跟踪 per-client 最后 `pong` 时刻；距上次 `pong` 超 ~12s（有效 ~15s，两个 ping 周期）则 `close(4408,"heartbeat timeout")`。web 侧在**观测到至少一次服务端 ping 后**启动「入站静默」监测：入站帧沉默 >20s 判定半开 → 主动 `ws.close()` 触发既有有界重连。能力探测（先见 ping 再启监测）确保「新 web + 旧插件（不发 ping）」在 DAW 空闲时不会误重连。阈值均为常量、无 wire 变更，旧客户端（已能被动应答 ping）保持兼容。
+   - **心跳时序（Synchain issue 170，非 wire 破坏——仅把已冻结的 ping/pong 契约真正实现）**：服务端独立线程每 ~5s 向每个连接发 `ping` 并跟踪 per-client 最后 `pong` 时刻；距上次 `pong` 超 ~12s（有效 ~15s，两个 ping 周期）则 `close(4408,"heartbeat timeout")`。web 侧在**观测到至少一次服务端 ping 后**启动「入站静默」监测：入站帧沉默 >20s 判定半开 → 主动 `ws.close()` 触发既有有界重连。能力探测（先见 ping 再启监测）确保「新 web + 旧插件（不发 ping）」在 DAW 空闲时不会误重连。阈值均为常量、无 wire 变更，旧客户端（已能被动应答 ping）保持兼容。
 9. server 只绑 `127.0.0.1`，尝试 `base..base+9`，UI 显示实际绑定端口。
 
-> **PCM 投递语义（#168）**：为把 WS 发送移出音频线程（实时安全），PCM 现由后台发送线程经 SPSC ring 转投，属**解耦的 best-effort**——慢/停滞客户端下背压时服务端**丢最新帧**（计入 `droppedPacketCount`）而非阻塞音频回调，并增加 ring 深度 + ≤5ms 轮询的少量投递延迟。帧字节格式完全不变，web 端无需改动。
+> **PCM 投递语义（Synchain issue 168）**：为把 WS 发送移出音频线程（实时安全），PCM 现由后台发送线程经 SPSC ring 转投，属**解耦的 best-effort**——慢/停滞客户端下背压时服务端**丢最新帧**（计入 `droppedPacketCount`）而非阻塞音频回调，并增加 ring 深度 + ≤5ms 轮询的少量投递延迟。帧字节格式完全不变，web 端无需改动。
 
 > 注意：`settings.channels` = 展示用真实输入声道；**PCM 帧头 channels 恒为 2**（mono 时复制右声道）。二者语义不同，勿混用。
 
@@ -91,10 +90,10 @@
 | C++ namespace | `synchain` |
 | 产物 | `Synchain Bridge.vst3` |
 
-> ⚠️ 改厂商码/插件码 → 新 VST3 唯一 ID，DAW 视为**全新插件**（旧 SonicBridge 工程不自动映射）。README 需注明。
+> ⚠️ 改厂商码/插件码 → 新 VST3 唯一 ID，DAW 视为**全新插件**（旧工程不自动映射）。README 需注明。
 
 ---
 
 ## 四、默认端口取舍：9420
 
-设计稿显示 8765，但现有 web 契约三处锁死 9420（`lib/store/vst.ts` `preferredPort`、`mock-vst-server.ts` `PORT`、`VstConnectionPanel.tsx` placeholder）。**采纳默认 9420**：把设计 HTML 转 `web/index.html` 时，两处纯展示默认值 8765→9420（零协议风险）。
+设计稿显示 8765，但现有 web 契约三处锁死 9420（`preferredPort`、mock server 的 `PORT`、连接面板 placeholder，均位于网页侧闭源仓库）。**采纳默认 9420**：把设计 HTML 转 `web/index.html` 时，两处纯展示默认值 8765→9420（零协议风险）。

@@ -9,7 +9,7 @@
 //   • JuceBackend    —— 插件内运行（检测到 window.__JUCE__），走 JUCE 原生集成
 //   • WsPreviewBackend —— 纯浏览器预览（无 __JUCE__），直连 mock server(ws://localhost:9420)
 //
-// UI（web/index.html + i18n.js，由 P2b 实现）只依赖本文件导出的 createBridge()，
+// UI（web/index.html + i18n.js）只依赖本文件导出的 createBridge()，
 // 不直接碰 window.__JUCE__ 或 WebSocket。事件名/函数名严格对应 BridgeApi.h / BRIDGE_CONTRACT.md。
 // =============================================================================
 

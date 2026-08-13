@@ -55,7 +55,7 @@ public:
     void sendPcmPacket(const float* interleaved, int numSamples, int sampleRate, int channels);
 
     // -------------------------------------------------------------------------
-    // #168 实时安全 PCM/电平交接：音频线程(processBlock)只做「无锁、零分配」的握把，
+    // Synchain issue 168 实时安全 PCM/电平交接：音频线程(processBlock)只做「无锁、零分配」的握把，
     // 把 PCM/电平交给后台发送线程。AbstractFifo(SPSC) + 预分配定长 slot 池。
     //
     //   prepareStreaming / releaseStreaming —— 在 prepareToPlay / releaseResources 调用
@@ -90,7 +90,7 @@ private:
     std::atomic<int> mPort{-1};
     mutable std::mutex mClientsMutex;
 
-    // --- #168：无锁 SPSC PCM ring + 后台发送线程 -----------------------------
+    // --- Synchain issue 168：无锁 SPSC PCM ring + 后台发送线程 -----------------------------
     struct PcmSlot
     {
         int sampleRate = 0;
@@ -120,7 +120,7 @@ private:
     void startSenderThread();
     void stopSenderThread();
 
-    // --- #170：服务端应用层心跳（独立线程，绝不进音频线程）-------------------
+    // --- Synchain issue 170：服务端应用层心跳（独立线程，绝不进音频线程）-------------------
     std::thread mHeartbeat;
     std::atomic<bool> mHeartbeatRunning{false};
     juce::WaitableEvent mHeartbeatWake;

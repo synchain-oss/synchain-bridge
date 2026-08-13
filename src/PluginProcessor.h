@@ -123,7 +123,7 @@ private:
 
     // 交织立体声 staging：单声道缓冲，容量 = 2*mMaxBlockSamples 个 float
     // （work[2i]=L, work[2i+1]=R）。不依赖 JUCE 多声道内存连续布局；processBlock 按
-    // mMaxBlockSamples 夹取 numSamples，2*numSamples 恒不越界（#169）。
+    // mMaxBlockSamples 夹取 numSamples，2*numSamples 恒不越界（Synchain issue 169）。
     juce::AudioBuffer<float> mWorkBuffer;
     int mMaxBlockSamples = 0; // prepareToPlay 宣告的块上界，processBlock 越界夹取用
 
