@@ -1,0 +1,6 @@
+# 默认 owner(12 §1.8)。当前仅自动 request review;分支保护未开 required reviews,不构成强制门槛。
+*                       @DLsnows
+
+# 冻结契约文档(12 §1.8 单列;B02 卡面:BRIDGE_CONTRACT.md 与 BridgeApi.h 需 owner 审)
+/BRIDGE_CONTRACT.md     @DLsnows
+/BridgeApi.h            @DLsnows

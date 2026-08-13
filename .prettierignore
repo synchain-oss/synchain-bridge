@@ -1,0 +1,6 @@
+web/js/juce/      # JUCE 官方 helper(第三方代码),不归本项目格式化
+web/fonts/        # .woff2 二进制,prettier 无 parser 会报错
+build/
+dist/
+node_modules/
+*.min.js
