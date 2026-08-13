@@ -1,0 +1,11 @@
+build/
+*.xcodeproj/
+*.sln
+*.vcxproj*
+*.user
+CMakeUserPresets.json
+*.vst3/
+*.component/
+*.dll
+*.so
+*.dylib
