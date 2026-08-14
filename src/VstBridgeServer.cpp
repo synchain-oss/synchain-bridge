@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+#include "BridgeApi.h"
 #include "VstBridgeServer.h"
 #include "WebSocketProtocol.h"
 #include <cctype> // std::tolower
@@ -276,6 +277,9 @@ void VstBridgeServer::sendStatus(bool connected, const juce::String& pluginName,
                                  int volumePct)
 {
     Protocol::StatusMessage msg{connected, pluginName, version, volumePct};
+    // status 帧新增可选字段 contract：上报协议版本（独立于插件 version），值取自唯一真源
+    // synchain::contract::ContractVersion（BridgeApi.h）。旧客户端 `??` 兜底忽略，只增不改。
+    msg.contract = contract::ContractVersion;
     broadcast(Protocol::serialize(msg.toJson()));
 }
 

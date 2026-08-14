@@ -1,7 +1,8 @@
 # Synchain Bridge — 桥接契约（冻结）
 
+> 协议版本：**2.0**（独立于插件版本，semver；变更分级与流程见 §五）
 > 本文件是插件端与 Synchain 网页客户端之间的**接口契约真源**；改动流程见 §五。
-> C++ 常量真源见 `BridgeApi.h`。
+> C++ 常量真源见 `BridgeApi.h`（`synchain::contract::ContractVersion`）；wire 上报见 status 帧可选字段 `contract`。
 
 插件里存在**两条独立的桥**，切勿混淆：
 
@@ -60,7 +61,7 @@
    - plugin→browser：`status` / `meter` / `settings` / `volume` / `error` / `ping`
    - browser→plugin：`handshake` / `get_settings` / `set_settings` / `set_volume` / `pong`
    （`get_settings`/`set_settings`/`set_volume` 等名字不可改）
-4. `status`：`{type:"status", connected:bool, pluginName:string, version:string, volume:int(0..200)}`。客户端收到即置 connected、回请 settings，并按 `volume` 初始化 DAW 音量条与插件同步（`volume` 为 v1.2.8 新增可选字段，旧客户端 `??` 兜底忽略）。
+4. `status`：`{type:"status", connected:bool, pluginName:string, version:string, volume:int(0..200), contract:string}`。客户端收到即置 connected、回请 settings，并按 `volume` 初始化 DAW 音量条与插件同步（`volume` 为 v1.2.8 新增可选字段；`contract` 为协议版本号 `"2.0"`、独立于插件 `version`。两者均为只增不改，旧客户端 `??` 兜底忽略）。
    - `set_volume`（browser→plugin，v1.2.8）：`{type:"set_volume", volume:int(0..200)}`。让**网页 DAW 音量条直接控制 VST 主控音量参数**（`masterGain`）：clamp[0,200]，作用于推流 PCM（同时电平表随之变化，因计量的是增益后 PCM）。浏览器侧不再施加 GainNode 增益（避免双重增益）。**应用路径（v1.2.10 修）**：回调在 WS 线程只存原子（`requestWebVolume`），由 message 线程的 Timer `consumePendingWebVolume`+`setVolumePct`——取代 v1.2.9 的 `MessageManager::callAsync`（实测某些宿主不可靠执行、致网页调音量对插件无效）。**双 Timer 消费**：编辑器 Timer（打开时）+ Processor 自身 Timer（覆盖编辑器关闭场景），经原子 exchange 双消费安全。
    - `volume`（plugin→browser，v1.2.9）：`{type:"volume", volume:int(0..200)}`。插件 UI/宿主改主控音量时，插件经编辑器 Timer 检测变化并广播此帧，网页据此**实时更新** DAW 音量条显示（不再需重连才同步）。**单向显示语义**：网页收到只 `setVstVolume`、**不回送** `set_volume`；仅用户拖网页滑杆才 `set_volume` → 避免回环/双向拖动打架（v1.2.9 双向实时同步）。
 5. `meter`：`{type:"meter", left:number, right:number, peak:number}`（dBFS，约 -60..0，容忍 `-Infinity`）。
@@ -82,7 +83,8 @@
 |---|---|
 | PRODUCT_NAME | `Synchain Bridge` |
 | COMPANY_NAME | `Synchain` |
-| VERSION | `1.3.1`（单一真源：`CMakeLists.txt` `project(VERSION)` → `JucePlugin_VersionString`；status 上报与插件 WebView UI 统一取此宏，`BridgeApi.h` 不再手写版本常量） |
+| VERSION | `1.4.0`（单一真源：`CMakeLists.txt` `project(VERSION)` → `JucePlugin_VersionString`；status 上报与插件 WebView UI 统一取此宏，`BridgeApi.h` 不再手写版本常量） |
+| BRIDGE_CONTRACT_VERSION | `2.0`（单一真源：`BridgeApi.h` `synchain::contract::ContractVersion`；独立于插件 VERSION，semver；status 帧可选字段 `contract` 上报；变更分级见 §五） |
 | BUNDLE_ID | `com.synchain.bridge` |
 | PLUGIN_MANUFACTURER_CODE | `Snch` |
 | PLUGIN_CODE | `Snb1` |
@@ -97,3 +99,21 @@
 ## 四、默认端口取舍：9420
 
 设计稿显示 8765，但现有 web 契约三处锁死 9420（`preferredPort`、mock server 的 `PORT`、连接面板 placeholder，均位于网页侧闭源仓库）。**采纳默认 9420**：把设计 HTML 转 `web/index.html` 时，两处纯展示默认值 8765→9420（零协议风险）。
+
+---
+
+## 五、协议版本与变更流程（patch / minor / major 三级）
+
+**协议版本号**：`2.0`，semver，**独立于插件版本**（插件 `VERSION` 是给 DAW / 用户看的兼容性信号，协议版本是给两端实现的 wire 兼容性信号）。三处必须一致：`BridgeApi.h` `synchain::contract::ContractVersion` = 本文件头部「协议版本」行 = status 帧可选字段 `contract`。
+
+**起点为什么是 2.0**：1.x 语义留给「抽取前的未版本化历史」，避免与插件版本号 1.3.1（及更早）混淆。
+
+| 级别 | 定义 | 流程 |
+|---|---|---|
+| **patch** | 纯文档澄清，wire 零变化 | Bridge 仓单仓 PR 即可 |
+| **minor** | 只增可选字段 / 新增消息类型（旧客户端忽略即可正常工作） | Bridge 仓 PR 合并 → 主仓开跟进 issue，可异步落地；插件先发布不破坏线上 |
+| **major** | 改字段名/类型/字节布局/删消息/改必填语义 | **禁止直接做**。必须：①先在 Bridge 仓提 RFC PR（只改 `BRIDGE_CONTRACT.md`）②主仓同步 PR 实现新旧双读 ③两侧都上线后 Bridge 才移除旧路径。兼容窗口 ≥1 个插件 minor 版本 |
+
+**机器护栏**：PR 若改动 `BRIDGE_CONTRACT.md`、`src/WebSocketProtocol.*`、`src/VstBridgeServer.*`、`src/BridgeApi.h` 任一，`.github/workflows/contract-guard.yml` 会要求 PR body 含一行 `contract-impact: none|minor|major`，缺则 fail。该字段由作者显式声明本次改动的协议影响级别。
+
+**每次协议变更还必须**：① 写兼容性说明（旧客户端遇到新插件、新客户端遇到旧插件各自的行为）；② 在本仓 `CHANGELOG.md` 的「契约变更」小节记录；③ 在 PR 描述里 @ 主仓维护者同步（本仓为公开仓，另一端为闭源 Synchain 网页应用）。
