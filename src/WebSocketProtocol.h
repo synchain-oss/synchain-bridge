@@ -51,6 +51,9 @@ struct StatusMessage
     juce::String pluginName;
     juce::String version;
     int volume = 100; // 当前主控音量（0..200 pct），网页据此初始化 DAW 音量条与插件同步
+    // 桥接契约协议版本（可选字段，只增不改；值来自 BridgeApi.h synchain::contract::ContractVersion）。
+    // 旧 web 客户端读取已知字段、未知字段 `??` 兜底忽略，因此新增此字段零破坏。
+    juce::String contract;
 
     juce::var toJson() const;
 };
