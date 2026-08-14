@@ -1,0 +1,148 @@
+name: Build & Validate
+
+on:
+  pull_request:
+    branches: [dev]
+    types: [opened, synchronize, reopened, ready_for_review]
+  push:
+    branches: [dev, 'feature/**']
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-validate:
+    name: build-and-validate
+    runs-on: windows-2022
+    timeout-minutes: 60
+    env:
+      WEBVIEW2_NUGET_VERSION: '1.0.2957.106'
+    steps:
+      - uses: actions/checkout@v4
+
+      # 0) 版本单一真源:JUCE / pluginval 版本只存在于仓库根 .juce-version / .pluginval-version(12 §6.3)。
+      #    同时算出 artifact 名用的 ref slug —— feature/extraction 含 '/',upload-artifact@v4 拒绝含 '/' 的名(06 §6.3)。
+      - name: Resolve pinned versions & ref slug
+        shell: pwsh
+        run: |
+          $juce = (Get-Content .juce-version -Raw).Trim()
+          $pv   = (Get-Content .pluginval-version -Raw).Trim()
+          if (-not $juce -or -not $pv) { Write-Error "empty .juce-version / .pluginval-version"; exit 1 }
+          "JUCE_TAG=$juce"      | Out-File $env:GITHUB_ENV -Append
+          "PLUGINVAL_TAG=$pv"   | Out-File $env:GITHUB_ENV -Append
+          $slug = "${{ github.ref_name }}" -replace '[/\\]','-'
+          "REF_SLUG=$slug"      | Out-File $env:GITHUB_ENV -Append
+
+      # 1) JUCE:浅克隆锁 tag(不用 FetchContent,避免上游漂移让 CI 突然红)
+      - name: Clone JUCE (shallow, pinned)
+        run: git clone --depth 1 --branch $env:JUCE_TAG https://github.com/juce-framework/JUCE.git "${{ github.workspace }}/JUCE"
+
+      # 2) vcpkg 静态 triplet;Bridge 真的用 WebSocket → 保留 ixwebsocket(08 §5.3 / 06 §4.1 ④)
+      - name: Setup vcpkg
+        run: |
+          echo "VCPKG_ROOT=$env:VCPKG_INSTALLATION_ROOT" >> $env:GITHUB_ENV
+          echo "VCPKG_DEFAULT_TRIPLET=x64-windows-static" >> $env:GITHUB_ENV
+
+      - name: Install dependencies (static)
+        run: |
+          vcpkg install --triplet x64-windows-static ixwebsocket
+
+      # 3) WebView2 Evergreen Runtime(windows-2022 是无桌面 Server,自带 Runtime 不保证)
+      - name: Ensure WebView2 Runtime (Evergreen)
+        shell: pwsh
+        run: |
+          $exe = "$env:RUNNER_TEMP\MicrosoftEdgeWebView2Setup.exe"
+          Invoke-WebRequest "https://go.microsoft.com/fwlink/p/?LinkId=2124703" -OutFile $exe
+          Start-Process -FilePath $exe -ArgumentList "/silent","/install" -Wait
+          echo "WEBVIEW2_USER_DATA_FOLDER=$env:RUNNER_TEMP\wv2ud" >> $env:GITHUB_ENV
+
+      # 4) 缓存 WebView2 NuGet 包(CMake 配置期拉到 build/packages)
+      - name: Cache WebView2 NuGet package
+        uses: actions/cache@v4
+        with:
+          path: build/packages
+          key: webview2-nuget-${{ env.WEBVIEW2_NUGET_VERSION }}
+
+      # 5) Configure
+      - name: Configure CMake
+        shell: pwsh
+        run: |
+          if (Test-Path build) { Get-ChildItem build -Exclude packages | Remove-Item -Recurse -Force }
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DJUCE_PATH="${{ github.workspace }}/JUCE" -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x64-windows-static
+
+      # 5b) Build + 零 warning 断言(/W4 门在 CI 侧的机器强制,06 §4.1 ⑧)
+      - name: Build (fail on any MSVC warning)
+        shell: pwsh
+        run: |
+          cmake --build build --config Release --parallel 2>&1 | Tee-Object -FilePath build.log
+          if ($LASTEXITCODE -ne 0) { Write-Error "build failed"; exit 1 }
+          $w = Select-String -Path build.log -Pattern '\swarning\s+C\d{4}' | Where-Object { $_.Line -notmatch '[\\/](JUCE|vcpkg|_deps)[\\/]' }
+          if ($w.Count -gt 0) {
+            $w | ForEach-Object { Write-Host "::error::$($_.Line)" }
+            Write-Error "MSVC warnings: $($w.Count); /W4 requires zero warnings"; exit 1
+          }
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: SynchainBridge-build-log-${{ github.sha }}
+          path: build.log
+          retention-days: 7
+
+      # 6) pluginval strictness 5 --skip-gui-tests(无头 runner 上 WebView2 editor 会崩)
+      - name: Download pluginval
+        shell: pwsh
+        run: |
+          Invoke-WebRequest "https://github.com/Tracktion/pluginval/releases/download/$env:PLUGINVAL_TAG/pluginval_Windows.zip" -OutFile pluginval.zip
+          Expand-Archive pluginval.zip -DestinationPath pluginval
+
+      - name: Validate VST3
+        shell: pwsh
+        run: |
+          $vst3 = Get-ChildItem -Path build -Recurse -Filter "*.vst3" -Directory | Select-Object -First 1
+          if (-not $vst3) { Write-Error "No VST3 bundle found under build"; exit 1 }
+          Write-Host "::group::pluginval $($vst3.Name)"
+          & ./pluginval/pluginval.exe --strictness-level 5 --timeout-ms 60000 --skip-gui-tests --output-dir "$env:RUNNER_TEMP/pluginval-logs" "$($vst3.FullName)" 2>&1 | Out-Host
+          $code = $LASTEXITCODE
+          Write-Host "::endgroup::"
+          if ($code -ne 0) { Write-Error "pluginval failed for $($vst3.Name) (exit $code)"; exit 1 }
+          Write-Host "Non-GUI strictness-5 passed; full GUI validation is a LOCAL gate."
+
+      # 7) artifact(命名/保留策略见 06 §6.3;一律用 REF_SLUG,不用 github.ref_name)
+      - name: Upload VST3 (PR)
+        if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: SynchainBridge-VST3-win64-pr${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}
+          path: build/**/*.vst3
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload VST3 (dev snapshot)
+        if: github.event_name == 'push' && github.ref_name == 'dev'
+        uses: actions/upload-artifact@v4
+        with:
+          name: SynchainBridge-VST3-win64-dev-${{ github.sha }}
+          path: build/**/*.vst3
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload VST3 (preview / feature mainline)
+        if: github.event_name == 'push' && github.ref_name != 'dev'
+        uses: actions/upload-artifact@v4
+        with:
+          name: SynchainBridge-VST3-win64-preview-${{ env.REF_SLUG }}-${{ github.sha }}
+          path: build/**/*.vst3
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload pluginval logs (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: SynchainBridge-pluginval-logs-${{ github.sha }}
+          path: ${{ runner.temp }}/pluginval-logs
+          retention-days: 7
+          if-no-files-found: ignore
