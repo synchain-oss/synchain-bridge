@@ -1,0 +1,7 @@
+# 统一文本文件行尾为 LF。
+# 背景:Windows 默认 core.autocrlf=true 会把文本检出为 CRLF,而 prettier@3 默认
+# endOfLine=lf,导致本地 prettier --check 在干净检出上误报(与 ubuntu CI 的 LF 结果不一致)。
+* text=auto eol=lf
+
+# 二进制 web 资产(字体):不做任何行尾转换,避免 text=auto 误判。
+*.woff2 binary

@@ -43,7 +43,10 @@ const PORT_BASE = parseInt(process.argv[2] ?? process.env.PORT ?? "9420", 10);
 
 // ---------- 音频合成 ----------
 function envelope(t, lfoRate) {
-  return ENV_MIN + (ENV_MAX - ENV_MIN) * (0.5 + 0.5 * Math.sin(2 * Math.PI * lfoRate * t));
+  return (
+    ENV_MIN +
+    (ENV_MAX - ENV_MIN) * (0.5 + 0.5 * Math.sin(2 * Math.PI * lfoRate * t))
+  );
 }
 
 function peakDb(block, channel, channels) {
@@ -155,31 +158,39 @@ wss.on("connection", (ws) => {
 
 // ---------- 音频循环:每块生成 256 样本正弦并广播 PCM 帧;每 ~50ms 广播一次 meter ----------
 let lastMeterAt = 0;
-const audioTimer = setInterval(() => {
-  const t = sampleIndex / SAMPLE_RATE;
-  const samples = buildSineBlock({
-    sampleRate: SAMPLE_RATE,
-    channels: CHANNELS,
-    numSamples: BLOCK_SIZE,
-    startSample: sampleIndex,
-    freqL: FREQ_L,
-    freqR: FREQ_R,
-    gainL: envelope(t, ENV_LFO_L),
-    gainR: envelope(t, ENV_LFO_R),
-  });
-  sampleIndex += BLOCK_SIZE;
-  broadcastBinary(
-    buildPcmFrame({ sampleRate: SAMPLE_RATE, channels: CHANNELS, samples }),
-  );
+const audioTimer = setInterval(
+  () => {
+    const t = sampleIndex / SAMPLE_RATE;
+    const samples = buildSineBlock({
+      sampleRate: SAMPLE_RATE,
+      channels: CHANNELS,
+      numSamples: BLOCK_SIZE,
+      startSample: sampleIndex,
+      freqL: FREQ_L,
+      freqR: FREQ_R,
+      gainL: envelope(t, ENV_LFO_L),
+      gainR: envelope(t, ENV_LFO_R),
+    });
+    sampleIndex += BLOCK_SIZE;
+    broadcastBinary(
+      buildPcmFrame({ sampleRate: SAMPLE_RATE, channels: CHANNELS, samples }),
+    );
 
-  const now = Date.now();
-  if (now - lastMeterAt >= 50) {
-    lastMeterAt = now;
-    const left = peakDb(samples, 0, CHANNELS);
-    const right = CHANNELS > 1 ? peakDb(samples, 1, CHANNELS) : left;
-    broadcastJson({ type: "meter", left, right, peak: Math.max(left, right) });
-  }
-}, Math.max(1, BLOCK_MS));
+    const now = Date.now();
+    if (now - lastMeterAt >= 50) {
+      lastMeterAt = now;
+      const left = peakDb(samples, 0, CHANNELS);
+      const right = CHANNELS > 1 ? peakDb(samples, 1, CHANNELS) : left;
+      broadcastJson({
+        type: "meter",
+        left,
+        right,
+        peak: Math.max(left, right),
+      });
+    }
+  },
+  Math.max(1, BLOCK_MS),
+);
 
 // ---------- 心跳 ----------
 const heartbeatTimer = setInterval(() => {
