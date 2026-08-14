@@ -1,0 +1,15 @@
+{
+  "name": "synchain-bridge-web-preview",
+  "version": "1.4.0",
+  "private": true,
+  "description": "Synchain Bridge WebView UI preview: mock bridge #2 server + PCM frame builder + static http serve",
+  "scripts": {
+    "mock": "node mock-server.mjs",
+    "serve": "npx --yes serve ../web -l 5173",
+    "serve:python": "python -m http.server 5173 --directory ../web"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  },
+  "license": "GPL-3.0-or-later"
+}
