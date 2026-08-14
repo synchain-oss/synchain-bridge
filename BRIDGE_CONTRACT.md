@@ -117,3 +117,4 @@
 **机器护栏**：PR 若改动 `BRIDGE_CONTRACT.md`、`src/WebSocketProtocol.*`、`src/VstBridgeServer.*`、`src/BridgeApi.h` 任一，`.github/workflows/contract-guard.yml` 会要求 PR body 含一行 `contract-impact: none|minor|major`，缺则 fail。该字段由作者显式声明本次改动的协议影响级别。
 
 **每次协议变更还必须**：① 写兼容性说明（旧客户端遇到新插件、新客户端遇到旧插件各自的行为）；② 在本仓 `CHANGELOG.md` 的「契约变更」小节记录；③ 在 PR 描述里 @ 主仓维护者同步（本仓为公开仓，另一端为闭源 Synchain 网页应用）。
+<!-- contract-guard fail-direction test (will be closed) -->
