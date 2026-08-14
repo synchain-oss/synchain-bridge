@@ -85,3 +85,6 @@ Bridge 特有:PCM 发送由后台发送线程经 SPSC ring 转投(移出音频�
 - 版本号真源 = 顶层 `CMakeLists.txt` 的 `project(... VERSION)`;网页侧(闭源仓库)存在一份下游版本镜像,发版后必须同步。
 - tag 格式 `vX.Y.Z`(去掉 `vst-` 前缀);首个公开 tag = `v1.4.0`(U6)。
 - R2 固定 key 覆盖上传是否保留由 08 文档决策;本仓不默认启用。
+
+<!-- B07 negative child probe -->
+
