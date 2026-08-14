@@ -1,116 +1,141 @@
-# Synchain Bridge VST3
+**English** | [简体中文](README.zh-CN.md)
 
-把 DAW 音频通过本地 WebSocket 推流给 Synchain 网页端，让远端协作者实时高保真听到。UI 为 **JUCE 8 WebView**（玻璃拟态设计），Windows 走 WebView2。
+[![License: GPL-3.0-or-later](https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg)](LICENSE)
+![Platform: Windows x64 VST3](https://img.shields.io/badge/platform-Windows%20x64%20VST3-lightgrey.svg)
 
-## 音频管线
+# Synchain Bridge
+
+> Stream your DAW audio to remote collaborators in real time — the open-source plugin side of the Synchain real-time collaboration platform.
+
+## What it does
+
+Synchain Bridge is a **VST3 audio plugin** that captures a stereo bus from your DAW and streams it, losslessly as PCM, to remote collaborators over a local WebSocket:
 
 ```
-DAW → Synchain Bridge (PCM float32) → WebSocket(127.0.0.1) → 浏览器 → AudioWorklet → LiveKit Opus 编码 → 服务器
+DAW → Synchain Bridge (PCM float32) → WebSocket (127.0.0.1) → browser → AudioWorklet → LiveKit Opus → server
 ```
 
-- **缓冲块**：用 DAW 给的缓冲块大小，插件不额外累积，每块即发，穿透音频零附加延迟。
-- **主音量(0-200%)**：只作用于**推流给浏览器的副本**，不改动经过 DAW 轨道的声音。
-- **延迟显示**：`1000 × 缓冲块 / 采样率` ms，仅展示（不向 host 报告延迟）。
-- **编码**：Opus 编码在浏览器/LiveKit 侧，插件本身不编码。
+- **Zero added latency** — audio is sent block-by-block as the DAW delivers it, with no extra accumulation.
+- **Transparent passthrough** — the plugin never alters your DAW mix; a 0–200% master volume applies only to the streamed copy.
+- **Live meters** — L/R peak level (dBFS) reflects the streamed signal.
+- **Glassmorphism WebView UI** — localized in Chinese / English / French, with an editable local port (default `9420`).
 
-## 两条桥（架构）
+> **⚠️ This repository contains only the plugin side; the receiving side is a closed-source SaaS (the Synchain web application).** To actually use it you need a Synchain account and membership in a project — this repo is not a self-hostable server.
 
-- **桥 #1**：插件窗口 = WebView，经 JUCE 原生集成与 processor 通信（电平/状态进程内直取，不走 WebSocket）。
-- **桥 #2**：`VstBridgeServer`(ixwebsocket) ↔ 浏览器 WS 客户端（位于 Synchain 网页应用，闭源）。协议契约见 `BRIDGE_CONTRACT.md`。
+### Architecture: the two bridges
 
-## 前置依赖（本地构建）
+| | Bridge #1: editor WebView ↔ C++ | Bridge #2: VstBridgeServer ↔ browser |
+|---|---|---|
+| Purpose | Drives the plugin window UI (in-process) | Streams DAW audio to the browser client |
+| Transport | JUCE native integration (`window.__JUCE__`) | Local WebSocket (ixwebsocket, `127.0.0.1`) |
+| Data | Processor atomics (levels/state, not over WebSocket) | PCM binary frames + JSON |
+| Contract | `WebViewEditor.cpp` ↔ `web/bridge.js` | `VstBridgeServer.cpp` ↔ Synchain web app (closed source) |
 
-- **Visual Studio 2022**（含「使用 C++ 的桌面开发」，MSVC v143 + Windows SDK）——VS2019 BuildTools（v142，生成器改 `Visual Studio 16 2019`）亦可，已实测通过
+The wire protocol is specified in [`BRIDGE_CONTRACT.md`](BRIDGE_CONTRACT.md).
+
+## Screenshots
+
+Synchain Bridge uses a glassmorphism WebView UI (JUCE 8 WebView; WebView2 on Windows). Screenshots will be published with the first public release. The UI provides:
+
+- Language switcher (中文 / EN / FR), persisted
+- Status pill (online / offline, pulse dot) + connected client count
+- L/R stereo level meters (dBFS)
+- Sample rate / channels / latency readout
+- Editable local port (default `9420`)
+- Master volume slider 0–200% (stream only)
+- Start / stop streaming + version footer
+
+## Requirements
+
+- **Windows x64** with **Visual Studio 2022** (Desktop development with C++; MSVC v143 + Windows SDK). VS2019 BuildTools (v142) also works.
 - **CMake** ≥ 3.22
 - **JUCE 8.0.8** — https://github.com/juce-framework/JUCE
 - **vcpkg** + `ixwebsocket:x64-windows-static`
-- **NuGet CLI**（`nuget.exe` 在 PATH；CMake 配置期自动拉 `Microsoft.Web.WebView2`）
-- **WebView2 Runtime**（Windows 11 已内置；Win10 若无则装 Evergreen）
-- macOS：用系统 WKWebView，无需 NuGet / Runtime
+- **NuGet CLI** (`nuget.exe` on PATH; CMake fetches `Microsoft.Web.WebView2` at configure time)
+- **Microsoft Edge WebView2 Runtime** (preinstalled on Windows 11; on Windows 10 install the Evergreen runtime)
+- macOS: uses the system WKWebView; no NuGet / WebView2 runtime required.
 
-## 构建（Windows）
+## Install
+
+Grab a prebuilt Windows x64 build from [GitHub Releases](https://github.com/synchain-oss/synchain-bridge/releases) (`SynchainBridge-VST3-vX.Y.Z-win64.zip`, Release build validated with pluginval strictness 5), or build from source (below).
+
+The build produces (or the zip contains) `Synchain Bridge.vst3` — a **bundle directory**, not a single file. Install either way:
+
+- **System directory (admin)**: copy the whole `Synchain Bridge.vst3` folder to `C:\Program Files\Common Files\VST3\`
+  ```powershell
+  Copy-Item "<path>\Synchain Bridge.vst3" "C:\Program Files\Common Files\VST3\" -Recurse -Force
+  ```
+- **No admin**: put the `.vst3` anywhere and add that folder as a VST3 scan path in your DAW (Reaper: Options → Preferences → Plug-ins/VST → Add path → rescan).
+
+macOS: place the `.vst3` in `~/Library/Audio/Plug-Ins/VST3/`.
+
+The plugin uses dedicated manufacturer/plugin codes (`Snch` / `Snb1`), so DAWs see it as an independent plugin. Changing these codes would generate a new VST3 unique ID and orphan existing projects — never alter them.
+
+## Quick start
+
+1. Load **Synchain Bridge** on a stereo track in your DAW.
+2. Click **Start streaming** — the plugin starts a WebSocket server on `127.0.0.1:9420` (auto-retries `9420–9429` if busy).
+3. Open the Synchain web app, enter a project's Creative Space; if auto-connect fails, enter the port shown by the plugin into the DAW audio bridge panel.
+4. Audio is published to the LiveKit room for collaborators to hear.
+
+**Preview the UI without a DAW** — see `web-preview/` (a standalone mock server for bridge #2; no compile/DAW needed):
+
+```bash
+cd web-preview && npm install
+npm run mock          # starts a mock plugin on ws://localhost:9420 (sends binary PCM frames)
+npm run serve         # serves ../web over http (not file://; ES modules are blocked by CORS)
+```
+
+## Build from source
 
 ```powershell
-# 一次性准备
+# One-time setup
 git clone https://github.com/microsoft/vcpkg C:\dev\vcpkg
 C:\dev\vcpkg\bootstrap-vcpkg.bat
 C:\dev\vcpkg\vcpkg install ixwebsocket:x64-windows-static
 git clone --depth 1 --branch 8.0.8 https://github.com/juce-framework/JUCE C:\dev\JUCE
 
-# 配置 + 构建（在仓库根目录）
+# Configure + build (repo root)
 cmake -S . -B build -G "Visual Studio 17 2022" -A x64 `
   -DJUCE_PATH="C:/dev/JUCE" `
   -DCMAKE_TOOLCHAIN_FILE="C:/dev/vcpkg/scripts/buildsystems/vcpkg.cmake" `
   -DVCPKG_TARGET_TRIPLET=x64-windows-static
 cmake --build build --config Release
-# 产物: build/SynchainBridgeVST_artefacts/Release/VST3/Synchain Bridge.vst3
+# Artifact: build/SynchainBridgeVST_artefacts/Release/VST3/Synchain Bridge.vst3
 ```
 
-CMake 会在配置期用 `nuget` 把 `Microsoft.Web.WebView2` 拉到 `build/packages` 并链接静态 loader，无需手动装 SDK。
+At configure time CMake uses `nuget` to fetch `Microsoft.Web.WebView2` into `build/packages` and links the static loader — no manual SDK install needed.
 
-## 下载（预编译）
+CI (`.github/workflows/build-vst3.yml`, `windows-2022`) clones JUCE 8.0.8, installs ixwebsocket via vcpkg, installs the WebView2 Evergreen runtime, configures, builds, and runs pluginval `--skip-gui-tests` (strictness 5). The full strictness-5 run including the WebView2 editor is validated locally on real Windows 11 — a headless server runner cannot host the editor.
 
-不想自己编译可从 [GitHub Releases](https://github.com/synchain-oss/synchain-bridge/releases) 下载 Windows x64 预编译版
-（`SynchainBridge-VST3-vX.Y.Z-win64.zip`，Release 构建 + pluginval strictness 5 验证）。
+## Documentation
 
-## 安装 / 加载到 DAW
+- [`BRIDGE_CONTRACT.md`](BRIDGE_CONTRACT.md) — the wire protocol (bridge #1 + bridge #2), frozen contract.
+- [`docs/DAW_TEST_GUIDE.md`](docs/DAW_TEST_GUIDE.md) — end-to-end DAW test guide (Windows).
+- [`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md) — third-party license notices.
+- [`CHANGELOG.md`](CHANGELOG.md) — release history.
+- Build / release / web-client guides are being added under `docs/`.
 
-构建产物（或 Release 下载解压后的）`Synchain Bridge.vst3` 是一个 **bundle 目录**（不是单文件），二选一安装：
+## Contributing
 
-- **系统目录（需管理员）**：把整个 `Synchain Bridge.vst3` 文件夹拷到 `C:\Program Files\Common Files\VST3\`
-  ```powershell
-  Copy-Item "<产物路径>\Synchain Bridge.vst3" "C:\Program Files\Common Files\VST3\" -Recurse -Force
-  ```
-- **免管理员**：把 `.vst3` 放任意目录，在 DAW 里把该目录加为 VST3 扫描路径后重扫
-  （Reaper：选项 → 偏好 → 插件/VST → 添加路径 → 重新扫描）
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the developer workflow (DCO, branch model, local gates). All contributors are expected to follow the [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md). Security issues must be reported per [`SECURITY.md`](SECURITY.md) — never in a public issue.
 
-装好后在立体声轨插入 **Synchain Bridge**。插件用独立厂商码/插件码（`Snch` / `Snb1`），
-DAW 将其识别为独立插件。macOS 同理，`.vst3` 放 `~/Library/Audio/Plug-Ins/VST3/`。
+## License
 
-## 用法
+Synchain Bridge is released under the **GNU General Public License v3.0 or later** ([`LICENSE`](LICENSE)).
 
-1. 在 DAW 的立体声轨上加载 **Synchain Bridge**
-2. 点「开始传输」——插件在 `127.0.0.1:9420` 起 WebSocket 服务（占用时自动重试 9420-9429）
-3. 打开 Synchain 网页端进入项目的 Creative Space；若自动连接失败，把插件显示的端口填进浏览器的 DAW 音频桥面板
-4. 音频发布到 LiveKit 房间供协作者收听
+It builds on the **JUCE Framework**, dual-licensed under AGPLv3 and a commercial licence — this project uses the AGPLv3 option (https://github.com/juce-framework/JUCE/blob/master/LICENSE.md).
 
-## 插件 UI（WebView）
+VST is a trademark of Steinberg Media Technologies GmbH. The **VST3 SDK** is distributed under the MIT licence since November 2025.
 
-- 语言切换（中 / EN / FR），选择会持久化
-- 状态胶囊（在线/离线，脉冲点）+ 客户端数
-- L/R 立体声电平表（dBFS，反映推流后电平）
-- 采样率 / 声道 / 延迟
-- 本地端口（可编辑，默认 9420）
-- 主音量滑块 0-200%（只影响推流）
-- 开始/停止传输；底部版本号
+Complete corresponding source for every released binary is available in this repository.
 
-## 不装 DAW 的 UI/协议预览
+## Related projects
 
-见 `web-preview/`（可脱离 Next.js 独立验证桥 #2，含 mock server）：
+- [SCVB](https://github.com/synchain-oss/scvb) — the Synchain Creative Voice Balance plugins (input/output pair).
+- [Synchain CLI](https://github.com/synchain-oss/synchain-cli) — the command-line interface for Synchain.
+- [synchain.ca](https://synchain.ca) — the Synchain platform.
 
-```bash
-cd web-preview && npm install
-npm run mock          # 起 ws://localhost:9420 的 mock 插件（发二进制 PCM 帧）
-npm run serve         # 用 http 托管 ../web（不能用 file://，ES module 会被 CORS 拦截）
-```
-然后在浏览器打开 `http://localhost:5173/index.html`（经 `bridge.js` 的 WsPreview 后端直连 mock）即可预览插件 UI + 交互，无需编译/DAW。
+## Status
 
-## CI
-
-`.github/workflows/ci.yml`（windows-2022）：clone JUCE 8.0.8 → vcpkg 装 ixwebsocket → 装 WebView2 Evergreen Runtime → CMake 配置（拉 WebView2 NuGet）→ 构建 → pluginval `--skip-gui-tests`（strictness 5，验证协议/状态/参数/音频/总线等非 GUI 契约）。含 Editor 的全量 strictness-5 在真实 Windows 11 本地验证——无桌面的 Server runner 无法托管 WebView2 编辑器。
-
-## 目录
-
-| 文件 | 说明 |
-|---|---|
-| `PluginProcessor.{h,cpp}` | 音频抓取/推流增益/电平原子/端口·语言·状态持久化 |
-| `WebViewEditor.{h,cpp}` | WebBrowserComponent 宿主 + JS↔C++ 桥 + 25Hz Timer |
-| `VstBridgeServer.{h,cpp}` / `WebSocketProtocol.{h,cpp}` | 桥 #2 WS 服务与协议 |
-| `AudioMeter.{h,cpp}` | 峰值电平（dBFS） |
-| `BridgeApi.h` / `BRIDGE_CONTRACT.md` | 桥 #1/#2 契约（事件/函数名、WS 不变量、命名常量） |
-| `web/` | WebView UI（index.html / styles.css / bridge.js / i18n.js / js/juce/index.js） |
-| `web-preview/` | 桥 #2 mock server（独立验证预览，无需编译/DAW） |
-
-## WebSocket 协议
-
-见 `BRIDGE_CONTRACT.md` 第二节与 `WebSocketProtocol.h`。二进制 PCM 帧 = 12 字节头（`u32 sampleRate | u32 channels | u32 numSamples`）+ float32 interleaved；`meter`/`status`/`settings`(含可选 `latencyMs`)/`error`/`ping` 为 JSON 文本帧。
+Windows x64 VST3 ships first; macOS follows (aligned with the platform roadmap). See [`CHANGELOG.md`](CHANGELOG.md) for the version history.
