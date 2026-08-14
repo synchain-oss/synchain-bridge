@@ -69,6 +69,15 @@ inline constexpr const char* Lang = "lang"; // "zh"|"en"|"fr"
 
 } // namespace bridge
 
+// --- 桥接契约协议版本（BRIDGE_CONTRACT_VERSION；独立于插件版本，semver）-----
+// 起点定 2.0（08 §1.3 / U6）：1.x 语义留给「抽取前的未版本化历史」，避免与插件版本号混淆。
+// wire 上报：status 帧新增可选字段 contract（只增不改；旧 web 客户端 `??` 兜底忽略）。
+// 真源约束：改这里必须同步改 BRIDGE_CONTRACT.md 头部「协议版本」行，并走 §五 变更流程。
+namespace contract
+{
+inline constexpr const char* ContractVersion = "2.0";
+} // namespace contract
+
 // --- 插件命名常量（与 CMake / getName / status 消息保持一致）---------------
 // 版本号**不在此定义**：单一真源是 CMakeLists.txt `project(... VERSION ...)`
 // → `JucePlugin_VersionString`。status 上报（PluginProcessor sendStatus）与插件

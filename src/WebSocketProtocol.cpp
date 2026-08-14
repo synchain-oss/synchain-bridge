@@ -69,6 +69,7 @@ juce::var StatusMessage::toJson() const
     obj->setProperty("pluginName", pluginName);
     obj->setProperty("version", version);
     obj->setProperty("volume", volume);
+    obj->setProperty("contract", contract);
     return juce::var(obj);
 }
 
