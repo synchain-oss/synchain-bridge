@@ -1,660 +1,1548 @@
-<!DOCTYPE html>
+<!doctype html>
 <!-- Copyright (c) 2026 Synchain
      SPDX-License-Identifier: GPL-3.0-or-later -->
 <html lang="zh">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<!-- 离线自包含：无 Google Fonts / CDN。样式与字体见 styles.css，逻辑走 ES module。 -->
-<link rel="stylesheet" href="./styles.css">
-</head>
-<body>
-
-<!-- ==================== PLUGIN ROOT ==================== -->
-<!-- #vst-root = 视口裁剪框（position:fixed;inset:0;overflow:hidden，永不滚动/露白）。JS 按模式布局：
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%2321212a'/%3E%3C/svg%3E"
+    />
+    <!-- 离线自包含：无 Google Fonts / CDN。样式与字体见 styles.css，逻辑走 ES module。 -->
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <!-- ==================== PLUGIN ROOT ==================== -->
+    <!-- #vst-root = 视口裁剪框（position:fixed;inset:0;overflow:hidden，永不滚动/露白）。JS 按模式布局：
      插件内 —— 卡片 position:absolute + 固定设计盒 DESIGN_W×DESIGN_H px + zoom:F 铺满编辑器窗口（尺寸只用常量 F、不读视口，DPI 稳健）；
      纯浏览器预览 —— 卡片固定 460×560 居中、按视口等比缩小。界面缩放档位见页脚 [data-scale]，改档位弹防呆确认。 -->
-<div id="vst-root" data-run="0" style="position:fixed;inset:0;overflow:hidden;display:flex;align-items:center;justify-content:center;font-family:var(--ff-sans);color:#2C2C2E;background:radial-gradient(circle at 50% 28%, #272430 0%, #18161D 70%, #131119 100%)">
+    <div
+      id="vst-root"
+      data-run="0"
+      style="
+        position: fixed;
+        inset: 0;
+        overflow: hidden;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-family: var(--ff-sans);
+        color: #2c2c2e;
+        background: radial-gradient(
+          circle at 50% 28%,
+          #272430 0%,
+          #18161d 70%,
+          #131119 100%
+        );
+      "
+    >
+      <!-- ============ PLUGIN WINDOW ============ -->
+      <!-- data-card：插件内 JS 设为 100%×100% 铺满设计盒；预览为固定 460×560。玻璃面板内部 space-between 撑满高度。 -->
+      <div
+        data-card
+        style="
+          position: relative;
+          width: 460px;
+          height: 560px;
+          max-width: 100%;
+          border-radius: 20px;
+          overflow: hidden;
+          background: linear-gradient(
+            157deg,
+            #b5acc9 0%,
+            #ccbfd5 32%,
+            #e3d2e0 64%,
+            #fde8ed 100%
+          );
+          box-shadow:
+            0 44px 92px rgba(0, 0, 0, 0.5),
+            0 8px 22px rgba(0, 0, 0, 0.32);
+          animation: vbUp 0.6s cubic-bezier(0.3, 0.7, 0.2, 1);
+        "
+      >
+        <!-- colored light behind the glass -->
+        <div
+          style="
+            position: absolute;
+            left: -9%;
+            top: -7%;
+            width: 300px;
+            height: 300px;
+            border-radius: 50%;
+            z-index: 1;
+            pointer-events: none;
+            filter: blur(46px);
+            background: radial-gradient(
+              circle at 50% 50%,
+              rgba(181, 172, 201, 0.62),
+              rgba(181, 172, 201, 0) 64%
+            );
+          "
+        ></div>
+        <div
+          style="
+            position: absolute;
+            right: -13%;
+            top: 28%;
+            width: 330px;
+            height: 330px;
+            border-radius: 50%;
+            z-index: 1;
+            pointer-events: none;
+            filter: blur(52px);
+            background: radial-gradient(
+              circle at 50% 50%,
+              rgba(248, 206, 219, 0.5),
+              rgba(248, 206, 219, 0) 66%
+            );
+          "
+        ></div>
+        <div
+          style="
+            position: absolute;
+            left: 18%;
+            bottom: -15%;
+            width: 340px;
+            height: 340px;
+            border-radius: 50%;
+            z-index: 1;
+            pointer-events: none;
+            filter: blur(56px);
+            background: radial-gradient(
+              circle at 50% 50%,
+              rgba(196, 176, 222, 0.46),
+              rgba(196, 176, 222, 0) 64%
+            );
+          "
+        ></div>
+        <div
+          data-cta-glow
+          style="
+            position: absolute;
+            left: 28%;
+            bottom: -12%;
+            width: 320px;
+            height: 320px;
+            border-radius: 50%;
+            z-index: 1;
+            pointer-events: none;
+            filter: blur(56px);
+            opacity: 0;
+            transition: opacity 0.5s ease;
+            background: radial-gradient(
+              circle at 50% 50%,
+              rgba(120, 176, 142, 0.5),
+              rgba(120, 176, 142, 0) 64%
+            );
+          "
+        ></div>
 
-  <!-- ============ PLUGIN WINDOW ============ -->
-  <!-- data-card：插件内 JS 设为 100%×100% 铺满设计盒；预览为固定 460×560。玻璃面板内部 space-between 撑满高度。 -->
-  <div data-card style="position:relative;width:460px;height:560px;max-width:100%;border-radius:20px;overflow:hidden;background:linear-gradient(157deg, #B5ACC9 0%, #CCBFD5 32%, #E3D2E0 64%, #FDE8ED 100%);box-shadow:0 44px 92px rgba(0,0,0,0.5), 0 8px 22px rgba(0,0,0,0.32);animation:vbUp .6s cubic-bezier(.3,.7,.2,1)">
+        <!-- ============ GLASS PANEL ============ -->
+        <div
+          style="
+            position: relative;
+            z-index: 5;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            border-radius: 20px;
+            padding: 20px;
+            background: rgba(255, 255, 255, 0.08);
+            backdrop-filter: blur(9px) saturate(125%);
+            -webkit-backdrop-filter: blur(9px) saturate(125%);
+            border: 1px solid rgba(255, 255, 255, 0.22);
+            box-shadow:
+              inset 0 1px 0 rgba(255, 255, 255, 0.28),
+              inset 0 0 5px 2px rgba(255, 255, 255, 0.08);
+          "
+        >
+          <!-- edge highlights -->
+          <div
+            style="
+              position: absolute;
+              top: 0;
+              left: 0;
+              right: 0;
+              height: 1px;
+              pointer-events: none;
+              z-index: 3;
+              background: linear-gradient(
+                90deg,
+                transparent,
+                rgba(255, 255, 255, 0.5),
+                transparent
+              );
+            "
+          ></div>
+          <div
+            style="
+              position: absolute;
+              top: 0;
+              left: 0;
+              width: 1px;
+              height: 100%;
+              pointer-events: none;
+              z-index: 3;
+              background: linear-gradient(
+                180deg,
+                rgba(255, 255, 255, 0.45),
+                transparent,
+                rgba(255, 255, 255, 0.16)
+              );
+            "
+          ></div>
+          <div
+            style="
+              position: absolute;
+              inset: 0;
+              pointer-events: none;
+              border-radius: 22px;
+              background: linear-gradient(
+                150deg,
+                rgba(255, 255, 255, 0.16) 0%,
+                rgba(255, 255, 255, 0) 52%
+              );
+            "
+          ></div>
 
-    <!-- colored light behind the glass -->
-    <div style="position:absolute;left:-9%;top:-7%;width:300px;height:300px;border-radius:50%;z-index:1;pointer-events:none;filter:blur(46px);background:radial-gradient(circle at 50% 50%, rgba(181,172,201,0.62), rgba(181,172,201,0) 64%)"></div>
-    <div style="position:absolute;right:-13%;top:28%;width:330px;height:330px;border-radius:50%;z-index:1;pointer-events:none;filter:blur(52px);background:radial-gradient(circle at 50% 50%, rgba(248,206,219,0.5), rgba(248,206,219,0) 66%)"></div>
-    <div style="position:absolute;left:18%;bottom:-15%;width:340px;height:340px;border-radius:50%;z-index:1;pointer-events:none;filter:blur(56px);background:radial-gradient(circle at 50% 50%, rgba(196,176,222,0.46), rgba(196,176,222,0) 64%)"></div>
-    <div data-cta-glow style="position:absolute;left:28%;bottom:-12%;width:320px;height:320px;border-radius:50%;z-index:1;pointer-events:none;filter:blur(56px);opacity:0;transition:opacity .5s ease;background:radial-gradient(circle at 50% 50%, rgba(120,176,142,0.5), rgba(120,176,142,0) 64%)"></div>
-
-    <!-- ============ GLASS PANEL ============ -->
-    <div style="position:relative;z-index:5;height:100%;display:flex;flex-direction:column;border-radius:20px;padding:20px;background:rgba(255,255,255,0.08);backdrop-filter:blur(9px) saturate(125%);-webkit-backdrop-filter:blur(9px) saturate(125%);border:1px solid rgba(255,255,255,0.22);box-shadow:inset 0 1px 0 rgba(255,255,255,0.28), inset 0 0 5px 2px rgba(255,255,255,0.08)">
-
-      <!-- edge highlights -->
-      <div style="position:absolute;top:0;left:0;right:0;height:1px;pointer-events:none;z-index:3;background:linear-gradient(90deg,transparent,rgba(255,255,255,0.5),transparent)"></div>
-      <div style="position:absolute;top:0;left:0;width:1px;height:100%;pointer-events:none;z-index:3;background:linear-gradient(180deg,rgba(255,255,255,0.45),transparent,rgba(255,255,255,0.16))"></div>
-      <div style="position:absolute;inset:0;pointer-events:none;border-radius:22px;background:linear-gradient(150deg,rgba(255,255,255,0.16) 0%,rgba(255,255,255,0) 52%)"></div>
-
-      <!-- 内容列：flex:1 填满玻璃面板，space-between 让各区块均匀铺满高度、页脚贴底（消除上下暗带） -->
-      <div style="position:relative;z-index:4;flex:1;display:flex;flex-direction:column;justify-content:space-between;gap:14px">
-
-        <!-- HEADER -->
-        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px">
-          <div style="display:flex;align-items:center;gap:11px;min-width:0">
-            <div style="width:38px;height:38px;border-radius:11px;flex:none;display:flex;align-items:center;justify-content:center;background:linear-gradient(135deg,rgba(255,255,255,0.52),rgba(255,255,255,0.16));border:1px solid rgba(255,255,255,0.52);box-shadow:inset 0 1px 0 rgba(255,255,255,0.55)">
-              <svg width="19" height="19" viewBox="0 0 18 18" fill="none" stroke="#21212A" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4.5" width="10" height="9" rx="2"></rect><path d="M12 7.5 L16 5 v8 L12 10.5"></path></svg>
+          <!-- 内容列：flex:1 填满玻璃面板，space-between 让各区块均匀铺满高度、页脚贴底（消除上下暗带） -->
+          <div
+            style="
+              position: relative;
+              z-index: 4;
+              flex: 1;
+              display: flex;
+              flex-direction: column;
+              justify-content: space-between;
+              gap: 14px;
+            "
+          >
+            <!-- HEADER -->
+            <div
+              style="
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 12px;
+              "
+            >
+              <div
+                style="
+                  display: flex;
+                  align-items: center;
+                  gap: 11px;
+                  min-width: 0;
+                "
+              >
+                <div
+                  style="
+                    width: 38px;
+                    height: 38px;
+                    border-radius: 11px;
+                    flex: none;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    background: linear-gradient(
+                      135deg,
+                      rgba(255, 255, 255, 0.52),
+                      rgba(255, 255, 255, 0.16)
+                    );
+                    border: 1px solid rgba(255, 255, 255, 0.52);
+                    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.55);
+                  "
+                >
+                  <svg
+                    width="19"
+                    height="19"
+                    viewBox="0 0 18 18"
+                    fill="none"
+                    stroke="#21212A"
+                    stroke-width="1.6"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <rect x="2" y="4.5" width="10" height="9" rx="2"></rect>
+                    <path d="M12 7.5 L16 5 v8 L12 10.5"></path>
+                  </svg>
+                </div>
+                <div style="min-width: 0">
+                  <div
+                    style="
+                      font-family: var(--ff-grotesk);
+                      font-weight: 600;
+                      font-size: 16px;
+                      letter-spacing: -0.01em;
+                      color: #21212a;
+                      white-space: nowrap;
+                    "
+                  >
+                    Synchain Bridge
+                  </div>
+                  <div
+                    style="
+                      font-family: var(--ff-mono);
+                      font-size: 8.5px;
+                      letter-spacing: 0.2em;
+                      color: #6a6a74;
+                      margin-top: 2px;
+                    "
+                  >
+                    VST3 · AUDIO BRIDGE
+                  </div>
+                </div>
+              </div>
+              <div
+                style="
+                  display: flex;
+                  align-items: center;
+                  gap: 2px;
+                  padding: 3px;
+                  border-radius: 999px;
+                  flex: none;
+                  background: linear-gradient(
+                    135deg,
+                    rgba(255, 255, 255, 0.42),
+                    rgba(255, 255, 255, 0.14)
+                  );
+                  border: 1px solid rgba(255, 255, 255, 0.5);
+                "
+              >
+                <button
+                  data-lang="zh"
+                  aria-label="中文"
+                  aria-pressed="true"
+                  style="
+                    padding: 5px 9px;
+                    border-radius: 999px;
+                    border: none;
+                    cursor: pointer;
+                    font-family: var(--ff-mono);
+                    font-size: 9.5px;
+                    letter-spacing: 0.04em;
+                    transition:
+                      background 0.2s,
+                      color 0.2s;
+                    background: rgba(255, 255, 255, 0.92);
+                    color: #21212a;
+                  "
+                >
+                  中
+                </button>
+                <button
+                  data-lang="en"
+                  aria-label="English"
+                  aria-pressed="false"
+                  style="
+                    padding: 5px 9px;
+                    border-radius: 999px;
+                    border: none;
+                    cursor: pointer;
+                    font-family: var(--ff-mono);
+                    font-size: 9.5px;
+                    letter-spacing: 0.04em;
+                    transition:
+                      background 0.2s,
+                      color 0.2s;
+                    background: transparent;
+                    color: #62626c;
+                  "
+                >
+                  EN
+                </button>
+                <button
+                  data-lang="fr"
+                  aria-label="Français"
+                  aria-pressed="false"
+                  style="
+                    padding: 5px 9px;
+                    border-radius: 999px;
+                    border: none;
+                    cursor: pointer;
+                    font-family: var(--ff-mono);
+                    font-size: 9.5px;
+                    letter-spacing: 0.04em;
+                    transition:
+                      background 0.2s,
+                      color 0.2s;
+                    background: transparent;
+                    color: #62626c;
+                  "
+                >
+                  FR
+                </button>
+              </div>
             </div>
-            <div style="min-width:0">
-              <div style="font-family:var(--ff-grotesk);font-weight:600;font-size:16px;letter-spacing:-.01em;color:#21212A;white-space:nowrap">Synchain Bridge</div>
-              <div style="font-family:var(--ff-mono);font-size:8.5px;letter-spacing:.2em;color:#6A6A74;margin-top:2px">VST3 · AUDIO BRIDGE</div>
+
+            <!-- STATUS + CLIENTS -->
+            <div
+              style="
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 10px;
+              "
+            >
+              <div
+                data-status
+                style="
+                  display: inline-flex;
+                  align-items: center;
+                  gap: 8px;
+                  padding: 7px 14px;
+                  border-radius: 999px;
+                  background: rgba(150, 152, 162, 0.14);
+                  border: 1px solid rgba(150, 152, 162, 0.42);
+                  transition:
+                    background 0.35s,
+                    border-color 0.35s;
+                "
+              >
+                <span
+                  data-status-dot
+                  style="
+                    width: 8px;
+                    height: 8px;
+                    border-radius: 50%;
+                    background: rgb(150, 152, 162);
+                    flex: none;
+                  "
+                ></span>
+                <span
+                  data-status-text
+                  style="
+                    font-family: var(--ff-mono);
+                    font-size: 10px;
+                    letter-spacing: 0.14em;
+                    color: #2c2c2e;
+                  "
+                  >离线</span
+                >
+              </div>
+              <div style="display: flex; align-items: baseline; gap: 7px">
+                <span
+                  data-t="clients"
+                  style="
+                    font-family: var(--ff-mono);
+                    font-size: 9px;
+                    letter-spacing: 0.14em;
+                    color: #6a6a74;
+                  "
+                  >客户端</span
+                >
+                <span
+                  data-clients
+                  style="
+                    font-family: var(--ff-grotesk);
+                    font-weight: 600;
+                    font-size: 16px;
+                    color: #21212a;
+                    letter-spacing: -0.01em;
+                  "
+                  >0</span
+                >
+              </div>
             </div>
-          </div>
-          <div style="display:flex;align-items:center;gap:2px;padding:3px;border-radius:999px;flex:none;background:linear-gradient(135deg,rgba(255,255,255,0.42),rgba(255,255,255,0.14));border:1px solid rgba(255,255,255,0.5)">
-            <button data-lang="zh" aria-label="中文" aria-pressed="true" style="padding:5px 9px;border-radius:999px;border:none;cursor:pointer;font-family:var(--ff-mono);font-size:9.5px;letter-spacing:.04em;transition:background .2s,color .2s;background:rgba(255,255,255,0.92);color:#21212A">中</button>
-            <button data-lang="en" aria-label="English" aria-pressed="false" style="padding:5px 9px;border-radius:999px;border:none;cursor:pointer;font-family:var(--ff-mono);font-size:9.5px;letter-spacing:.04em;transition:background .2s,color .2s;background:transparent;color:#62626C">EN</button>
-            <button data-lang="fr" aria-label="Français" aria-pressed="false" style="padding:5px 9px;border-radius:999px;border:none;cursor:pointer;font-family:var(--ff-mono);font-size:9.5px;letter-spacing:.04em;transition:background .2s,color .2s;background:transparent;color:#62626C">FR</button>
-          </div>
-        </div>
 
-        <!-- STATUS + CLIENTS -->
-        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
-          <div data-status style="display:inline-flex;align-items:center;gap:8px;padding:7px 14px;border-radius:999px;background:rgba(150,152,162,0.14);border:1px solid rgba(150,152,162,0.42);transition:background .35s,border-color .35s">
-            <span data-status-dot style="width:8px;height:8px;border-radius:50%;background:rgb(150,152,162);flex:none"></span>
-            <span data-status-text style="font-family:var(--ff-mono);font-size:10px;letter-spacing:.14em;color:#2C2C2E">离线</span>
-          </div>
-          <div style="display:flex;align-items:baseline;gap:7px">
-            <span data-t="clients" style="font-family:var(--ff-mono);font-size:9px;letter-spacing:.14em;color:#6A6A74">客户端</span>
-            <span data-clients style="font-family:var(--ff-grotesk);font-weight:600;font-size:16px;color:#21212A;letter-spacing:-.01em">0</span>
-          </div>
-        </div>
-
-        <!-- LEVEL METERS —— 条数按声道数动态生成（单声道 1 条 / 立体声 2 条）；
+            <!-- LEVEL METERS —— 条数按声道数动态生成（单声道 1 条 / 立体声 2 条）；
              每条由 JS rAF 弹道驱动：绿条 fast-follow + 白色 peak-hold 线，见 <script> buildMeters/meterTick -->
-        <div>
-          <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:12px">
-            <span data-t="level" style="font-family:var(--ff-mono);font-size:9.5px;letter-spacing:.2em;color:#6A6A74">电平</span>
-            <span data-t="dbfs" style="font-family:var(--ff-mono);font-size:9px;letter-spacing:.06em;color:#8A8A93">dBFS</span>
-          </div>
-          <div data-meter-host></div>
-        </div>
-
-        <!-- AUDIO INFO -->
-        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:9px">
-          <div style="text-align:center">
-            <div style="padding:9px 6px;border-radius:12px;background:rgba(255,255,255,0.3);border:1px solid rgba(255,255,255,0.5);display:flex;align-items:baseline;justify-content:center;gap:3px">
-              <span data-sr style="font-family:var(--ff-grotesk);font-weight:600;font-size:16px;color:#21212A;letter-spacing:-.01em">48.0</span>
-              <span style="font-family:var(--ff-mono);font-size:8.5px;color:#7A7A84">kHz</span>
+            <div>
+              <div
+                style="
+                  display: flex;
+                  align-items: baseline;
+                  justify-content: space-between;
+                  margin-bottom: 12px;
+                "
+              >
+                <span
+                  data-t="level"
+                  style="
+                    font-family: var(--ff-mono);
+                    font-size: 9.5px;
+                    letter-spacing: 0.2em;
+                    color: #6a6a74;
+                  "
+                  >电平</span
+                >
+                <span
+                  data-t="dbfs"
+                  style="
+                    font-family: var(--ff-mono);
+                    font-size: 9px;
+                    letter-spacing: 0.06em;
+                    color: #8a8a93;
+                  "
+                  >dBFS</span
+                >
+              </div>
+              <div data-meter-host></div>
             </div>
-            <div data-t="sampleRate" style="font-family:var(--ff-mono);font-size:7.5px;letter-spacing:.1em;color:#6A6A74;margin-top:7px">采样率</div>
-          </div>
-          <div style="text-align:center">
-            <div style="padding:9px 6px;border-radius:12px;background:rgba(255,255,255,0.3);border:1px solid rgba(255,255,255,0.5);display:flex;align-items:center;justify-content:center">
-              <span data-channels style="font-family:var(--ff-grotesk);font-weight:600;font-size:15px;color:#21212A;letter-spacing:-.01em">立体声</span>
+
+            <!-- AUDIO INFO -->
+            <div
+              style="
+                display: grid;
+                grid-template-columns: repeat(3, 1fr);
+                gap: 9px;
+              "
+            >
+              <div style="text-align: center">
+                <div
+                  style="
+                    padding: 9px 6px;
+                    border-radius: 12px;
+                    background: rgba(255, 255, 255, 0.3);
+                    border: 1px solid rgba(255, 255, 255, 0.5);
+                    display: flex;
+                    align-items: baseline;
+                    justify-content: center;
+                    gap: 3px;
+                  "
+                >
+                  <span
+                    data-sr
+                    style="
+                      font-family: var(--ff-grotesk);
+                      font-weight: 600;
+                      font-size: 16px;
+                      color: #21212a;
+                      letter-spacing: -0.01em;
+                    "
+                    >48.0</span
+                  >
+                  <span
+                    style="
+                      font-family: var(--ff-mono);
+                      font-size: 8.5px;
+                      color: #7a7a84;
+                    "
+                    >kHz</span
+                  >
+                </div>
+                <div
+                  data-t="sampleRate"
+                  style="
+                    font-family: var(--ff-mono);
+                    font-size: 7.5px;
+                    letter-spacing: 0.1em;
+                    color: #6a6a74;
+                    margin-top: 7px;
+                  "
+                >
+                  采样率
+                </div>
+              </div>
+              <div style="text-align: center">
+                <div
+                  style="
+                    padding: 9px 6px;
+                    border-radius: 12px;
+                    background: rgba(255, 255, 255, 0.3);
+                    border: 1px solid rgba(255, 255, 255, 0.5);
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                  "
+                >
+                  <span
+                    data-channels
+                    style="
+                      font-family: var(--ff-grotesk);
+                      font-weight: 600;
+                      font-size: 15px;
+                      color: #21212a;
+                      letter-spacing: -0.01em;
+                    "
+                    >立体声</span
+                  >
+                </div>
+                <div
+                  data-t="channels"
+                  style="
+                    font-family: var(--ff-mono);
+                    font-size: 7.5px;
+                    letter-spacing: 0.1em;
+                    color: #6a6a74;
+                    margin-top: 7px;
+                  "
+                >
+                  声道
+                </div>
+              </div>
+              <div style="text-align: center">
+                <div
+                  style="
+                    padding: 9px 6px;
+                    border-radius: 12px;
+                    background: rgba(255, 255, 255, 0.3);
+                    border: 1px solid rgba(255, 255, 255, 0.5);
+                    display: flex;
+                    align-items: baseline;
+                    justify-content: center;
+                    gap: 3px;
+                  "
+                >
+                  <span
+                    data-latency
+                    style="
+                      font-family: var(--ff-grotesk);
+                      font-weight: 600;
+                      font-size: 16px;
+                      color: #21212a;
+                      letter-spacing: -0.01em;
+                    "
+                    >5.3</span
+                  >
+                  <span
+                    style="
+                      font-family: var(--ff-mono);
+                      font-size: 8.5px;
+                      color: #7a7a84;
+                    "
+                    >ms</span
+                  >
+                </div>
+                <div
+                  data-t="latency"
+                  style="
+                    font-family: var(--ff-mono);
+                    font-size: 7.5px;
+                    letter-spacing: 0.1em;
+                    color: #6a6a74;
+                    margin-top: 7px;
+                  "
+                >
+                  延迟
+                </div>
+              </div>
             </div>
-            <div data-t="channels" style="font-family:var(--ff-mono);font-size:7.5px;letter-spacing:.1em;color:#6A6A74;margin-top:7px">声道</div>
-          </div>
-          <div style="text-align:center">
-            <div style="padding:9px 6px;border-radius:12px;background:rgba(255,255,255,0.3);border:1px solid rgba(255,255,255,0.5);display:flex;align-items:baseline;justify-content:center;gap:3px">
-              <span data-latency style="font-family:var(--ff-grotesk);font-weight:600;font-size:16px;color:#21212A;letter-spacing:-.01em">5.3</span>
-              <span style="font-family:var(--ff-mono);font-size:8.5px;color:#7A7A84">ms</span>
+
+            <!-- LOCAL PORT -->
+            <div>
+              <div
+                data-t="localPort"
+                style="
+                  font-family: var(--ff-mono);
+                  font-size: 9px;
+                  letter-spacing: 0.2em;
+                  color: #6a6a74;
+                  margin-bottom: 9px;
+                "
+              >
+                本地端口
+              </div>
+              <div
+                style="
+                  display: flex;
+                  align-items: center;
+                  gap: 9px;
+                  padding: 10px 12px;
+                  border-radius: 13px;
+                  background: rgba(255, 255, 255, 0.28);
+                  border: 1px solid rgba(255, 255, 255, 0.5);
+                "
+              >
+                <span
+                  style="
+                    font-family: var(--ff-mono);
+                    font-size: 11px;
+                    color: #52525c;
+                    letter-spacing: 0.01em;
+                    white-space: nowrap;
+                  "
+                  >ws://localhost:</span
+                >
+                <input
+                  data-port
+                  type="text"
+                  inputmode="numeric"
+                  value="9420"
+                  aria-label="Local port"
+                  style="
+                    flex: 1;
+                    min-width: 0;
+                    padding: 6px 10px;
+                    border-radius: 9px;
+                    font-family: var(--ff-mono);
+                    font-size: 13px;
+                    color: #21212a;
+                    background: rgba(255, 255, 255, 0.46);
+                    border: 1px solid rgba(255, 255, 255, 0.55);
+                    outline: none;
+                    text-align: center;
+                    letter-spacing: 0.05em;
+                    transition:
+                      background 0.2s,
+                      border-color 0.2s;
+                  "
+                />
+              </div>
             </div>
-            <div data-t="latency" style="font-family:var(--ff-mono);font-size:7.5px;letter-spacing:.1em;color:#6A6A74;margin-top:7px">延迟</div>
+
+            <!-- MASTER VOLUME -->
+            <div>
+              <div
+                style="
+                  display: flex;
+                  align-items: center;
+                  justify-content: space-between;
+                  margin-bottom: 10px;
+                "
+              >
+                <span
+                  data-t="master"
+                  style="
+                    font-family: var(--ff-mono);
+                    font-size: 9px;
+                    letter-spacing: 0.2em;
+                    color: #6a6a74;
+                  "
+                  >主控音量</span
+                >
+                <span
+                  data-vol-label
+                  style="
+                    font-family: var(--ff-mono);
+                    font-size: 10px;
+                    color: #52525c;
+                  "
+                  >100%</span
+                >
+              </div>
+              <input
+                data-vol
+                type="range"
+                min="0"
+                max="200"
+                step="1"
+                value="100"
+                aria-label="Master volume, 0 to 200 percent"
+              />
+            </div>
+
+            <!-- START / STOP -->
+            <button
+              data-cta
+              data-glow="1"
+              style="
+                position: relative;
+                overflow: hidden;
+                width: 100%;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                gap: 11px;
+                padding: 17px;
+                border-radius: 15px;
+                cursor: pointer;
+                font-family: var(--ff-grotesk);
+                font-weight: 600;
+                font-size: 15px;
+                letter-spacing: 0.01em;
+                color: #21212a;
+                background: linear-gradient(
+                  135deg,
+                  rgba(181, 172, 201, 0.24),
+                  rgba(181, 172, 201, 0.09)
+                );
+                border: 1px solid rgba(181, 172, 201, 0.52);
+                box-shadow:
+                  0 12px 30px rgba(92, 74, 108, 0.14),
+                  0 0 18px rgba(181, 172, 201, 0.18),
+                  inset 0 1px 0 rgba(255, 255, 255, 0.34);
+                transition:
+                  background 0.35s,
+                  border-color 0.35s,
+                  box-shadow 0.35s,
+                  scale 0.15s;
+              "
+            >
+              <div
+                data-cta-glow
+                style="
+                  position: absolute;
+                  inset: 0;
+                  pointer-events: none;
+                  border-radius: 15px;
+                  opacity: 0;
+                  transition: opacity 0.4s ease;
+                  background: radial-gradient(
+                    circle at 50% 125%,
+                    rgba(120, 176, 142, 0.5),
+                    transparent 62%
+                  );
+                "
+              ></div>
+              <svg
+                data-ic-play
+                width="15"
+                height="15"
+                viewBox="0 0 16 16"
+                fill="#21212A"
+                style="position: relative; z-index: 1"
+              >
+                <path d="M4 3 L13 8 L4 13 Z"></path>
+              </svg>
+              <svg
+                data-ic-stop
+                width="13"
+                height="13"
+                viewBox="0 0 16 16"
+                fill="#21212A"
+                style="position: relative; z-index: 1"
+              >
+                <rect x="3" y="3" width="10" height="10" rx="2"></rect>
+              </svg>
+              <span data-cta-text style="position: relative; z-index: 1"
+                >开始传输</span
+              >
+            </button>
+
+            <!-- FOOTER -->
+            <div
+              style="
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 10px;
+                padding-top: 14px;
+                border-top: 1px solid rgba(255, 255, 255, 0.5);
+              "
+            >
+              <span
+                data-hint
+                style="
+                  flex: 1;
+                  min-width: 0;
+                  overflow: hidden;
+                  text-overflow: ellipsis;
+                  white-space: nowrap;
+                  font-family: var(--ff-mono);
+                  font-size: 8.5px;
+                  letter-spacing: 0.05em;
+                  color: #7a7a84;
+                "
+                >待机 · 等待开始传输</span
+              >
+              <div
+                style="display: flex; align-items: center; gap: 9px; flex: none"
+              >
+                <!-- 界面缩放档位：改档位→弹防呆确认；插件内改窗口尺寸(setUiScale→setSize)+确认后全局持久化，卡片固定设计盒+zoom:F 铺满；预览等比缩放演示 -->
+                <select data-scale aria-label="界面缩放">
+                  <option value="0.33">33%</option>
+                  <option value="0.5">50%</option>
+                  <option value="0.75">75%</option>
+                  <option value="1" selected>100%</option>
+                  <option value="1.25">125%</option>
+                  <option value="1.5">150%</option>
+                  <option value="1.75">175%</option>
+                  <option value="2">200%</option>
+                  <option value="2.5">250%</option>
+                  <option value="3">300%</option>
+                </select>
+                <span
+                  data-version
+                  style="
+                    font-family: var(--ff-mono);
+                    font-size: 8.5px;
+                    letter-spacing: 0.06em;
+                    color: #8a8a93;
+                  "
+                  >Synchain VST · v1.3.1</span
+                >
+              </div>
+            </div>
           </div>
         </div>
-
-        <!-- LOCAL PORT -->
-        <div>
-          <div data-t="localPort" style="font-family:var(--ff-mono);font-size:9px;letter-spacing:.2em;color:#6A6A74;margin-bottom:9px">本地端口</div>
-          <div style="display:flex;align-items:center;gap:9px;padding:10px 12px;border-radius:13px;background:rgba(255,255,255,0.28);border:1px solid rgba(255,255,255,0.5)">
-            <span style="font-family:var(--ff-mono);font-size:11px;color:#52525C;letter-spacing:.01em;white-space:nowrap">ws://localhost:</span>
-            <input data-port type="text" inputmode="numeric" value="9420" aria-label="Local port" style="flex:1;min-width:0;padding:6px 10px;border-radius:9px;font-family:var(--ff-mono);font-size:13px;color:#21212A;background:rgba(255,255,255,0.46);border:1px solid rgba(255,255,255,0.55);outline:none;text-align:center;letter-spacing:.05em;transition:background .2s,border-color .2s">
-          </div>
-        </div>
-
-        <!-- MASTER VOLUME -->
-        <div>
-          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
-            <span data-t="master" style="font-family:var(--ff-mono);font-size:9px;letter-spacing:.2em;color:#6A6A74">主控音量</span>
-            <span data-vol-label style="font-family:var(--ff-mono);font-size:10px;color:#52525C">100%</span>
-          </div>
-          <input data-vol type="range" min="0" max="200" step="1" value="100" aria-label="Master volume, 0 to 200 percent">
-        </div>
-
-        <!-- START / STOP -->
-        <button data-cta data-glow="1" style="position:relative;overflow:hidden;width:100%;display:flex;align-items:center;justify-content:center;gap:11px;padding:17px;border-radius:15px;cursor:pointer;font-family:var(--ff-grotesk);font-weight:600;font-size:15px;letter-spacing:.01em;color:#21212A;background:linear-gradient(135deg,rgba(181,172,201,0.24),rgba(181,172,201,0.09));border:1px solid rgba(181,172,201,0.52);box-shadow:0 12px 30px rgba(92,74,108,0.14), 0 0 18px rgba(181,172,201,0.18), inset 0 1px 0 rgba(255,255,255,0.34);transition:background .35s,border-color .35s,box-shadow .35s,scale .15s">
-          <div data-cta-glow style="position:absolute;inset:0;pointer-events:none;border-radius:15px;opacity:0;transition:opacity .4s ease;background:radial-gradient(circle at 50% 125%, rgba(120,176,142,0.5), transparent 62%)"></div>
-          <svg data-ic-play width="15" height="15" viewBox="0 0 16 16" fill="#21212A" style="position:relative;z-index:1"><path d="M4 3 L13 8 L4 13 Z"></path></svg>
-          <svg data-ic-stop width="13" height="13" viewBox="0 0 16 16" fill="#21212A" style="position:relative;z-index:1"><rect x="3" y="3" width="10" height="10" rx="2"></rect></svg>
-          <span data-cta-text style="position:relative;z-index:1">开始传输</span>
-        </button>
-
-        <!-- FOOTER -->
-        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding-top:14px;border-top:1px solid rgba(255,255,255,0.5)">
-          <span data-hint style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--ff-mono);font-size:8.5px;letter-spacing:.05em;color:#7A7A84">待机 · 等待开始传输</span>
-          <div style="display:flex;align-items:center;gap:9px;flex:none">
-            <!-- 界面缩放档位：改档位→弹防呆确认；插件内改窗口尺寸(setUiScale→setSize)+确认后全局持久化，卡片固定设计盒+zoom:F 铺满；预览等比缩放演示 -->
-            <select data-scale aria-label="界面缩放">
-              <option value="0.33">33%</option>
-              <option value="0.5">50%</option>
-              <option value="0.75">75%</option>
-              <option value="1" selected>100%</option>
-              <option value="1.25">125%</option>
-              <option value="1.5">150%</option>
-              <option value="1.75">175%</option>
-              <option value="2">200%</option>
-              <option value="2.5">250%</option>
-              <option value="3">300%</option>
-            </select>
-            <span data-version style="font-family:var(--ff-mono);font-size:8.5px;letter-spacing:.06em;color:#8A8A93">Synchain VST · v1.3.1</span>
-          </div>
-        </div>
-
       </div>
-    </div>
-  </div>
 
-  <!-- ============ 缩放防呆确认 overlay ============ -->
-  <!-- #vst-root 的直接子元素（与卡片同级、不受卡片 zoom 影响）→ 任意档位都居中可读；
+      <!-- ============ 缩放防呆确认 overlay ============ -->
+      <!-- #vst-root 的直接子元素（与卡片同级、不受卡片 zoom 影响）→ 任意档位都居中可读；
        改档位后弹出，10s 倒计时不点或点取消 → 恢复上一个已确认档位（终极兜底：即便窗口超大也会自动回退）。 -->
-  <div data-confirm style="display:none;position:absolute;inset:0;z-index:60;align-items:center;justify-content:center;background:rgba(18,16,24,0.55);backdrop-filter:blur(2px);-webkit-backdrop-filter:blur(2px)">
-    <div style="max-width:280px;margin:16px;padding:18px 20px;border-radius:14px;background:#241f2e;border:1px solid rgba(255,255,255,0.16);box-shadow:0 20px 50px rgba(0,0,0,0.5);text-align:center;font-family:var(--ff-sans);color:#EDEAF2">
-      <div data-t="scaleKeepTitle" style="font-size:13px;font-weight:600;margin-bottom:6px">保持此缩放？</div>
-      <div style="font-size:11px;color:#B8B4C4;line-height:1.5;margin-bottom:14px"><span data-confirm-countdown style="font-variant-numeric:tabular-nums lining-nums">10</span> <span data-t="scaleKeepHint">秒后自动恢复上一个尺寸</span></div>
-      <div style="display:flex;gap:9px;justify-content:center">
-        <button data-confirm-cancel data-t="cancel" style="padding:7px 16px;border-radius:9px;cursor:pointer;font-family:var(--ff-sans);font-size:11px;color:#EDEAF2;background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.22)">取消</button>
-        <button data-confirm-keep data-t="keep" style="padding:7px 16px;border-radius:9px;cursor:pointer;font-family:var(--ff-sans);font-size:11px;font-weight:600;color:#21212A;background:#B9AEDC;border:1px solid rgba(255,255,255,0.3)">保持</button>
+      <div
+        data-confirm
+        style="
+          display: none;
+          position: absolute;
+          inset: 0;
+          z-index: 60;
+          align-items: center;
+          justify-content: center;
+          background: rgba(18, 16, 24, 0.55);
+          backdrop-filter: blur(2px);
+          -webkit-backdrop-filter: blur(2px);
+        "
+      >
+        <div
+          style="
+            max-width: 280px;
+            margin: 16px;
+            padding: 18px 20px;
+            border-radius: 14px;
+            background: #241f2e;
+            border: 1px solid rgba(255, 255, 255, 0.16);
+            box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
+            text-align: center;
+            font-family: var(--ff-sans);
+            color: #edeaf2;
+          "
+        >
+          <div
+            data-t="scaleKeepTitle"
+            style="font-size: 13px; font-weight: 600; margin-bottom: 6px"
+          >
+            保持此缩放？
+          </div>
+          <div
+            style="
+              font-size: 11px;
+              color: #b8b4c4;
+              line-height: 1.5;
+              margin-bottom: 14px;
+            "
+          >
+            <span
+              data-confirm-countdown
+              style="font-variant-numeric: tabular-nums lining-nums"
+              >10</span
+            >
+            <span data-t="scaleKeepHint">秒后自动恢复上一个尺寸</span>
+          </div>
+          <div style="display: flex; gap: 9px; justify-content: center">
+            <button
+              data-confirm-cancel
+              data-t="cancel"
+              style="
+                padding: 7px 16px;
+                border-radius: 9px;
+                cursor: pointer;
+                font-family: var(--ff-sans);
+                font-size: 11px;
+                color: #edeaf2;
+                background: rgba(255, 255, 255, 0.1);
+                border: 1px solid rgba(255, 255, 255, 0.22);
+              "
+            >
+              取消
+            </button>
+            <button
+              data-confirm-keep
+              data-t="keep"
+              style="
+                padding: 7px 16px;
+                border-radius: 9px;
+                cursor: pointer;
+                font-family: var(--ff-sans);
+                font-size: 11px;
+                font-weight: 600;
+                color: #21212a;
+                background: #b9aedc;
+                border: 1px solid rgba(255, 255, 255, 0.3);
+              "
+            >
+              保持
+            </button>
+          </div>
+        </div>
       </div>
     </div>
-  </div>
-</div>
 
-<!-- ==================== APP LOGIC (bridge #1 wiring) ==================== -->
-<script type="module">
-  import { createBridge, EVT } from "./bridge.js";
-  import { dict, applyI18n } from "./i18n.js";
+    <!-- ==================== APP LOGIC (bridge #1 wiring) ==================== -->
+    <script type="module">
+      import { createBridge, EVT } from "./bridge.js";
+      import { dict, applyI18n } from "./i18n.js";
 
-  const root = document.getElementById("vst-root");
-  const card = root.querySelector("[data-card]");
-  const q = (sel) => root.querySelector(sel);
+      const root = document.getElementById("vst-root");
+      const card = root.querySelector("[data-card]");
+      const q = (sel) => root.querySelector(sel);
 
-  const els = {
-    statusText: q("[data-status-text]"),
-    clients: q("[data-clients]"),
-    meterHost: q("[data-meter-host]"),
-    sr: q("[data-sr]"),
-    channels: q("[data-channels]"),
-    latency: q("[data-latency]"),
-    port: q("[data-port]"),
-    vol: q("[data-vol]"),
-    volLabel: q("[data-vol-label]"),
-    cta: q("[data-cta]"),
-    ctaText: q("[data-cta-text]"),
-    hint: q("[data-hint]"),
-    version: q("[data-version]"),
-    scale: q("[data-scale]"),
-    confirm: q("[data-confirm]"),
-    confirmCountdown: q("[data-confirm-countdown]"),
-    confirmKeep: q("[data-confirm-keep]"),
-    confirmCancel: q("[data-confirm-cancel]"),
-    langBtns: Array.from(root.querySelectorAll("[data-lang]")),
-  };
+      const els = {
+        statusText: q("[data-status-text]"),
+        clients: q("[data-clients]"),
+        meterHost: q("[data-meter-host]"),
+        sr: q("[data-sr]"),
+        channels: q("[data-channels]"),
+        latency: q("[data-latency]"),
+        port: q("[data-port]"),
+        vol: q("[data-vol]"),
+        volLabel: q("[data-vol-label]"),
+        cta: q("[data-cta]"),
+        ctaText: q("[data-cta-text]"),
+        hint: q("[data-hint]"),
+        version: q("[data-version]"),
+        scale: q("[data-scale]"),
+        confirm: q("[data-confirm]"),
+        confirmCountdown: q("[data-confirm-countdown]"),
+        confirmKeep: q("[data-confirm-keep]"),
+        confirmCancel: q("[data-confirm-cancel]"),
+        langBtns: Array.from(root.querySelectorAll("[data-lang]")),
+      };
 
-  const state = { running: false, clients: 0, port: 9420, volume: 100, lang: "zh", channels: 2, uiScale: 1 };
+      const state = {
+        running: false,
+        clients: 0,
+        port: 9420,
+        volume: 100,
+        lang: "zh",
+        channels: 2,
+        uiScale: 1,
+      };
 
-  // 后端自动切换：插件内 -> JUCE 原生集成；纯浏览器 -> WsPreview(mock server)
-  const bridge = createBridge({
-    previewInit: { version: "1.3.1", port: state.port, volume: state.volume, lang: state.lang, uiScale: state.uiScale },
-  });
-  const isPlugin = !bridge.isPreview;
-
-  // ---------------- 界面缩放（DPI/窗口无关铺满 + 防呆确认）----------------
-  // 插件内：C++ 把编辑器窗口 setSize 为 DESIGN×F；web 把卡片设为**固定设计盒 DESIGN_W×DESIGN_H px + zoom:F**
-  // —— 渲染 = DESIGN×F = 编辑器窗口（setResizable(false,false) 保证），故精确铺满、内容恒按设计盒布局不裁切。
-  // 卡片尺寸只用常量 F、**不读 innerWidth/CSS 视口** → 免疫 WebView2 resize 时视口不同步（v1.2.6 修右下黑边），
-  // 也不复发 v1.2.4 高 DPI 双重放大。（v1.2.5 曾用 (100/F)% 视口百分比，已弃。）
-  // 纯浏览器预览：卡片固定设计盒，按视口等比缩小以适配窄屏（叠加用户所选档位）。
-  // DESIGN_W/H 必须与 C++ kDesignW/kDesignH 同步（见 WebViewEditor.cpp）。
-  const DESIGN_W = 460;
-  const DESIGN_H = 560;
-  const SCALE_PRESETS = [0.33, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.5, 3];
-
-  function applyPreviewFit() {
-    // 预览：把 460×560 设计盒等比缩到浏览器视口内（窄/矮屏不裁切），再叠加用户所选档位。
-    const fit = Math.min(1, (window.innerWidth - 24) / DESIGN_W, (window.innerHeight - 24) / DESIGN_H);
-    card.style.zoom = String(state.uiScale * Math.max(0.1, fit));
-  }
-
-  // 把当前 state.uiScale 应用到卡片（不改窗口、不弹确认）。
-  function applyScale() {
-    if (isPlugin) {
-      // 卡片是固定设计盒（DESIGN_W×DESIGN_H，见 layoutForMode），仅用 zoom:F 缩放：渲染 = DESIGN×F =
-      // 编辑器窗口（C++ setSize=DESIGN×F 保证）→ 精确铺满、内容恒按设计盒布局不裁切。**不读视口/innerWidth**
-      // （v1.2.6：弃 (100/F)% 视口百分比——WebView2 原生 resize 时 CSS 视口不一定同步，会致右下黑边+裁切）。
-      card.style.zoom = String(state.uiScale || 1);
-    } else {
-      applyPreviewFit();
-    }
-  }
-
-  function layoutForMode() {
-    if (isPlugin) {
-      // #vst-root 已是 fixed;inset:0;overflow:hidden（= 视口裁剪框）；卡片 = 固定设计盒、绝对定位于左上，
-      // 由 applyScale 的 zoom:F 缩放到铺满编辑器窗口（尺寸不依赖视口，稳健）。
-      Object.assign(root.style, { display: "block", alignItems: "", justifyContent: "" });
-      Object.assign(card.style, {
-        position: "absolute", top: "0", left: "0",
-        width: DESIGN_W + "px", height: DESIGN_H + "px", maxWidth: "none",
+      // 后端自动切换：插件内 -> JUCE 原生集成；纯浏览器 -> WsPreview(mock server)
+      const bridge = createBridge({
+        previewInit: {
+          version: "1.3.1",
+          port: state.port,
+          volume: state.volume,
+          lang: state.lang,
+          uiScale: state.uiScale,
+        },
       });
-    } else {
-      // 纯浏览器预览：卡片固定设计盒 + 按视口等比缩小演示（resize 重算 fit）。去掉 max-width:100%，
-      // 窄屏由 applyPreviewFit 等比 zoom 兜住（否则宽度被裁会变形）。root 自身可滚动、卡片用 margin:auto
-      // 居中——放大档位(>100%)超出视口时也能滚到被裁区域（规避 flex center 的溢出不可达），仅预览生效、不影响插件。
-      Object.assign(root.style, { overflow: "auto", alignItems: "", justifyContent: "" });
-      Object.assign(card.style, { width: DESIGN_W + "px", height: DESIGN_H + "px", maxWidth: "none", margin: "auto" });
-      window.addEventListener("resize", applyPreviewFit);
-    }
-  }
+      const isPlugin = !bridge.isPreview;
 
-  function nearestPreset(f) {
-    let best = SCALE_PRESETS[0];
-    let bd = Infinity;
-    for (const p of SCALE_PRESETS) {
-      const d = Math.abs(p - f);
-      if (d < bd) { bd = d; best = p; }
-    }
-    return best;
-  }
+      // ---------------- 界面缩放（DPI/窗口无关铺满 + 防呆确认）----------------
+      // 插件内：C++ 把编辑器窗口 setSize 为 DESIGN×F；web 把卡片设为**固定设计盒 DESIGN_W×DESIGN_H px + zoom:F**
+      // —— 渲染 = DESIGN×F = 编辑器窗口（setResizable(false,false) 保证），故精确铺满、内容恒按设计盒布局不裁切。
+      // 卡片尺寸只用常量 F、**不读 innerWidth/CSS 视口** → 免疫 WebView2 resize 时视口不同步（v1.2.6 修右下黑边），
+      // 也不复发 v1.2.4 高 DPI 双重放大。（v1.2.5 曾用 (100/F)% 视口百分比，已弃。）
+      // 纯浏览器预览：卡片固定设计盒，按视口等比缩小以适配窄屏（叠加用户所选档位）。
+      // DESIGN_W/H 必须与 C++ kDesignW/kDesignH 同步（见 WebViewEditor.cpp）。
+      const DESIGN_W = 460;
+      const DESIGN_H = 560;
+      const SCALE_PRESETS = [0.33, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.5, 3];
 
-  // 静默设定档位（boot/snapshot 用已确认的持久值：不弹确认、插件内不再 setSize（C++ 构造已按持久值定尺寸））。
-  function setScaleSilent(f) {
-    state.uiScale = nearestPreset(Number(f) || 1);
-    els.scale.value = String(state.uiScale);
-    applyScale();
-  }
-
-  // ---- 防呆确认：切新档位后弹确认，10s 不点或点取消则回退上一个已确认档位（类 Windows 改分辨率）----
-  const scaleConfirm = { prev: 1, timer: 0, countdown: 0 };
-  const isConfirmPending = () => els.confirm.style.display === "flex";
-
-  // 应用新档位到卡片 + 下拉 +（插件）C++ setSize/全局持久化。
-  function applyScaleFull(f) {
-    state.uiScale = nearestPreset(Number(f) || 1);
-    els.scale.value = String(state.uiScale);
-    applyScale();
-    if (isPlugin) bridge.setUiScale(state.uiScale); // C++ setSize(DESIGN×F) 实时预览；全局落盘留到 keepScale
-  }
-
-  function requestScaleChange(f) {
-    if (!isConfirmPending()) scaleConfirm.prev = state.uiScale; // 基线取上一个「已确认」档位
-    applyScaleFull(f);
-    showScaleConfirm();
-  }
-
-  function clearScaleConfirmTimers() {
-    if (scaleConfirm.timer) clearTimeout(scaleConfirm.timer);
-    if (scaleConfirm.countdown) clearInterval(scaleConfirm.countdown);
-    scaleConfirm.timer = 0;
-    scaleConfirm.countdown = 0;
-  }
-
-  function showScaleConfirm() {
-    clearScaleConfirmTimers();
-    let remaining = 10;
-    els.confirmCountdown.textContent = String(remaining);
-    els.confirm.style.display = "flex";
-    scaleConfirm.countdown = setInterval(() => {
-      remaining -= 1;
-      els.confirmCountdown.textContent = String(Math.max(0, remaining));
-    }, 1000);
-    scaleConfirm.timer = setTimeout(revertScale, 10000);
-  }
-
-  function hideScaleConfirm() {
-    clearScaleConfirmTimers();
-    els.confirm.style.display = "none";
-  }
-
-  function keepScale() {
-    hideScaleConfirm();
-    // 确认后才把该档位写入全局默认（防呆：未确认档位不落盘，避免关窗污染新实例尺寸）。
-    if (isPlugin) bridge.commitUiScale();
-  }
-
-  function revertScale() {
-    const prev = scaleConfirm.prev;
-    hideScaleConfirm();
-    applyScaleFull(prev); // 回退到上一个已确认档位（同步改窗口 + 持久化）
-  }
-
-  // ---------------- 电平表：JS rAF 弹道（fast-follow + peak-hold），按声道数动态建条 ----------------
-  // dBFS 刻度（镜像 lib/space/LevelMeter.tsx dbToPercent）：-60 地板 → 0%，0 顶 → 100%。
-  const DB_FLOOR = -60;
-  const DB_CEILING = 0;
-  const DB_RANGE = DB_CEILING - DB_FLOOR;
-  // 弹道常量（镜像 lib/space/peak-hold.ts 与 lib/hooks/useTrackAudioLevel.ts）。
-  const PEAK_HOLD_MS = 2200;
-  const PEAK_DECAY_DB_PER_SEC = 20;
-  const LEVEL_DECAY_DB_PER_SEC = 120;
-  const METER_GRADIENT = "linear-gradient(90deg,#76C28C 0%,#76C28C 52%,#D6C078 78%,#D98C8C 100%)";
-
-  function dbToPercent(db) {
-    if (!Number.isFinite(db) || db <= DB_FLOOR) return 0;
-    return ((Math.min(db, DB_CEILING) - DB_FLOOR) / DB_RANGE) * 100;
-  }
-
-  // 峰值保持弹道：瞬时起振 → 平台保持 → 线性衰减，恒保证 peak >= level。
-  function stepPeakHold(st, level, dtSec, now) {
-    if (!Number.isFinite(st.peak) || level >= st.peak) return { peak: level, holdUntil: now + PEAK_HOLD_MS };
-    if (now < st.holdUntil) return st;
-    return { peak: Math.max(level, st.peak - PEAK_DECAY_DB_PER_SEC * Math.max(0, dtSec)), holdUntil: st.holdUntil };
-  }
-
-  const meter = {
-    count: 0,
-    targetDb: [],
-    fastDb: [],
-    peakState: [],
-    fillEls: [],
-    gradEls: [],
-    peakEls: [],
-    dbEls: [],
-    lastTick: 0,
-    raf: 0,
-  };
-
-  function buildMeters(nRaw) {
-    const n = Math.max(1, Math.min(2, nRaw | 0));
-    if (n === meter.count && meter.fillEls.length === n) return;
-    meter.count = n;
-    meter.targetDb = [];
-    meter.fastDb = [];
-    meter.peakState = [];
-    meter.fillEls = [];
-    meter.gradEls = [];
-    meter.peakEls = [];
-    meter.dbEls = [];
-    els.meterHost.textContent = "";
-    const labels = n === 1 ? [""] : ["L", "R"];
-    for (let i = 0; i < n; i++) {
-      const row = document.createElement("div");
-      row.style.cssText = "display:flex;align-items:center;gap:9px" + (i < n - 1 ? ";margin-bottom:9px" : "");
-
-      const lab = document.createElement("span");
-      lab.textContent = labels[i];
-      lab.style.cssText = "font-family:var(--ff-mono);font-size:9px;color:#6A6A74;width:10px";
-
-      const track = document.createElement("div");
-      track.style.cssText =
-        "flex:1;height:9px;border-radius:999px;background:rgba(255,255,255,0.3);overflow:hidden;position:relative;border:1px solid rgba(255,255,255,0.42)";
-
-      const fill = document.createElement("div");
-      fill.style.cssText = "position:absolute;left:0;top:0;height:100%;width:0%;border-radius:999px;overflow:hidden";
-      const grad = document.createElement("div");
-      // 内层渐变按「轨道整宽」放大，使颜色随绝对位置稳定（不随填充宽度伸缩），与 Creative Space 一致。
-      grad.style.cssText = "position:absolute;left:0;top:0;height:100%;width:0%;background:" + METER_GRADIENT;
-      fill.appendChild(grad);
-
-      const peak = document.createElement("div");
-      peak.style.cssText =
-        "position:absolute;top:0;left:0;height:100%;width:2px;border-radius:999px;background:rgba(255,255,255,0.8);opacity:0";
-
-      track.appendChild(fill);
-      track.appendChild(peak);
-
-      const db = document.createElement("span");
-      db.textContent = "—";
-      // tabular/lining 数字：dB 读数跳动时列宽稳定（对齐 styles.css 既有实时数值样式意图）。
-      db.style.cssText =
-        "font-family:var(--ff-mono);font-size:8.5px;color:#6A6A74;width:32px;text-align:right;font-variant-numeric:tabular-nums lining-nums";
-
-      row.appendChild(lab);
-      row.appendChild(track);
-      row.appendChild(db);
-      els.meterHost.appendChild(row);
-
-      meter.targetDb.push(-Infinity);
-      meter.fastDb.push(-Infinity);
-      meter.peakState.push({ peak: -Infinity, holdUntil: 0 });
-      meter.fillEls.push(fill);
-      meter.gradEls.push(grad);
-      meter.peakEls.push(peak);
-      meter.dbEls.push(db);
-    }
-  }
-
-  function resetMeters() {
-    for (let i = 0; i < meter.count; i++) {
-      meter.targetDb[i] = -Infinity;
-      meter.fastDb[i] = -Infinity;
-      meter.peakState[i] = { peak: -Infinity, holdUntil: 0 };
-    }
-  }
-
-  function meterTick(now) {
-    const dt = Math.max(0, (now - meter.lastTick) / 1000);
-    meter.lastTick = now;
-    for (let i = 0; i < meter.count; i++) {
-      const target = state.running ? meter.targetDb[i] : -Infinity;
-      // 绿条：瞬时起振、快回落 120 dB/s（近乎实时跟音）。
-      let fast = meter.fastDb[i];
-      if (target >= fast || !Number.isFinite(fast)) fast = target;
-      else fast = Math.max(target, fast - LEVEL_DECAY_DB_PER_SEC * dt);
-      meter.fastDb[i] = fast;
-      // 峰值线：hold-then-decay。
-      meter.peakState[i] = stepPeakHold(meter.peakState[i], target, dt, now);
-
-      const pct = dbToPercent(fast);
-      if (pct > 0) {
-        meter.fillEls[i].style.width = pct.toFixed(2) + "%";
-        meter.gradEls[i].style.width = (10000 / pct).toFixed(1) + "%";
-      } else {
-        meter.fillEls[i].style.width = "0%";
+      function applyPreviewFit() {
+        // 预览：把 460×560 设计盒等比缩到浏览器视口内（窄/矮屏不裁切），再叠加用户所选档位。
+        const fit = Math.min(
+          1,
+          (window.innerWidth - 24) / DESIGN_W,
+          (window.innerHeight - 24) / DESIGN_H,
+        );
+        card.style.zoom = String(state.uiScale * Math.max(0.1, fit));
       }
 
-      const pkDb = meter.peakState[i].peak;
-      const pkPct = dbToPercent(pkDb);
-      if (state.running && Number.isFinite(pkDb) && pkPct > 0) {
-        meter.peakEls[i].style.left = Math.min(pkPct, 99.5).toFixed(2) + "%";
-        meter.peakEls[i].style.opacity = "1";
-      } else {
-        meter.peakEls[i].style.opacity = "0";
+      // 把当前 state.uiScale 应用到卡片（不改窗口、不弹确认）。
+      function applyScale() {
+        if (isPlugin) {
+          // 卡片是固定设计盒（DESIGN_W×DESIGN_H，见 layoutForMode），仅用 zoom:F 缩放：渲染 = DESIGN×F =
+          // 编辑器窗口（C++ setSize=DESIGN×F 保证）→ 精确铺满、内容恒按设计盒布局不裁切。**不读视口/innerWidth**
+          // （v1.2.6：弃 (100/F)% 视口百分比——WebView2 原生 resize 时 CSS 视口不一定同步，会致右下黑边+裁切）。
+          card.style.zoom = String(state.uiScale || 1);
+        } else {
+          applyPreviewFit();
+        }
       }
 
-      const readDb = state.running ? meter.targetDb[i] : -Infinity;
-      meter.dbEls[i].textContent = Number.isFinite(readDb) && readDb > DB_FLOOR ? readDb.toFixed(1) : "—";
-    }
-    meter.raf = requestAnimationFrame(meterTick);
-  }
+      function layoutForMode() {
+        if (isPlugin) {
+          // #vst-root 已是 fixed;inset:0;overflow:hidden（= 视口裁剪框）；卡片 = 固定设计盒、绝对定位于左上，
+          // 由 applyScale 的 zoom:F 缩放到铺满编辑器窗口（尺寸不依赖视口，稳健）。
+          Object.assign(root.style, {
+            display: "block",
+            alignItems: "",
+            justifyContent: "",
+          });
+          Object.assign(card.style, {
+            position: "absolute",
+            top: "0",
+            left: "0",
+            width: DESIGN_W + "px",
+            height: DESIGN_H + "px",
+            maxWidth: "none",
+          });
+        } else {
+          // 纯浏览器预览：卡片固定设计盒 + 按视口等比缩小演示（resize 重算 fit）。去掉 max-width:100%，
+          // 窄屏由 applyPreviewFit 等比 zoom 兜住（否则宽度被裁会变形）。root 自身可滚动、卡片用 margin:auto
+          // 居中——放大档位(>100%)超出视口时也能滚到被裁区域（规避 flex center 的溢出不可达），仅预览生效、不影响插件。
+          Object.assign(root.style, {
+            overflow: "auto",
+            alignItems: "",
+            justifyContent: "",
+          });
+          Object.assign(card.style, {
+            width: DESIGN_W + "px",
+            height: DESIGN_H + "px",
+            maxWidth: "none",
+            margin: "auto",
+          });
+          window.addEventListener("resize", applyPreviewFit);
+        }
+      }
 
-  // ---------------- helpers ----------------
-  const t = () => dict(state.lang);
+      function nearestPreset(f) {
+        let best = SCALE_PRESETS[0];
+        let bd = Infinity;
+        for (const p of SCALE_PRESETS) {
+          const d = Math.abs(p - f);
+          if (d < bd) {
+            bd = d;
+            best = p;
+          }
+        }
+        return best;
+      }
 
-  // 连接状态（状态灯据此显示）：offline=桥未启动；waiting=已启动但无浏览器客户端连接（桥断/浏览器关，
-  // 用户能借此察觉「链路断了」）；online=有浏览器客户端在桥。CTA/图标仍按 running（见 data-run）。
-  const connState = () => (!state.running ? "offline" : state.clients > 0 ? "online" : "waiting");
-  const renderStatusText = () => {
-    root.dataset.conn = connState();          // 供 CSS 上色（绿=online / 琥珀=waiting / 灰=offline）
-    els.statusText.textContent = t()[connState()]; // online / waiting / offline 文案
-  };
-  const renderChannels = () => { els.channels.textContent = state.channels === 1 ? t().mono : t().stereo; };
-  const renderCta = () => { els.ctaText.textContent = state.running ? t().stop : t().start; };
-  const renderHint = () => {
-    const c = connState();
-    els.hint.textContent = c === "online" ? t().startedHint : c === "waiting" ? t().waitingHint : t().stoppedHint;
-  };
-  const renderClients = () => { els.clients.textContent = state.running ? String(state.clients) : "0"; };
+      // 静默设定档位（boot/snapshot 用已确认的持久值：不弹确认、插件内不再 setSize（C++ 构造已按持久值定尺寸））。
+      function setScaleSilent(f) {
+        state.uiScale = nearestPreset(Number(f) || 1);
+        els.scale.value = String(state.uiScale);
+        applyScale();
+      }
 
-  function updateLangButtons() {
-    els.langBtns.forEach((b) => {
-      const active = b.getAttribute("data-lang") === state.lang;
-      b.style.background = active ? "rgba(255,255,255,0.92)" : "transparent";
-      b.style.color = active ? "#21212A" : "#62626C";
-      b.setAttribute("aria-pressed", active ? "true" : "false");
-    });
-  }
+      // ---- 防呆确认：切新档位后弹确认，10s 不点或点取消则回退上一个已确认档位（类 Windows 改分辨率）----
+      const scaleConfirm = { prev: 1, timer: 0, countdown: 0 };
+      const isConfirmPending = () => els.confirm.style.display === "flex";
 
-  function renderAll() {
-    const tt = applyI18n(root, state.lang);   // 静态 [data-t] 标签
-    document.documentElement.lang = state.lang;         // a11y：同步文档语言
-    els.port.setAttribute("aria-label", tt.localPort);  // 控件无障碍名称随语言走
-    els.vol.setAttribute("aria-label", tt.master + " (0-200%)");
-    els.scale.setAttribute("aria-label", tt.scale);
-    renderStatusText();
-    renderChannels();
-    renderCta();
-    renderHint();
-    renderClients();
-    updateLangButtons();
-  }
+      // 应用新档位到卡片 + 下拉 +（插件）C++ setSize/全局持久化。
+      function applyScaleFull(f) {
+        state.uiScale = nearestPreset(Number(f) || 1);
+        els.scale.value = String(state.uiScale);
+        applyScale();
+        if (isPlugin) bridge.setUiScale(state.uiScale); // C++ setSize(DESIGN×F) 实时预览；全局落盘留到 keepScale
+      }
 
-  function setRunning(running) {
-    state.running = running;
-    root.dataset.run = running ? "1" : "0";
-    renderStatusText();
-    renderCta();
-    renderHint();
-    renderClients();
-    if (!running) resetMeters();  // 停止：弹道复位归零（根治空闲假电平）
-  }
+      function requestScaleChange(f) {
+        if (!isConfirmPending()) scaleConfirm.prev = state.uiScale; // 基线取上一个「已确认」档位
+        applyScaleFull(f);
+        showScaleConfirm();
+      }
 
-  function showTransientHint(text) {
-    els.hint.textContent = text;
-    setTimeout(renderHint, 3200);
-  }
+      function clearScaleConfirmTimers() {
+        if (scaleConfirm.timer) clearTimeout(scaleConfirm.timer);
+        if (scaleConfirm.countdown) clearInterval(scaleConfirm.countdown);
+        scaleConfirm.timer = 0;
+        scaleConfirm.countdown = 0;
+      }
 
-  // ---------------- C++/mock -> UI ----------------
-  bridge.on(EVT.STATE, (s) => {
-    if (!s) return;
-    if (typeof s.clients === "number") state.clients = s.clients;
-    if (typeof s.port === "number" && s.port > 0) {
-      state.port = s.port;
-      if (document.activeElement !== els.port) els.port.value = String(s.port);
-    }
-    if (typeof s.running === "boolean") setRunning(s.running);
-    // running 未变但客户端数变（浏览器连上/断开）：刷新连接状态灯 + 提示 + 客户端数。
-    else { renderStatusText(); renderHint(); renderClients(); }
-  });
+      function showScaleConfirm() {
+        clearScaleConfirmTimers();
+        let remaining = 10;
+        els.confirmCountdown.textContent = String(remaining);
+        els.confirm.style.display = "flex";
+        scaleConfirm.countdown = setInterval(() => {
+          remaining -= 1;
+          els.confirmCountdown.textContent = String(Math.max(0, remaining));
+        }, 1000);
+        scaleConfirm.timer = setTimeout(revertScale, 10000);
+      }
 
-  bridge.on(EVT.METER, (m) => {
-    if (!m) return;
-    // 只喂 dBFS 目标值给弹道（渲染在 meterTick）：单声道用 ldb，立体声用 ldb/rdb。
-    if (meter.count >= 1) meter.targetDb[0] = Number.isFinite(m.ldb) ? m.ldb : -Infinity;
-    if (meter.count >= 2) meter.targetDb[1] = Number.isFinite(m.rdb) ? m.rdb : -Infinity;
-  });
+      function hideScaleConfirm() {
+        clearScaleConfirmTimers();
+        els.confirm.style.display = "none";
+      }
 
-  bridge.on(EVT.AUDIO, (a) => {
-    if (!a) return;
-    if (typeof a.sampleRate === "number" && a.sampleRate > 0) els.sr.textContent = (a.sampleRate / 1000).toFixed(1);
-    if (typeof a.channels === "number") { state.channels = a.channels; renderChannels(); buildMeters(a.channels); }
-    if (a.latencyMs != null && Number.isFinite(Number(a.latencyMs))) els.latency.textContent = Number(a.latencyMs).toFixed(1);
-  });
+      function keepScale() {
+        hideScaleConfirm();
+        // 确认后才把该档位写入全局默认（防呆：未确认档位不落盘，避免关窗污染新实例尺寸）。
+        if (isPlugin) bridge.commitUiScale();
+      }
 
-  bridge.on(EVT.ERROR, (e) => {
-    if (!e) return;
-    showTransientHint(e.message || e.code || "Error");
-  });
+      function revertScale() {
+        const prev = scaleConfirm.prev;
+        hideScaleConfirm();
+        applyScaleFull(prev); // 回退到上一个已确认档位（同步改窗口 + 持久化）
+      }
 
-  // ---------------- UI -> C++/mock ----------------
-  els.langBtns.forEach((b) => {
-    b.addEventListener("click", () => {
-      const code = b.getAttribute("data-lang");
-      if (code === state.lang) return;
-      state.lang = code;
-      bridge.setLang(code);
-      renderAll();
-    });
-  });
+      // ---------------- 电平表：JS rAF 弹道（fast-follow + peak-hold），按声道数动态建条 ----------------
+      // dBFS 刻度（镜像 lib/space/LevelMeter.tsx dbToPercent）：-60 地板 → 0%，0 顶 → 100%。
+      const DB_FLOOR = -60;
+      const DB_CEILING = 0;
+      const DB_RANGE = DB_CEILING - DB_FLOOR;
+      // 弹道常量（镜像 lib/space/peak-hold.ts 与 lib/hooks/useTrackAudioLevel.ts）。
+      const PEAK_HOLD_MS = 2200;
+      const PEAK_DECAY_DB_PER_SEC = 20;
+      const LEVEL_DECAY_DB_PER_SEC = 120;
+      const METER_GRADIENT =
+        "linear-gradient(90deg,#76C28C 0%,#76C28C 52%,#D6C078 78%,#D98C8C 100%)";
 
-  els.port.addEventListener("input", () => {
-    els.port.value = (els.port.value || "").replace(/[^0-9]/g, "").slice(0, 5);
-  });
-  els.port.addEventListener("change", () => {
-    const p = parseInt(els.port.value, 10);
-    if (p >= 1024 && p <= 65535) { state.port = p; bridge.setPort(p); }
-  });
+      function dbToPercent(db) {
+        if (!Number.isFinite(db) || db <= DB_FLOOR) return 0;
+        return ((Math.min(db, DB_CEILING) - DB_FLOOR) / DB_RANGE) * 100;
+      }
 
-  els.vol.addEventListener("input", () => {
-    const pct = parseInt(els.vol.value, 10) || 0;
-    state.volume = pct;
-    els.volLabel.textContent = pct + "%";
-    bridge.setMasterGain(pct);
-  });
+      // 峰值保持弹道：瞬时起振 → 平台保持 → 线性衰减，恒保证 peak >= level。
+      function stepPeakHold(st, level, dtSec, now) {
+        if (!Number.isFinite(st.peak) || level >= st.peak)
+          return { peak: level, holdUntil: now + PEAK_HOLD_MS };
+        if (now < st.holdUntil) return st;
+        return {
+          peak: Math.max(
+            level,
+            st.peak - PEAK_DECAY_DB_PER_SEC * Math.max(0, dtSec),
+          ),
+          holdUntil: st.holdUntil,
+        };
+      }
 
-  els.scale.addEventListener("change", () => {
-    requestScaleChange(parseFloat(els.scale.value) || 1); // 改档位 -> 应用 + 弹防呆确认（10s 自动恢复）
-  });
-  els.confirmKeep.addEventListener("click", keepScale);
-  els.confirmCancel.addEventListener("click", revertScale);
+      const meter = {
+        count: 0,
+        targetDb: [],
+        fastDb: [],
+        peakState: [],
+        fillEls: [],
+        gradEls: [],
+        peakEls: [],
+        dbEls: [],
+        lastTick: 0,
+        raf: 0,
+      };
 
-  els.cta.addEventListener("click", async () => {
-    const want = !state.running;
-    if (want) {
-      const p = parseInt(els.port.value, 10);
-      if (p >= 1024 && p <= 65535) { state.port = p; await bridge.setPort(p); }
-    }
-    const r = (await bridge.toggleRun(want)) || {};
-    if (r.error) showTransientHint(r.error);
-    if (typeof r.port === "number" && r.port > 0) {
-      state.port = r.port;
-      if (document.activeElement !== els.port) els.port.value = String(r.port);
-    }
-    setRunning(typeof r.running === "boolean" ? r.running : want);
-  });
+      function buildMeters(nRaw) {
+        const n = Math.max(1, Math.min(2, nRaw | 0));
+        if (n === meter.count && meter.fillEls.length === n) return;
+        meter.count = n;
+        meter.targetDb = [];
+        meter.fastDb = [];
+        meter.peakState = [];
+        meter.fillEls = [];
+        meter.gradEls = [];
+        meter.peakEls = [];
+        meter.dbEls = [];
+        els.meterHost.textContent = "";
+        const labels = n === 1 ? [""] : ["L", "R"];
+        for (let i = 0; i < n; i++) {
+          const row = document.createElement("div");
+          row.style.cssText =
+            "display:flex;align-items:center;gap:9px" +
+            (i < n - 1 ? ";margin-bottom:9px" : "");
 
-  // ---------------- cursor-follow glow (single document handler) ----------------
-  let glowEl = null;
-  document.addEventListener("mousemove", (e) => {
-    const el = (e.target.closest && e.target.closest("[data-glow], button")) || null;
-    if (el !== glowEl) {
-      if (glowEl) glowEl.style.setProperty("--glow", "0");
-      glowEl = el;
-      if (el) el.style.setProperty("--glow", "1");
-    }
-    if (el) {
-      const rect = el.getBoundingClientRect();
-      el.style.setProperty("--mx", (e.clientX - rect.left) + "px");
-      el.style.setProperty("--my", (e.clientY - rect.top) + "px");
-    }
-  });
+          const lab = document.createElement("span");
+          lab.textContent = labels[i];
+          lab.style.cssText =
+            "font-family:var(--ff-mono);font-size:9px;color:#6A6A74;width:10px";
 
-  // ---------------- first paint: seed labels, then pull race-free snapshot ----------------
-  function applySnapshot(s) {
-    if (!s) return;
-    if (s.version) els.version.textContent = "Synchain VST · v" + s.version;
-    if (s.lang) state.lang = s.lang;
-    if (typeof s.volume === "number") {
-      state.volume = s.volume;
-      els.vol.value = String(s.volume);
-      els.volLabel.textContent = s.volume + "%";
-    }
-    if (typeof s.port === "number" && s.port > 0) { state.port = s.port; els.port.value = String(s.port); }
-    if (typeof s.sampleRate === "number" && s.sampleRate > 0) els.sr.textContent = (s.sampleRate / 1000).toFixed(1);
-    if (typeof s.channels === "number") { state.channels = s.channels; buildMeters(s.channels); }
-    if (s.latencyMs != null && Number.isFinite(Number(s.latencyMs))) els.latency.textContent = Number(s.latencyMs).toFixed(1);
-    if (typeof s.clients === "number") state.clients = s.clients;
-    if (s.uiScale != null) setScaleSilent(s.uiScale); // 静默应用持久档位（不弹确认、不改窗口）
-    renderAll();
-    setRunning(!!s.running);
-  }
+          const track = document.createElement("div");
+          track.style.cssText =
+            "flex:1;height:9px;border-radius:999px;background:rgba(255,255,255,0.3);overflow:hidden;position:relative;border:1px solid rgba(255,255,255,0.42)";
 
-  async function boot() {
-    layoutForMode();
-    setScaleSilent(state.uiScale);
-    buildMeters(state.channels);
-    meter.lastTick = performance.now();
-    meter.raf = requestAnimationFrame(meterTick);
-    renderAll();  // 立即按默认语言渲染静态标签
-    try {
-      applySnapshot(await bridge.requestInitialState());
-    } catch {
-      renderAll();  // 兜底
-    }
-  }
+          const fill = document.createElement("div");
+          fill.style.cssText =
+            "position:absolute;left:0;top:0;height:100%;width:0%;border-radius:999px;overflow:hidden";
+          const grad = document.createElement("div");
+          // 内层渐变按「轨道整宽」放大，使颜色随绝对位置稳定（不随填充宽度伸缩），与 Creative Space 一致。
+          grad.style.cssText =
+            "position:absolute;left:0;top:0;height:100%;width:0%;background:" +
+            METER_GRADIENT;
+          fill.appendChild(grad);
 
-  if (document.readyState === "loading") {
-    window.addEventListener("DOMContentLoaded", boot);
-  } else {
-    boot();
-  }
-</script>
-</body>
+          const peak = document.createElement("div");
+          peak.style.cssText =
+            "position:absolute;top:0;left:0;height:100%;width:2px;border-radius:999px;background:rgba(255,255,255,0.8);opacity:0";
+
+          track.appendChild(fill);
+          track.appendChild(peak);
+
+          const db = document.createElement("span");
+          db.textContent = "—";
+          // tabular/lining 数字：dB 读数跳动时列宽稳定（对齐 styles.css 既有实时数值样式意图）。
+          db.style.cssText =
+            "font-family:var(--ff-mono);font-size:8.5px;color:#6A6A74;width:32px;text-align:right;font-variant-numeric:tabular-nums lining-nums";
+
+          row.appendChild(lab);
+          row.appendChild(track);
+          row.appendChild(db);
+          els.meterHost.appendChild(row);
+
+          meter.targetDb.push(-Infinity);
+          meter.fastDb.push(-Infinity);
+          meter.peakState.push({ peak: -Infinity, holdUntil: 0 });
+          meter.fillEls.push(fill);
+          meter.gradEls.push(grad);
+          meter.peakEls.push(peak);
+          meter.dbEls.push(db);
+        }
+      }
+
+      function resetMeters() {
+        for (let i = 0; i < meter.count; i++) {
+          meter.targetDb[i] = -Infinity;
+          meter.fastDb[i] = -Infinity;
+          meter.peakState[i] = { peak: -Infinity, holdUntil: 0 };
+        }
+      }
+
+      function meterTick(now) {
+        const dt = Math.max(0, (now - meter.lastTick) / 1000);
+        meter.lastTick = now;
+        for (let i = 0; i < meter.count; i++) {
+          const target = state.running ? meter.targetDb[i] : -Infinity;
+          // 绿条：瞬时起振、快回落 120 dB/s（近乎实时跟音）。
+          let fast = meter.fastDb[i];
+          if (target >= fast || !Number.isFinite(fast)) fast = target;
+          else fast = Math.max(target, fast - LEVEL_DECAY_DB_PER_SEC * dt);
+          meter.fastDb[i] = fast;
+          // 峰值线：hold-then-decay。
+          meter.peakState[i] = stepPeakHold(
+            meter.peakState[i],
+            target,
+            dt,
+            now,
+          );
+
+          const pct = dbToPercent(fast);
+          if (pct > 0) {
+            meter.fillEls[i].style.width = pct.toFixed(2) + "%";
+            meter.gradEls[i].style.width = (10000 / pct).toFixed(1) + "%";
+          } else {
+            meter.fillEls[i].style.width = "0%";
+          }
+
+          const pkDb = meter.peakState[i].peak;
+          const pkPct = dbToPercent(pkDb);
+          if (state.running && Number.isFinite(pkDb) && pkPct > 0) {
+            meter.peakEls[i].style.left =
+              Math.min(pkPct, 99.5).toFixed(2) + "%";
+            meter.peakEls[i].style.opacity = "1";
+          } else {
+            meter.peakEls[i].style.opacity = "0";
+          }
+
+          const readDb = state.running ? meter.targetDb[i] : -Infinity;
+          meter.dbEls[i].textContent =
+            Number.isFinite(readDb) && readDb > DB_FLOOR
+              ? readDb.toFixed(1)
+              : "—";
+        }
+        meter.raf = requestAnimationFrame(meterTick);
+      }
+
+      // ---------------- helpers ----------------
+      const t = () => dict(state.lang);
+
+      // 连接状态（状态灯据此显示）：offline=桥未启动；waiting=已启动但无浏览器客户端连接（桥断/浏览器关，
+      // 用户能借此察觉「链路断了」）；online=有浏览器客户端在桥。CTA/图标仍按 running（见 data-run）。
+      const connState = () =>
+        !state.running ? "offline" : state.clients > 0 ? "online" : "waiting";
+      const renderStatusText = () => {
+        root.dataset.conn = connState(); // 供 CSS 上色（绿=online / 琥珀=waiting / 灰=offline）
+        els.statusText.textContent = t()[connState()]; // online / waiting / offline 文案
+      };
+      const renderChannels = () => {
+        els.channels.textContent = state.channels === 1 ? t().mono : t().stereo;
+      };
+      const renderCta = () => {
+        els.ctaText.textContent = state.running ? t().stop : t().start;
+      };
+      const renderHint = () => {
+        const c = connState();
+        els.hint.textContent =
+          c === "online"
+            ? t().startedHint
+            : c === "waiting"
+              ? t().waitingHint
+              : t().stoppedHint;
+      };
+      const renderClients = () => {
+        els.clients.textContent = state.running ? String(state.clients) : "0";
+      };
+
+      function updateLangButtons() {
+        els.langBtns.forEach((b) => {
+          const active = b.getAttribute("data-lang") === state.lang;
+          b.style.background = active
+            ? "rgba(255,255,255,0.92)"
+            : "transparent";
+          b.style.color = active ? "#21212A" : "#62626C";
+          b.setAttribute("aria-pressed", active ? "true" : "false");
+        });
+      }
+
+      function renderAll() {
+        const tt = applyI18n(root, state.lang); // 静态 [data-t] 标签
+        document.documentElement.lang = state.lang; // a11y：同步文档语言
+        els.port.setAttribute("aria-label", tt.localPort); // 控件无障碍名称随语言走
+        els.vol.setAttribute("aria-label", tt.master + " (0-200%)");
+        els.scale.setAttribute("aria-label", tt.scale);
+        renderStatusText();
+        renderChannels();
+        renderCta();
+        renderHint();
+        renderClients();
+        updateLangButtons();
+      }
+
+      function setRunning(running) {
+        state.running = running;
+        root.dataset.run = running ? "1" : "0";
+        renderStatusText();
+        renderCta();
+        renderHint();
+        renderClients();
+        if (!running) resetMeters(); // 停止：弹道复位归零（根治空闲假电平）
+      }
+
+      function showTransientHint(text) {
+        els.hint.textContent = text;
+        setTimeout(renderHint, 3200);
+      }
+
+      // ---------------- C++/mock -> UI ----------------
+      bridge.on(EVT.STATE, (s) => {
+        if (!s) return;
+        if (typeof s.clients === "number") state.clients = s.clients;
+        if (typeof s.port === "number" && s.port > 0) {
+          state.port = s.port;
+          if (document.activeElement !== els.port)
+            els.port.value = String(s.port);
+        }
+        if (typeof s.running === "boolean") setRunning(s.running);
+        // running 未变但客户端数变（浏览器连上/断开）：刷新连接状态灯 + 提示 + 客户端数。
+        else {
+          renderStatusText();
+          renderHint();
+          renderClients();
+        }
+      });
+
+      bridge.on(EVT.METER, (m) => {
+        if (!m) return;
+        // 只喂 dBFS 目标值给弹道（渲染在 meterTick）：单声道用 ldb，立体声用 ldb/rdb。
+        if (meter.count >= 1)
+          meter.targetDb[0] = Number.isFinite(m.ldb) ? m.ldb : -Infinity;
+        if (meter.count >= 2)
+          meter.targetDb[1] = Number.isFinite(m.rdb) ? m.rdb : -Infinity;
+      });
+
+      bridge.on(EVT.AUDIO, (a) => {
+        if (!a) return;
+        if (typeof a.sampleRate === "number" && a.sampleRate > 0)
+          els.sr.textContent = (a.sampleRate / 1000).toFixed(1);
+        if (typeof a.channels === "number") {
+          state.channels = a.channels;
+          renderChannels();
+          buildMeters(a.channels);
+        }
+        if (a.latencyMs != null && Number.isFinite(Number(a.latencyMs)))
+          els.latency.textContent = Number(a.latencyMs).toFixed(1);
+      });
+
+      bridge.on(EVT.ERROR, (e) => {
+        if (!e) return;
+        showTransientHint(e.message || e.code || "Error");
+      });
+
+      // ---------------- UI -> C++/mock ----------------
+      els.langBtns.forEach((b) => {
+        b.addEventListener("click", () => {
+          const code = b.getAttribute("data-lang");
+          if (code === state.lang) return;
+          state.lang = code;
+          bridge.setLang(code);
+          renderAll();
+        });
+      });
+
+      els.port.addEventListener("input", () => {
+        els.port.value = (els.port.value || "")
+          .replace(/[^0-9]/g, "")
+          .slice(0, 5);
+      });
+      els.port.addEventListener("change", () => {
+        const p = parseInt(els.port.value, 10);
+        if (p >= 1024 && p <= 65535) {
+          state.port = p;
+          bridge.setPort(p);
+        }
+      });
+
+      els.vol.addEventListener("input", () => {
+        const pct = parseInt(els.vol.value, 10) || 0;
+        state.volume = pct;
+        els.volLabel.textContent = pct + "%";
+        bridge.setMasterGain(pct);
+      });
+
+      els.scale.addEventListener("change", () => {
+        requestScaleChange(parseFloat(els.scale.value) || 1); // 改档位 -> 应用 + 弹防呆确认（10s 自动恢复）
+      });
+      els.confirmKeep.addEventListener("click", keepScale);
+      els.confirmCancel.addEventListener("click", revertScale);
+
+      els.cta.addEventListener("click", async () => {
+        const want = !state.running;
+        if (want) {
+          const p = parseInt(els.port.value, 10);
+          if (p >= 1024 && p <= 65535) {
+            state.port = p;
+            await bridge.setPort(p);
+          }
+        }
+        const r = (await bridge.toggleRun(want)) || {};
+        if (r.error) showTransientHint(r.error);
+        if (typeof r.port === "number" && r.port > 0) {
+          state.port = r.port;
+          if (document.activeElement !== els.port)
+            els.port.value = String(r.port);
+        }
+        setRunning(typeof r.running === "boolean" ? r.running : want);
+      });
+
+      // ---------------- cursor-follow glow (single document handler) ----------------
+      let glowEl = null;
+      document.addEventListener("mousemove", (e) => {
+        const el =
+          (e.target.closest && e.target.closest("[data-glow], button")) || null;
+        if (el !== glowEl) {
+          if (glowEl) glowEl.style.setProperty("--glow", "0");
+          glowEl = el;
+          if (el) el.style.setProperty("--glow", "1");
+        }
+        if (el) {
+          const rect = el.getBoundingClientRect();
+          el.style.setProperty("--mx", e.clientX - rect.left + "px");
+          el.style.setProperty("--my", e.clientY - rect.top + "px");
+        }
+      });
+
+      // ---------------- first paint: seed labels, then pull race-free snapshot ----------------
+      function applySnapshot(s) {
+        if (!s) return;
+        if (s.version) els.version.textContent = "Synchain VST · v" + s.version;
+        if (s.lang) state.lang = s.lang;
+        if (typeof s.volume === "number") {
+          state.volume = s.volume;
+          els.vol.value = String(s.volume);
+          els.volLabel.textContent = s.volume + "%";
+        }
+        if (typeof s.port === "number" && s.port > 0) {
+          state.port = s.port;
+          els.port.value = String(s.port);
+        }
+        if (typeof s.sampleRate === "number" && s.sampleRate > 0)
+          els.sr.textContent = (s.sampleRate / 1000).toFixed(1);
+        if (typeof s.channels === "number") {
+          state.channels = s.channels;
+          buildMeters(s.channels);
+        }
+        if (s.latencyMs != null && Number.isFinite(Number(s.latencyMs)))
+          els.latency.textContent = Number(s.latencyMs).toFixed(1);
+        if (typeof s.clients === "number") state.clients = s.clients;
+        if (s.uiScale != null) setScaleSilent(s.uiScale); // 静默应用持久档位（不弹确认、不改窗口）
+        renderAll();
+        setRunning(!!s.running);
+      }
+
+      async function boot() {
+        layoutForMode();
+        setScaleSilent(state.uiScale);
+        buildMeters(state.channels);
+        meter.lastTick = performance.now();
+        meter.raf = requestAnimationFrame(meterTick);
+        renderAll(); // 立即按默认语言渲染静态标签
+        try {
+          applySnapshot(await bridge.requestInitialState());
+        } catch {
+          renderAll(); // 兜底
+        }
+      }
+
+      if (document.readyState === "loading") {
+        window.addEventListener("DOMContentLoaded", boot);
+      } else {
+        boot();
+      }
+    </script>
+  </body>
 </html>

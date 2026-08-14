@@ -14,24 +14,61 @@
 /* ---- 本地字体：text= 子集 WOFF2（仅内嵌用到的字形，四款共 ~78KB，随插件离线打包）；
        Noto Sans SC 为可变字重(400..700)，CJK 字重跟随元素；font-display:swap + 字体栈回落，
        加载/缺失都不阻塞渲染。子集脚本见 web/fonts/README。 ---- */
-@font-face { font-family: 'Space Grotesk'; src: url('./fonts/SpaceGrotesk.woff2') format('woff2'); font-weight: 400 700; font-display: swap; }
-@font-face { font-family: 'IBM Plex Sans'; src: url('./fonts/IBMPlexSans.woff2') format('woff2'); font-weight: 300 600; font-display: swap; }
-@font-face { font-family: 'IBM Plex Mono'; src: url('./fonts/IBMPlexMono.woff2') format('woff2'); font-weight: 400 500; font-display: swap; }
-@font-face { font-family: 'Noto Sans SC'; src: url('./fonts/NotoSansSC.woff2') format('woff2'); font-weight: 300 700; font-display: swap; }
+@font-face {
+  font-family: "Space Grotesk";
+  src: url("./fonts/SpaceGrotesk.woff2") format("woff2");
+  font-weight: 400 700;
+  font-display: swap;
+}
+@font-face {
+  font-family: "IBM Plex Sans";
+  src: url("./fonts/IBMPlexSans.woff2") format("woff2");
+  font-weight: 300 600;
+  font-display: swap;
+}
+@font-face {
+  font-family: "IBM Plex Mono";
+  src: url("./fonts/IBMPlexMono.woff2") format("woff2");
+  font-weight: 400 500;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Noto Sans SC";
+  src: url("./fonts/NotoSansSC.woff2") format("woff2");
+  font-weight: 300 700;
+  font-display: swap;
+}
 
 :root {
   /* CJK 统一走内嵌 Noto Sans SC：拉丁字体无 CJK 字形，浏览器按栈逐字回退，
      故把 'Noto Sans SC' 排在拉丁字体之后、系统字体之前，保证离线确定性渲染。 */
-  --ff-grotesk: 'Space Grotesk', 'Noto Sans SC', system-ui, 'Segoe UI', sans-serif;
-  --ff-sans: 'IBM Plex Sans', 'Noto Sans SC', system-ui, 'Segoe UI', 'Microsoft YaHei', sans-serif;
-  --ff-mono: 'IBM Plex Mono', 'Noto Sans SC', ui-monospace, 'Cascadia Code', 'Consolas', monospace;
+  --ff-grotesk:
+    "Space Grotesk", "Noto Sans SC", system-ui, "Segoe UI", sans-serif;
+  --ff-sans:
+    "IBM Plex Sans", "Noto Sans SC", system-ui, "Segoe UI", "Microsoft YaHei",
+    sans-serif;
+  --ff-mono:
+    "IBM Plex Mono", "Noto Sans SC", ui-monospace, "Cascadia Code", "Consolas",
+    monospace;
 }
 
-* { box-sizing: border-box; }
+* {
+  box-sizing: border-box;
+}
 /* 视口锁死：满高 + 禁滚动，配合 #vst-root(position:fixed;inset:0;overflow:hidden) 与卡片
    (100/F)%+zoom 铺满，彻底消除高 DPI 下缩放溢出的滚动条 / 触控板滚动露白边（v1.2.5）。 */
-html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; }
-#vst-root { position: fixed; inset: 0; overflow: hidden; }
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  overflow: hidden;
+}
+#vst-root {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+}
 body {
   font-family: var(--ff-sans);
   /* 排版精修：抗锯齿走灰阶（更清透，配玻璃拟态）；禁止伪粗/伪斜合成——
@@ -40,59 +77,156 @@ body {
   -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
   font-synthesis: none;
-  font-feature-settings: "kern" 1, "liga" 1, "calt" 1;
+  font-feature-settings:
+    "kern" 1,
+    "liga" 1,
+    "calt" 1;
 }
 
 /* 实时数值用等宽衬线（lining/tabular）：dB/端口/音量/采样率/延迟跳动时列宽稳定、
    基线对齐，读起来像硬件仪表而非普通文本。 */
 /* 电平表 dB 读数改由 JS 动态建条并内联 tabular-nums（见 index.html buildMeters），故此处不再列 dbl/dbr */
-#vst-root [data-clients], #vst-root [data-sr], #vst-root [data-latency],
-#vst-root [data-vol-label], #vst-root [data-port] { font-variant-numeric: tabular-nums lining-nums; }
+#vst-root [data-clients],
+#vst-root [data-sr],
+#vst-root [data-latency],
+#vst-root [data-vol-label],
+#vst-root [data-port] {
+  font-variant-numeric: tabular-nums lining-nums;
+}
 
 /* window entrance + live status pulse */
-@keyframes vbUp { from { opacity: 0; transform: translateY(16px) scale(.985); } to { opacity: 1; transform: translateY(0) scale(1); } }
-@keyframes livePulse { 0%, 100% { opacity: 1; box-shadow: 0 0 8px rgba(120,176,142,0.9); } 50% { opacity: .5; box-shadow: 0 0 16px rgba(120,176,142,1); } }
+@keyframes vbUp {
+  from {
+    opacity: 0;
+    transform: translateY(16px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+@keyframes livePulse {
+  0%,
+  100% {
+    opacity: 1;
+    box-shadow: 0 0 8px rgba(120, 176, 142, 0.9);
+  }
+  50% {
+    opacity: 0.5;
+    box-shadow: 0 0 16px rgba(120, 176, 142, 1);
+  }
+}
 
-input[type=range] { accent-color: #9B93C4; height: 5px; cursor: pointer; width: 100%; }
-input::placeholder { color: #8C8C95; }
+input[type="range"] {
+  accent-color: #9b93c4;
+  height: 5px;
+  cursor: pointer;
+  width: 100%;
+}
+input::placeholder {
+  color: #8c8c95;
+}
 
 /* cursor-follow white glow on every clickable surface */
-[data-glow], #vst-root button { position: relative; }
-[data-glow]::after, #vst-root button::after {
-  content: ""; position: absolute; inset: 0; pointer-events: none; border-radius: inherit;
-  background: radial-gradient(circle 110px at var(--mx,50%) var(--my,50%), rgba(255,255,255,0.22), transparent 60%);
-  opacity: var(--glow,0); transition: opacity .3s ease; z-index: 6;
+[data-glow],
+#vst-root button {
+  position: relative;
+}
+[data-glow]::after,
+#vst-root button::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border-radius: inherit;
+  background: radial-gradient(
+    circle 110px at var(--mx, 50%) var(--my, 50%),
+    rgba(255, 255, 255, 0.22),
+    transparent 60%
+  );
+  opacity: var(--glow, 0);
+  transition: opacity 0.3s ease;
+  z-index: 6;
 }
 
 /* play/stop icon swap driven by run state */
-[data-ic-stop] { display: none; }
-#vst-root[data-run="1"] [data-ic-stop] { display: inline-block; }
-#vst-root[data-run="1"] [data-ic-play] { display: none; }
+[data-ic-stop] {
+  display: none;
+}
+#vst-root[data-run="1"] [data-ic-stop] {
+  display: inline-block;
+}
+#vst-root[data-run="1"] [data-ic-play] {
+  display: none;
+}
 
 /* 界面缩放档位下拉：去原生外观、融入玻璃拟态 */
 #vst-root [data-scale] {
-  font-family: var(--ff-mono); font-size: 9px; letter-spacing: .04em;
-  color: #52525C; background: rgba(255, 255, 255, 0.34);
-  border: 1px solid rgba(255, 255, 255, 0.5); border-radius: 8px;
-  padding: 3px 20px 3px 7px; cursor: pointer; outline: none; line-height: 1.2;
-  -webkit-appearance: none; -moz-appearance: none; appearance: none;
+  font-family: var(--ff-mono);
+  font-size: 9px;
+  letter-spacing: 0.04em;
+  color: #52525c;
+  background: rgba(255, 255, 255, 0.34);
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  border-radius: 8px;
+  padding: 3px 20px 3px 7px;
+  cursor: pointer;
+  outline: none;
+  line-height: 1.2;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  appearance: none;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='5' viewBox='0 0 8 5'%3E%3Cpath d='M1 1l3 3 3-3' fill='none' stroke='%2352525C' stroke-width='1.2' stroke-linecap='round'/%3E%3C/svg%3E");
-  background-repeat: no-repeat; background-position: right 6px center;
+  background-repeat: no-repeat;
+  background-position: right 6px center;
 }
-#vst-root [data-scale]:hover { background-color: rgba(255, 255, 255, 0.5); }
+#vst-root [data-scale]:hover {
+  background-color: rgba(255, 255, 255, 0.5);
+}
 
 /* 状态灯按连接态（data-conn）上色：online=绿（有浏览器在桥，脉冲）/ waiting=琥珀（已启动但无客户端，
    静态提醒链路未通）/ offline=灰（默认内联样式）。CTA/发光仍按 running（data-run，服务已启动即绿）。 */
-#vst-root[data-conn="online"] [data-status] { background: rgba(120,176,142,0.16) !important; border-color: rgba(120,176,142,0.5) !important; }
-#vst-root[data-conn="online"] [data-status-dot] { background: rgb(120,176,142) !important; animation: livePulse 2.4s ease-in-out infinite !important; }
-#vst-root[data-conn="waiting"] [data-status] { background: rgba(212,176,118,0.18) !important; border-color: rgba(212,176,118,0.5) !important; }
-#vst-root[data-conn="waiting"] [data-status-dot] { background: rgb(212,176,118) !important; }
-#vst-root[data-run="1"] [data-cta] { background: linear-gradient(135deg, rgba(120,176,142,0.28), rgba(120,176,142,0.12)) !important; border-color: rgba(120,176,142,0.62) !important; box-shadow: 0 14px 34px rgba(54,108,78,0.22), 0 0 26px rgba(120,176,142,0.34), inset 0 1px 0 rgba(255,255,255,0.32) !important; }
-#vst-root[data-run="1"] [data-cta-glow] { opacity: 1 !important; }
+#vst-root[data-conn="online"] [data-status] {
+  background: rgba(120, 176, 142, 0.16) !important;
+  border-color: rgba(120, 176, 142, 0.5) !important;
+}
+#vst-root[data-conn="online"] [data-status-dot] {
+  background: rgb(120, 176, 142) !important;
+  animation: livePulse 2.4s ease-in-out infinite !important;
+}
+#vst-root[data-conn="waiting"] [data-status] {
+  background: rgba(212, 176, 118, 0.18) !important;
+  border-color: rgba(212, 176, 118, 0.5) !important;
+}
+#vst-root[data-conn="waiting"] [data-status-dot] {
+  background: rgb(212, 176, 118) !important;
+}
+#vst-root[data-run="1"] [data-cta] {
+  background: linear-gradient(
+    135deg,
+    rgba(120, 176, 142, 0.28),
+    rgba(120, 176, 142, 0.12)
+  ) !important;
+  border-color: rgba(120, 176, 142, 0.62) !important;
+  box-shadow:
+    0 14px 34px rgba(54, 108, 78, 0.22),
+    0 0 26px rgba(120, 176, 142, 0.34),
+    inset 0 1px 0 rgba(255, 255, 255, 0.32) !important;
+}
+#vst-root[data-run="1"] [data-cta-glow] {
+  opacity: 1 !important;
+}
 
 /* port input focus (replaces DC style-focus) */
-#vst-root input[data-port]:focus { border-color: rgba(155,147,196,0.85); background: rgba(255,255,255,0.68); }
+#vst-root input[data-port]:focus {
+  border-color: rgba(155, 147, 196, 0.85);
+  background: rgba(255, 255, 255, 0.68);
+}
 /* CTA hover lift (replaces DC style-hover) */
-#vst-root [data-cta]:hover { scale: 1.02; }
+#vst-root [data-cta]:hover {
+  scale: 1.02;
+}
 
-::selection { background: rgba(201,180,206,0.45); }
+::selection {
+  background: rgba(201, 180, 206, 0.45);
+}
