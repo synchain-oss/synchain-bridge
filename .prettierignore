@@ -1,5 +1,11 @@
-web/js/juce/      # JUCE 官方 helper(第三方代码),不归本项目格式化
-web/fonts/        # .woff2 二进制,prettier 无 parser 会报错
+# prettier 只查本项目 web 资产(bridge.js / i18n.js / index.html / styles.css)。
+# 第三方 / 二进制 / 文档 / 配置一律不收:prettier 对 YAML/markdown 的默认格式与项目手写风格不一致。
+web/js/juce/
+web/fonts/
+*.md
+*.yml
+*.yaml
+.clang-format
 build/
 dist/
 node_modules/

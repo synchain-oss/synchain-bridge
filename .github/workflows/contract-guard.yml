@@ -1,0 +1,38 @@
+name: contract-guard
+
+# Bridge 协议护栏（08 §1.3 第 4 条 / 07 §2.3 B06）：
+# PR 若改动契约相关文件，要求 PR body 含一行 contract-impact: none|minor|major，缺则 fail。
+# 这是「只增不改」纪律的机器强制；仅用 first-party github-script + 事件上下文，不引入第三方依赖。
+# 注意：same-repo pull_request 使用 base 分支的 workflow 定义——本文件必须先存在于 base 分支
+# （feature/extraction / dev），才能对后续 PR 生效。
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+    paths:
+      - 'BRIDGE_CONTRACT.md'
+      - 'src/WebSocketProtocol.h'
+      - 'src/WebSocketProtocol.cpp'
+      - 'src/VstBridgeServer.h'
+      - 'src/VstBridgeServer.cpp'
+      - 'src/BridgeApi.h'
+
+permissions:
+  contents: read
+
+jobs:
+  contract-impact:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require contract-impact line in PR body
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const body = context.payload.pull_request.body || "";
+            const ok = /contract-impact:\s*(none|minor|major)\b/.test(body);
+            if (!ok) {
+              core.setFailed("PR body missing a valid 'contract-impact: none|minor|major' line. See BRIDGE_CONTRACT.md §五.");
+            } else {
+              core.info("contract-impact line present and valid.");
+            }
+
