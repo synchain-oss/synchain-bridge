@@ -1,0 +1,10 @@
+{
+  "ignorePatterns": [
+    {
+      "pattern": "^https://github\\.com/synchain-oss/"
+    }
+  ],
+  "timeout": "20s",
+  "retryOn429": true,
+  "aliveStatusCodes": [200, 206]
+}
