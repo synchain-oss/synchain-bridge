@@ -1,0 +1,135 @@
+# release.yml —— tag v* 触发草稿 Release(08 §5.2 / 06 §3.8 / 06 §4.1 Bridge 侧)
+# 不设 workflow_dispatch:B08 验收要验证的正是 push: tags: ['v*'] 这个触发器本身,
+# 用 workflow_dispatch 替代实测会被判不合格(07 §B08)。tag 格式 vX.Y.Z(08 §3.4,去 vst- 前缀)。
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+# release.yml 是唯一被授予 contents: write 的 workflow(06 §3.8),爆炸半径最大。
+# 第三方 action 一律 pin 到 40 位 commit SHA(06 §8.4 铁律),注释写版本号便于 dependabot。
+# 绝不使用 pull_request_target(J20 禁令,全域有效)。
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: release
+    runs-on: windows-2022
+    timeout-minutes: 60
+    env:
+      WEBVIEW2_NUGET_VERSION: '1.0.2957.106'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      # ---- 版本一致性门禁(06 §3.8 / 08 §5.2):tag 与 CMake VERSION 不一致时 job 必须 fail ----
+      - name: Verify tag matches CMake VERSION
+        shell: pwsh
+        run: |
+          $tag  = "${{ github.ref_name }}"
+          $want = $tag -replace '^v',''
+          $line = Select-String -Path CMakeLists.txt -Pattern 'project\s*\(\s*\S+\s+VERSION\s+([0-9]+\.[0-9]+\.[0-9]+)'
+          if (-not $line) { Write-Error "cannot parse VERSION from CMakeLists.txt"; exit 1 }
+          $cmake = $line.Matches[0].Groups[1].Value
+          if ($want -match '-test$') {
+            # 冒烟测试 tag(v0.0.0-test):非真实发布,仅端到端验证触发+构建+打包+Release 全链路,
+            # 跳过严格版本相等(其版本号有意不同于 CMake VERSION);产物恒为 draft,验完即删。
+            Write-Host "::warning::test tag '$tag' bypasses strict version gate (draft-only smoke test)"
+          } else {
+            $core = if ($want -match '^([0-9]+\.[0-9]+\.[0-9]+)') { $Matches[1] } else { $want }
+            if ($core -ne $cmake) {
+              Write-Error "tag=$tag (version core=$core) != CMake VERSION=$cmake"
+              exit 1
+            }
+            Write-Host "version gate OK: tag '$tag' == CMake VERSION '$cmake'"
+          }
+
+      # ---- 以下构建步骤与 ci.yml 同构(读 .juce-version / .pluginval-version,去 vst-plugin/ 前缀)----
+      - name: Resolve pinned versions
+        shell: pwsh
+        run: |
+          $juce = (Get-Content .juce-version -Raw).Trim()
+          $pv   = (Get-Content .pluginval-version -Raw).Trim()
+          if (-not $juce -or -not $pv) { Write-Error "empty .juce-version / .pluginval-version"; exit 1 }
+          "JUCE_TAG=$juce"    | Out-File $env:GITHUB_ENV -Append
+          "PLUGINVAL_TAG=$pv" | Out-File $env:GITHUB_ENV -Append
+
+      - name: Clone JUCE (shallow, pinned)
+        run: git clone --depth 1 --branch $env:JUCE_TAG https://github.com/juce-framework/JUCE.git "${{ github.workspace }}/JUCE"
+
+      - name: Setup vcpkg
+        run: |
+          echo "VCPKG_ROOT=$env:VCPKG_INSTALLATION_ROOT" >> $env:GITHUB_ENV
+          echo "VCPKG_DEFAULT_TRIPLET=x64-windows-static" >> $env:GITHUB_ENV
+
+      - name: Install dependencies (static)
+        run: vcpkg install --triplet x64-windows-static ixwebsocket
+
+      - name: Ensure WebView2 Runtime (Evergreen)
+        shell: pwsh
+        run: |
+          $exe = "$env:RUNNER_TEMP\MicrosoftEdgeWebView2Setup.exe"
+          Invoke-WebRequest "https://go.microsoft.com/fwlink/p/?LinkId=2124703" -OutFile $exe
+          Start-Process -FilePath $exe -ArgumentList "/silent","/install" -Wait
+          echo "WEBVIEW2_USER_DATA_FOLDER=$env:RUNNER_TEMP\wv2ud" >> $env:GITHUB_ENV
+
+      - name: Cache WebView2 NuGet package
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: build/packages
+          key: webview2-nuget-${{ env.WEBVIEW2_NUGET_VERSION }}
+
+      - name: Configure CMake
+        shell: pwsh
+        run: |
+          if (Test-Path build) { Get-ChildItem build -Exclude packages | Remove-Item -Recurse -Force }
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DJUCE_PATH="${{ github.workspace }}/JUCE" -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x64-windows-static
+
+      - name: Build (fail on any MSVC warning)
+        shell: pwsh
+        run: |
+          cmake --build build --config Release --parallel 2>&1 | Tee-Object -FilePath build.log
+          if ($LASTEXITCODE -ne 0) { Write-Error "build failed"; exit 1 }
+          $w = Select-String -Path build.log -Pattern '\swarning\s+C\d{4}' | Where-Object { $_.Line -notmatch '[\\/](JUCE|vcpkg|_deps)[\\/]' }
+          if ($w.Count -gt 0) {
+            $w | ForEach-Object { Write-Host "::error::$($_.Line)" }
+            Write-Error "MSVC warnings: $($w.Count); /W4 requires zero warnings"; exit 1
+          }
+
+      - name: Download pluginval
+        shell: pwsh
+        run: |
+          Invoke-WebRequest "https://github.com/Tracktion/pluginval/releases/download/$env:PLUGINVAL_TAG/pluginval_Windows.zip" -OutFile pluginval.zip
+          Expand-Archive pluginval.zip -DestinationPath pluginval
+
+      - name: Validate VST3
+        shell: pwsh
+        run: |
+          $vst3 = Get-ChildItem -Path build -Recurse -Filter "*.vst3" -Directory | Select-Object -First 1
+          if (-not $vst3) { Write-Error "No VST3 bundle found under build"; exit 1 }
+          Write-Host "::group::pluginval $($vst3.Name)"
+          & ./pluginval/pluginval.exe --strictness-level 5 --timeout-ms 60000 --skip-gui-tests --output-dir "$env:RUNNER_TEMP/pluginval-logs" "$($vst3.FullName)" 2>&1 | Out-Host
+          $code = $LASTEXITCODE
+          Write-Host "::endgroup::"
+          if ($code -ne 0) { Write-Error "pluginval failed for $($vst3.Name) (exit $code)"; exit 1 }
+          Write-Host "Non-GUI strictness-5 passed; full GUI validation is a LOCAL gate."
+
+      # ---- 打包:唯一真源 = scripts/package.ps1(06 §3.8 / 08 §5.2);绝不在 YAML 内联 7z 通配 ----
+      - name: Package
+        shell: pwsh
+        run: ./scripts/package.ps1 -Version "${{ github.ref_name }}".TrimStart('v') -BuildDir build -OutDir dist
+
+      - name: Publish job summary
+        shell: pwsh
+        run: Get-Content dist/package-summary.md | Out-File $env:GITHUB_STEP_SUMMARY -Append
+
+      - name: Create draft GitHub Release
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
+        with:
+          name: Synchain Bridge VST3 ${{ github.ref_name }} (Windows x64)
+          draft: true
+          generate_release_notes: true
+          files: |
+            dist/SynchainBridge-VST3-*-win64.zip
+            dist/SynchainBridge-VST3-*-win64.zip.sha256
