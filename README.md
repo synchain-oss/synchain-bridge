@@ -114,7 +114,10 @@ CI (`.github/workflows/build-vst3.yml`, `windows-2022`) clones JUCE 8.0.8, insta
 - [`docs/DAW_TEST_GUIDE.md`](docs/DAW_TEST_GUIDE.md) — end-to-end DAW test guide (Windows).
 - [`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md) — third-party license notices.
 - [`CHANGELOG.md`](CHANGELOG.md) — release history.
-- Build / release / web-client guides are being added under `docs/`.
+- [`docs/build-windows.md`](docs/build-windows.md) — Windows build from source (deps, configure, pitfalls).
+- [`docs/release.md`](docs/release.md) — release runbook (version bump → tag → `release.yml`).
+- [`docs/web-client.md`](docs/web-client.md) — where the browser-side client lives and its coupling points.
+- [`docs/webview-ui-pattern.md`](docs/webview-ui-pattern.md) — how to replicate this WebView UI (copy checklist + pitfalls).
 
 ## Contributing
 

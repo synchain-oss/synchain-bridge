@@ -114,7 +114,10 @@ CI(`.github/workflows/build-vst3.yml`,`windows-2022`):clone JUCE 8.0.8 → vcpkg
 - [`docs/DAW_TEST_GUIDE.md`](docs/DAW_TEST_GUIDE.md) — DAW 端到端实测指南(Windows)。
 - [`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md) — 第三方许可证声明。
 - [`CHANGELOG.md`](CHANGELOG.md) — 版本历史。
-- 构建 / 发布 / 网页客户端指南正陆续补进 `docs/`。
+- [`docs/build-windows.md`](docs/build-windows.md) — Windows 源码构建（依赖、配置、坑）。
+- [`docs/release.md`](docs/release.md) — 发布 runbook（改版本号 → 打 tag → `release.yml`）。
+- [`docs/web-client.md`](docs/web-client.md) — 浏览器侧客户端在哪与耦合点。
+- [`docs/webview-ui-pattern.md`](docs/webview-ui-pattern.md) — 如何复刻这套 WebView UI（复制清单 + 坑）。
 
 ## 贡献
 
