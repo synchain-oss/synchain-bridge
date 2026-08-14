@@ -64,7 +64,8 @@ export function buildSineBlock({
   for (let i = 0; i < numSamples; i++) {
     const t = (startSample + i) / sampleRate;
     out[i * channels] = Math.sin(2 * Math.PI * freqL * t) * gainL;
-    if (channels > 1) out[i * channels + 1] = Math.sin(2 * Math.PI * freqR * t) * gainR;
+    if (channels > 1)
+      out[i * channels + 1] = Math.sin(2 * Math.PI * freqR * t) * gainR;
   }
   return out;
 }
