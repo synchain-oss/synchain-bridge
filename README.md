@@ -139,3 +139,6 @@ Complete corresponding source for every released binary is available in this rep
 ## Status
 
 Windows x64 VST3 ships first; macOS follows (aligned with the platform roadmap). See [`CHANGELOG.md`](CHANGELOG.md) for the version history.
+
+<!-- B07 no-op acceptance probe -->
+
