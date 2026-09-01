@@ -6,7 +6,25 @@
 
 ## [未发布]
 
-> 以下为转 public 前的合规/安全整备,**不涉及契约变更**(wire 协议零改动),也不改版本号。
+> 本段含两批改动:① 转 public 前的合规/安全整备(本身不改版本号);② **macOS 支持**,版本号随之由 1.4.0
+> 升至 **1.5.0**(`CMakeLists.txt` 的 `project(... VERSION)` 是唯一真源)。两批**均不涉及契约变更**
+> (wire 协议零改动)。
+
+### 新增
+
+- **macOS(Apple Silicon)支持**:同时构建 **VST3 + AU**(`FORMATS VST3 AU`,AU 类型显式写死
+  `AU_MAIN_TYPE kAudioUnitType_Effect`,即 `aufx`),UI 走系统 **WKWebView**;目标架构 `arm64`,
+  部署目标 macOS **11.0**(Big Sur,arm64 Mac 的物理下限)。安装位置为
+  `~/Library/Audio/Plug-Ins/VST3` 与 `~/Library/Audio/Plug-Ins/Components`。
+- **macOS 版本不签名、不公证**(沿用 v1 的不签名决策):从 Releases 下载的产物带 quarantine 属性,
+  系统会拒绝加载,安装后需 `xattr -dr com.apple.quarantine` 解除一次隔离(README 的「安装」一节有完整命令)。
+- **macOS 已知限制**(README 双语各有详述):① 仅 arm64 —— Intel Mac 不支持,且在 Apple Silicon 上给
+  DAW 勾「使用 Rosetta 打开」**同样加载不了**(Rosetta 宿主装不下 arm64 插件);② AU **不申报 sandbox-safe**
+  (插件需 bind `127.0.0.1` 监听 socket 并托管 WebView,两者在 AU sandbox 内都会被拒),GarageBand 可能拒载,
+  请用 Logic / Reaper / Live 等;③ **Safari 不给 localhost 开 mixed content 豁免**,https 页面连不上明文
+  `ws://127.0.0.1`,mac 上需用 Chrome / Edge / Firefox 打开 Creative Space。
+- 新增 `docs/build-macos.md`:前置依赖、配置构建命令、`ditto` 安装、`auval` 与全量(含 GUI)pluginval 验收、
+  可选的 universal / Origin 注入覆盖、关键坑。
 
 ### 安全
 
@@ -32,6 +50,21 @@
 - 该注入值改经 **`configure_file` 生成的 `BridgeOriginConfig.h`** 落地,不再走带引号的
   `target_compile_definitions` —— 字符串定义里的双引号在 Visual Studio 与 Ninja/Makefile 生成器下转义路径不同,
   生成头则各生成器逐字节一致。值含双引号或反斜杠时配置期 `FATAL_ERROR`。
+- **依赖按平台分支**:macOS 用 CMake `FetchContent` 拉取 ixwebsocket(tag 由 `IXWEBSOCKET_TAG` 钉死,
+  默认 `v11.4.6`),并关掉 `USE_TLS` —— 桥 #2 只在 `127.0.0.1` 上服务明文 `ws://`,mac 侧因此不链接 mbedtls、
+  不需要 Security.framework,压缩用的 zlib 取 macOS SDK 自带系统库。**Windows 依赖链路完全不变**:
+  仍是 vcpkg `x64-windows-static` 的 `find_package(ixwebsocket)`。
+- 新增 CMake cache 变量 `CMAKE_OSX_ARCHITECTURES`(默认 `arm64`)与 `CMAKE_OSX_DEPLOYMENT_TARGET`(默认 `11.0`),
+  均带 `NOT DEFINED` 守卫、置于 `project()` 之前(要参与编译器探测),命令行可覆盖;`IXWEBSOCKET_TAG` 只在
+  `if(APPLE)` 分支内定义。**对 Windows 构建为 no-op**:VS2019 生成器下 configure 的 cache 差异只有前两个
+  变量,生成的 `.sln` / `.vcxproj` 目标列表与改动前逐项相同、无任何 `*_AU*` 目标。
+
+### 兼容性
+
+- **无契约变更**:桥 #1 / 桥 #2 的 wire 协议与 `BRIDGE_CONTRACT_VERSION = "2.0"` 均零改动。
+- 与 v1.4.0 工程完全兼容:厂商码/插件码(`Snch` / `Snb1`)与 `BUNDLE_ID`(`com.synchain.bridge`)未变,
+  已有 DAW 工程无需重建。
+- macOS 的 AU 是**新增格式**,首次出现即为本版本,不存在旧 AU 实例的迁移问题。
 
 ### 文档 / 合规
 
@@ -49,6 +82,12 @@
   并把四款字体的引用钉到 `google/fonts` 的固定 commit、zlib 由官网当前版许可页改为 `madler/zlib` 的 `v1.3.2`
   tag(消除 `main` / 官网页的漂移引用)。
 - `docs/DAW_TEST_GUIDE.md`:测试主步骤改为直接用 dev 部署 —— 默认构建不放行预览域,照旧写法会先撞 4403 才看到排障条。
+- README(双语)与 `docs/build-windows.md` 由「v1 只发布 Windows」更新为双平台:系统要求、安装、从源码构建各
+  拆出 Windows / macOS 小节,并新增「macOS 已知限制」章节(两份 README 的标题层级保持对等)。
+- `THIRD-PARTY-NOTICES.md`:补平台归属 —— mbedtls / vcpkg zlib / WebView2 SDK 三项标注**仅 Windows 构建**
+  链接;macOS 构建的第三方闭包 = ixwebsocket(FetchContent `v11.4.6`,BSD-3-Clause,关 TLS)+ macOS SDK 自带 libz。
+- 兜底面板(`FallbackPanel`)的**加载超时**文案改为平台中立(不再提 WebView);「缺 WebView2 运行时」分支的
+  文案保留 WebView2 表述 —— 该分支只可能在 Windows 出现。
 
 ## [1.4.0] — 首个公开版本
 

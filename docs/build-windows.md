@@ -2,12 +2,13 @@
 
 > 面向 Windows x64 + Visual Studio 2022。产物是 `Synchain Bridge.vst3`（一个 **bundle 目录**，不是单文件）。
 > 只想下载预编译版并插进 DAW 的读者，请看 [README](../README.md) 的 Install 一节。
+> macOS（Apple Silicon，VST3 + AU）另见 [build-macos.md](build-macos.md)。
 
 ## 前置依赖
 
 | 依赖 | 要求 | 说明 |
 |---|---|---|
-| Windows | x64 | v1 只发布 Windows x64（macOS 用系统 WKWebView，代码跨平台但首发不构建） |
+| Windows | x64 | 本文只覆盖 Windows 侧；macOS（arm64，VST3 + AU）的构建见 [build-macos.md](build-macos.md) |
 | Visual Studio 2022 | 「使用 C++ 的桌面开发」（MSVC v143 + Windows SDK） | VS2019 BuildTools（v142）亦可 |
 | CMake | ≥ 3.22 | 见 `CMakeLists.txt:1` |
 | JUCE | 8.0.8（版本真源 `.juce-version`） | `git clone --branch 8.0.8` |
@@ -63,19 +64,20 @@ cmake -S . -B build -G "Visual Studio 17 2022" -A x64 `
 
 ### 1. 静态 CRT 必须在 `project()` **之前**设置
 
-`CMakeLists.txt:3-9`。`CMAKE_MSVC_RUNTIME_LIBRARY` 的 `/MT` 必须写在 `project()` 之前才生效，与 vcpkg `x64-windows-static` triplet 和 WebView2 静态 loader 三者对齐。顺序颠倒会导致链接期 `/MT` vs `/MD` 冲突（LNK2038）。
+`CMakeLists.txt:3-7`（`project()` 在第 21 行）。`CMAKE_MSVC_RUNTIME_LIBRARY` 的 `/MT` 必须写在 `project()` 之前才生效，与 vcpkg `x64-windows-static` triplet 和 WebView2 静态 loader 三者对齐。顺序颠倒会导致链接期 `/MT` vs `/MD` 冲突（LNK2038）。同一块里 `project()` 之前还设了 macOS 的架构 / 部署目标（同样要参与编译器探测），那两个变量在 Windows 上完全无作用。
 
 ### 2. vcpkg triplet 必须 `x64-windows-static`
 
 ixwebsocket 用静态 triplet 编译（内嵌 mbedtls，无需单独 OpenSSL）。动态 triplet 会与静态 CRT 冲突。
+依赖块按平台分支：**Windows 走 vcpkg 的 `find_package(ixwebsocket)`（本节），macOS 走 `FetchContent`**，两条路径互不影响。
 
 ### 3. WebView2 是配置期 NuGet 自动拉取，不是「装 SDK」
 
-`CMakeLists.txt:24-57`。JUCE 的 `NEEDS_WEBVIEW2` 只会**查找 + 链接**已经存在的 NuGet 包，不会自己下载。本仓在配置期用 `nuget.exe` 把 `Microsoft.Web.WebView2` 拉到确定性目录 `build/packages`，再经 `JUCE_WEBVIEW2_PACKAGE_LOCATION` 指过去——不依赖 `%USERPROFILE%`，本地与 CI 可复现。缺 `nuget.exe` 会直接 FATAL_ERROR。
+`CMakeLists.txt:36-69`。JUCE 的 `NEEDS_WEBVIEW2` 只会**查找 + 链接**已经存在的 NuGet 包，不会自己下载。本仓在配置期用 `nuget.exe` 把 `Microsoft.Web.WebView2` 拉到确定性目录 `build/packages`，再经 `JUCE_WEBVIEW2_PACKAGE_LOCATION` 指过去——不依赖 `%USERPROFILE%`，本地与 CI 可复现。缺 `nuget.exe` 会直接 FATAL_ERROR。
 
 ### 4. 编译宏组合（必要且易漏）
 
-`CMakeLists.txt:145-154`。三个宏缺一不可：
+`CMakeLists.txt:189-200`。三个宏缺一不可（后两个只在 `if(WIN32)` 内定义）：
 
 - `JUCE_WEB_BROWSER=1` —— 启用 `WebBrowserComponent`
 - `JUCE_USE_WIN_WEBVIEW2=1` —— 启用 WebView2 代码路径

@@ -1,7 +1,7 @@
 [English](README.md) | **简体中文**
 
 [![License: GPL-3.0-or-later](https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg)](LICENSE)
-![Platform: Windows x64 VST3](https://img.shields.io/badge/platform-Windows%20x64%20VST3-lightgrey.svg)
+![Platform: Windows x64 VST3 / macOS arm64 VST3 + AU](https://img.shields.io/badge/platform-Windows%20x64%20%C2%B7%20macOS%20arm64-lightgrey.svg)
 
 # Synchain Bridge
 
@@ -9,7 +9,7 @@
 
 ## 它解决什么问题
 
-Synchain Bridge 是一个 **VST3 音频插件**,把 DAW 里的一路立体声总线无损采集成 PCM,经本地 WebSocket 推流给远端协作者:
+Synchain Bridge 是一个音频插件(Windows / macOS 出 **VST3**,macOS 另出 **AU**),把 DAW 里的一路立体声总线无损采集成 PCM,经本地 WebSocket 推流给远端协作者:
 
 ```
 DAW → Synchain Bridge (PCM float32) → WebSocket(127.0.0.1) → 浏览器 → AudioWorklet → LiveKit Opus 编码 → 服务器
@@ -35,7 +35,7 @@ wire 协议契约见 [`BRIDGE_CONTRACT.md`](BRIDGE_CONTRACT.md)。
 
 ## 截图
 
-Synchain Bridge 使用玻璃拟态 WebView UI(JUCE 8 WebView;Windows 走 WebView2)。截图将随首个公开版本发布。UI 提供:
+Synchain Bridge 使用玻璃拟态 WebView UI(JUCE 8 WebView;Windows 走 WebView2,macOS 走 WKWebView)。截图将随首个公开版本发布。UI 提供:
 
 - 语言切换(中 / EN / FR),选择会持久化
 - 状态胶囊(在线/离线,脉冲点)+ 客户端数
@@ -47,17 +47,28 @@ Synchain Bridge 使用玻璃拟态 WebView UI(JUCE 8 WebView;Windows 走 WebView
 
 ## 系统要求
 
-- **Windows x64** + **Visual Studio 2022**(「使用 C++ 的桌面开发」,MSVC v143 + Windows SDK);VS2019 BuildTools(v142)亦可。
+两个平台共同:
+
 - **CMake** ≥ 3.22
 - **JUCE 8.0.8** — https://github.com/juce-framework/JUCE
+
+Windows:
+
+- **Windows x64** + **Visual Studio 2022**(「使用 C++ 的桌面开发」,MSVC v143 + Windows SDK);VS2019 BuildTools(v142)亦可。
 - **vcpkg** + `ixwebsocket:x64-windows-static`
 - **NuGet CLI**(`nuget.exe` 在 PATH;CMake 配置期自动拉 `Microsoft.Web.WebView2`)
 - **Microsoft Edge WebView2 Runtime**(Windows 11 已内置;Win10 若无则装 Evergreen)
-- macOS:用系统 WKWebView,无需 NuGet / Runtime。
+
+macOS:
+
+- **macOS 11.0+(Big Sur)、Apple Silicon —— 仅 arm64**,需 **Xcode Command Line Tools**(`xcode-select --install`)与 **Ninja**。
+- 无需 vcpkg / NuGet / WebView2:ixwebsocket 由 CMake 在配置期按钉死的 tag 自动拉取,UI 用系统 WKWebView。
 
 ## 安装
 
-从 [GitHub Releases](https://github.com/synchain-oss/synchain-bridge/releases) 下载 Windows x64 预编译版(`SynchainBridge-VST3-vX.Y.Z-win64.zip`,Release 构建 + pluginval strictness 5 验证),或从源码构建(见下)。
+从 [GitHub Releases](https://github.com/synchain-oss/synchain-bridge/releases) 下载预编译版(Release 构建 + pluginval strictness 5 验证),或从源码构建(见下)。
+
+### Windows
 
 构建产物(或解压后得到的)`Synchain Bridge.vst3` 是一个 **bundle 目录**(不是单文件),二选一安装:
 
@@ -67,9 +78,30 @@ Synchain Bridge 使用玻璃拟态 WebView UI(JUCE 8 WebView;Windows 走 WebView
   ```
 - **免管理员**:把 `.vst3` 放任意目录,在 DAW 里把该目录加为 VST3 扫描路径后重扫(Reaper:选项 → 偏好 → 插件/VST → 添加路径 → 重新扫描)。
 
-macOS:`.vst3` 放 `~/Library/Audio/Plug-Ins/VST3/`。
+### macOS
 
-插件用独立厂商码/插件码(`Snch` / `Snb1`),DAW 将其识别为独立插件。改这两个码会生成新的 VST3 唯一 ID,DAW 视为全新插件、旧工程会丢插件 —— 绝对禁止改动。
+产物有两份:`Synchain Bridge.vst3` 与 `Synchain Bridge.component`(AU),都是 **bundle 目录**。用 `ditto` 而不是 `cp -r`,以原样保留符号链接与扩展属性:
+
+```bash
+ditto "<产物路径>/Synchain Bridge.vst3"      ~/Library/Audio/Plug-Ins/VST3/"Synchain Bridge.vst3"
+ditto "<产物路径>/Synchain Bridge.component" ~/Library/Audio/Plug-Ins/Components/"Synchain Bridge.component"
+killall -9 AudioComponentRegistrar   # 清掉 AU 组件缓存,否则 DAW 扫到的仍是旧副本
+```
+
+macOS 版本**不签名、不公证**(v1)。从 Releases 下载的产物带 quarantine 属性,系统会直接拒绝加载,安装后解除一次隔离:
+
+```bash
+xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/VST3/"Synchain Bridge.vst3"
+xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/Components/"Synchain Bridge.component"
+```
+
+插件用独立厂商码/插件码(`Snch` / `Snb1`),DAW 将其识别为独立插件。改这两个码会生成新的 VST3 唯一 ID(AU 身份同样变化),DAW 视为全新插件、旧工程会丢插件 —— 绝对禁止改动。
+
+## macOS 已知限制
+
+- **仅 arm64(Apple Silicon)**。产物没有 x86_64 slice,Intel Mac 不支持;并且在 Apple Silicon 上给 DAW 勾**「使用 Rosetta 打开」也加载不了** —— Rosetta(x86_64)宿主装不下 arm64 插件。请以原生 arm64 方式启动 DAW。这条最容易被误判成「插件坏了」。
+- **GarageBand 可能拒载 AU**。GarageBand 只加载申报了 sandbox-safe 的 AU。本插件要监听本地 socket 并托管 WebView,两者在 AU sandbox 里都会被拒,故不作此申报。请用 Logic / Reaper / Live 等能加载非沙箱 AU 的宿主。
+- **Safari 连不上桥**。网页走 https,桥 #2 是明文 `ws://127.0.0.1`,而 **Safari 不给 localhost 开 mixed content 豁免** —— 握手在到达插件之前就被拦掉。mac 上请用 Chrome / Edge / Firefox 打开 Creative Space。
 
 ## 快速上手
 
@@ -87,6 +119,8 @@ npm run serve         # 用 http 托管 ../web(不能用 file://,ES module 会�
 ```
 
 ## 从源码构建
+
+### Windows
 
 ```powershell
 # 一次性准备
@@ -108,6 +142,17 @@ CMake 会在配置期用 `nuget` 把 `Microsoft.Web.WebView2` 拉到 `build/pack
 
 CI(`.github/workflows/build-vst3.yml`,`windows-2022`):clone JUCE 8.0.8 → vcpkg 装 ixwebsocket → 装 WebView2 Evergreen Runtime → CMake 配置(拉 WebView2 NuGet)→ 构建 → pluginval `--skip-gui-tests`(strictness 5)。含 Editor 的全量 strictness-5 在真实 Windows 11 本地验证 —— 无桌面的 Server runner 无法托管 WebView2 编辑器。
 
+### macOS
+
+```bash
+git clone --depth 1 --branch "$(tr -d '[:space:]' < .juce-version)" https://github.com/juce-framework/JUCE.git ~/dev/JUCE
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DJUCE_PATH="$HOME/dev/JUCE"
+cmake --build build --parallel
+# 产物: build/SynchainBridgeVST_artefacts/Release/{VST3,AU}/
+```
+
+无需 vcpkg / NuGet / WebView2 —— ixwebsocket 由 CMake 在配置期按钉死的 tag 拉取,UI 用系统 WKWebView;目标架构 arm64,部署目标 macOS 11.0。完整指南(含 `auval` / pluginval 验收)见 [`docs/build-macos.md`](docs/build-macos.md)。
+
 ## 文档
 
 - [`BRIDGE_CONTRACT.md`](BRIDGE_CONTRACT.md) — wire 协议(桥 #1 + 桥 #2),冻结契约。
@@ -115,6 +160,7 @@ CI(`.github/workflows/build-vst3.yml`,`windows-2022`):clone JUCE 8.0.8 → vcpkg
 - [`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md) — 第三方许可证声明。
 - [`CHANGELOG.md`](CHANGELOG.md) — 版本历史。
 - [`docs/build-windows.md`](docs/build-windows.md) — Windows 源码构建（依赖、配置、坑）。
+- [`docs/build-macos.md`](docs/build-macos.md) — macOS 源码构建（arm64、VST3 + AU、安装、`auval` / pluginval）。
 - [`docs/release.md`](docs/release.md) — 发布 runbook（改版本号 → 打 tag → `release.yml`）。
 - [`docs/web-client.md`](docs/web-client.md) — 浏览器侧客户端在哪与耦合点。
 - [`docs/webview-ui-pattern.md`](docs/webview-ui-pattern.md) — 如何复刻这套 WebView UI（复制清单 + 坑）。
@@ -141,4 +187,4 @@ VST 是 Steinberg Media Technologies GmbH 的商标。**VST3 SDK** 自 2025 年 
 
 ## 状态
 
-Windows x64 VST3 先行,macOS 后续(与平台路线图一致)。版本历史见 [`CHANGELOG.md`](CHANGELOG.md)。
+Windows x64(VST3)先行;macOS Apple Silicon(VST3 + AU)自 v1.5.0 起支持 —— 不签名、仅 arm64。版本历史见 [`CHANGELOG.md`](CHANGELOG.md)。
