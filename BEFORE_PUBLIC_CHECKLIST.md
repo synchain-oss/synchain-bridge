@@ -19,8 +19,45 @@
 ## 3. GitHub Actions
 - `allowed_actions` 保持 `selected`（现已配置）
 - fork PR 审批改为 **all_external_contributors**（Settings → Actions → General）
-- 第三方 action 全部锁定 commit SHA（本仓库已 pin，后续升级时保持 pin）
+- 第三方**与 first-party** action 全部锁定 40 位 commit SHA —— **✅ 已完成（2026-09-01）**，见 §3.1
 - 绝不使用 `pull_request_target`（本仓库已禁用，请保持）
+
+### 3.1 action pin 实扫清单（转 public 硬门禁 —— **✅ 已完成（2026-09-01）**）
+
+`@v4` / `@v6` 这类可变 tag 上游随时可以重指，等于把本仓 runner 上的代码执行权交给对方；
+`actions/*` 是 first-party 也不例外（CLAUDE.md §0 铁律第 3 条）。本次把 `.github/workflows/`
+下**全部 21 条 `uses:`** 统一钉到 40 位 commit SHA，注释写版本号供 dependabot 升级。
+落地 commit：`ci(security): 全部 workflow action pin 到 40 位 commit SHA(转 public 硬门禁)`
+（分支 `feat/prepublic-pin`，`git log --grep 'pin 到 40 位 commit SHA'` 可定位）。
+
+| action | commit SHA | 版本 | 出现于 |
+|---|---|---|---|
+| `actions/checkout` | `11d5960a326750d5838078e36cf38b85af677262` | v4.4.0 | ci / compliance / format / pr-agent / release / review-dispatch |
+| `actions/checkout` | `d23441a48e516b6c34aea4fa41551a30e30af803` | v6.1.0 | claude-review / deepseek-review |
+| `actions/cache` | `0057852bfaa89a56745cba8c7296529d2fc39830` | v4.3.0 | ci / release |
+| `actions/upload-artifact` | `ea165f8d65b6e75b540449e92b4886f43607fa02` | v4.6.2 | ci（5 处） |
+| `actions/github-script` | `f28e40c7f34bde8b3046d885e986cb6290c5673b` | v7.1.0 | contract-guard |
+| `anthropics/claude-code-action` | `239e3a730883eeb5c53db12b0fc9573b3024b126` | v1.0.191 | claude-review / deepseek-review / review-dispatch |
+| `qodo-ai/pr-agent` | `8e4d32e5497defd43c023a404f73560c62728961` | v0.39.0 | pr-agent |
+| `softprops/action-gh-release` | `3bb12739c298aeb8a4eeaf626c5b8d85266b0e65` | v2.6.2 | release |
+
+口径说明：
+
+- 每个 SHA 均由 `gh api repos/<owner>/<repo>/git/ref/tags/<tag>` 现场解析；annotated tag
+  （`anthropics/claude-code-action`）再经 `gh api repos/<o>/<r>/git/tags/<sha>` 解一层取
+  `object.sha`。**不凭记忆写 SHA**：写错一位就是钉到一个不存在或不受控的对象上。
+- `actions/checkout` 保留 v4 / v6 两条 major 线，是**刻意不动版本**：本次只把可变 ref 换成
+  等价的 SHA，不顺手升级——升级要单独走 PR 并跑一遍 CI，混进 pin 里会让「绿变红」无从归因。
+- 已 pin 的三个（claude-code-action / pr-agent / action-gh-release）SHA 未动，只把注释补成
+  具体版本号；`# pin SHA` 这类注释说不出是哪一版，dependabot 与人都无从判断该不该升。
+
+复核断言（应为「21 条全部 40 位 hex，无 unpinned」）：
+
+```bash
+grep -rn "uses:" .github/workflows/                              # 逐行看
+# 抽出每条 uses 的 ref，滤掉已是 40 位 hex 的；零命中（exit 1）即通过
+grep -rhoE "uses:[[:space:]]*[^[:space:]]+" .github/workflows/ | grep -vE "@[0-9a-f]{40}$"
+```
 
 ## 4. 依赖安全
 - Dependabot alerts + security updates 保持开启（现已配置）

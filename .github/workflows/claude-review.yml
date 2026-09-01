@@ -26,9 +26,9 @@ jobs:
       id-token: write
       actions: read
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with: { fetch-depth: 1 }
-      - uses: anthropics/claude-code-action@239e3a730883eeb5c53db12b0fc9573b3024b126   # pin SHA(C05 实证版本)
+      - uses: anthropics/claude-code-action@239e3a730883eeb5c53db12b0fc9573b3024b126   # v1.0.191(C05 实证版本)
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           # 无 GitHub App 时必须显式传 github_token,否则 action 走 App token exchange → 401 "Claude Code is not installed"(C05 实证,issue #721)

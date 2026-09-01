@@ -20,7 +20,7 @@ jobs:
     runs-on: ubuntu-latest            # V-4 确认前一律 latest(§3.0 口径注)
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0              # 全历史:供下方 history scan 扫全部 commit(仓库很小,代价可忽略)
       - name: Read pinned gitleaks version
