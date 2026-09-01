@@ -143,7 +143,7 @@ cmake --build build --config Release
 
 At configure time CMake uses `nuget` to fetch `Microsoft.Web.WebView2` into `build/packages` and links the static loader — no manual SDK install needed.
 
-CI (`.github/workflows/ci.yml`, `windows-2022`) clones JUCE 8.0.8, installs ixwebsocket via vcpkg, installs the WebView2 Evergreen runtime, configures, builds, and runs pluginval `--skip-gui-tests` (strictness 5). The full strictness-5 run including the WebView2 editor is validated locally on real Windows 11 — a headless server runner cannot host the editor.
+CI (`.github/workflows/ci.yml`, job `build-and-validate`, `windows-2022`) clones JUCE 8.0.8, installs ixwebsocket via vcpkg, installs the WebView2 Evergreen runtime, configures, builds, and runs pluginval `--skip-gui-tests` (strictness 5). The full strictness-5 run including the WebView2 editor is validated locally on real Windows 11 — a headless server runner cannot host the editor.
 
 ### macOS
 
@@ -155,6 +155,8 @@ cmake --build build --parallel
 ```
 
 No vcpkg, NuGet or WebView2 needed — CMake fetches ixwebsocket at configure time from a pinned tag, and the UI runs on the system WKWebView. The build targets arm64 with a macOS 11.0 deployment target. Full guide, including `auval` / pluginval acceptance: [`docs/build-macos.md`](docs/build-macos.md).
+
+CI (`.github/workflows/ci.yml`, job `build-and-validate-macos`, `macos-15`) builds both formats, asserts the binaries are arm64-only, runs pluginval `--skip-gui-tests` (strictness 5) against the VST3 and `auval` against the AU, and uploads a `ditto` zip of both bundles. The GUI pluginval run — and pluginval against the AU — remain local gates.
 
 ## Documentation
 

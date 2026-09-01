@@ -26,7 +26,7 @@
 - **fork PR 门禁政策(J31/J41,唯一政策)**：
   - fork → **任意分支名**(不要用 `dev`/`stage`/`prod`/`feature/v1`/`feature/extraction`)→ PR 到 `dev`;
   - `branch-gate` 对 fork **不 exit 1**,只校验 head 分支名不在上述长期分支名集合(防同名伪装晋升),不强制 `feat/*` 命名;
-  - fork PR 只跑无 secrets 的构建/测试(`build-and-validate` / `clang-format` / `branch-gate` / `compliance`);三个 review bot 因 `head.repo.full_name == base.repo.full_name` 条件一律不自动跑;
+  - fork PR 只跑无 secrets 的构建/测试(`build-and-validate` / `build-and-validate-macos` / `clang-format` / `branch-gate` / `compliance`);三个 review bot 因 `head.repo.full_name == base.repo.full_name` 条件一律不自动跑;
   - `external` label 由**维护者手工添加**(fork PR 的 `GITHUB_TOKEN` 只读,workflow 内加不了标签,不要用 `pull_request_target` 绕);
   - fork PR 唯一的 AI 审查通道 = 维护者评论 `/review` 显式触发(方案 D,`.github/workflows/review-dispatch.yml`)。
 - commit 规范:`type(scope): 中文描述`,全部 `git commit -s`(Signed-off-by)。
@@ -43,12 +43,12 @@
 
 ## 4. 各 Workflow 触发范围一览
 
-- `build-vst3`(job `build-and-validate`)/ `format`(job `clang-format`)/ `branch-gate`:`pull_request → dev` + `push → dev, 'feature/**'`。
+- `ci`(job `build-and-validate` = windows-2022;job `build-and-validate-macos` = macos-15,VST3 + AU,arm64-only)/ `format`(job `clang-format`)/ `branch-gate`:`pull_request → dev` + `push → dev, 'feature/**'`。
 - `compliance`(gitleaks + reuse lint):同触发面,无 secrets,fork PR 同样跑。
 - `claude-review`:所有 base 分支、仅 same-repo(J31);`deepseek-review` / `pr-agent` 默认 disable。
 - `release`:push tags `v*` 触发草稿 Release(版本一致性门禁 + pluginval + zip/sha256)。
 - `review-dispatch`:维护者评论 `/review` 显式触发(fork PR 唯一 AI 审查通道)。
-- 成本纪律:runner 就低不就高(V-4 确认前一律 `ubuntu-latest`)、按量计费 bot 克制使用。
+- 成本纪律:runner 就低不就高(V-4 确认前一律 `ubuntu-latest`)、按量计费 bot 克制使用。**例外(待用户拍板)**:`build-and-validate-macos` 必须跑 GitHub 托管 macOS runner(按 **10 倍分钟数**计费),且当前继承整个 `ci` 工作流的触发面、全开;若要收敛,给 job 加 label/事件闸门是最小改动。
 
 ## 5. 协议变更规范
 
@@ -64,7 +64,9 @@
 
 ## 6. 环境与依赖
 
-- JUCE(版本见 `.juce-version`)、CMake ≥3.22、MSVC 2022(静态 CRT `/MT`)、WebView2 SDK(NuGet,版本常量单一真源)+ WebView2 Evergreen Runtime、pluginval v1.0.4(见 `.pluginval-version`)、ixwebsocket(vcpkg `x64-windows-static`)。
+- Windows:JUCE(版本见 `.juce-version`)、CMake ≥3.22、MSVC 2022(静态 CRT `/MT`)、WebView2 SDK(NuGet,版本常量单一真源)+ WebView2 Evergreen Runtime、pluginval(版本见 `.pluginval-version`)、ixwebsocket(vcpkg `x64-windows-static`)。
+- macOS(Apple Silicon):JUCE 同一真源、CMake ≥3.22 + **Ninja**、Xcode command line tools(clang,`-Wall -Wextra -Wpedantic`)、pluginval 同一真源 + **`auval`**(AU 唯一验收工具,以输出里的 `AU VALIDATION SUCCEEDED` 判定,退出码不可靠)、ixwebsocket 走 CMake `FetchContent`(tag 钉死,与 Windows 侧 vcpkg 同版本)。产物为 **VST3 + AU**、**arm64-only**(v1 不出 universal / x86_64),不签名不公证;CI runner = `macos-15`。构建细节见 `docs/build-macos.md`。
+- 本地 gates(`scripts/gates.ps1`)目前仍是纯 Windows 实现(vswhere / VS 生成器 / nuget / `pluginval.exe`),mac 侧本地验收按 `docs/build-macos.md` 手工执行。
 - 构建流水线不需要任何 secret(06 §3.1);review bot 用 org secrets(`CLAUDE_CODE_OAUTH_TOKEN` / `DEEPSEEK_KEY`)。
 
 ## 7. 跨仓库协议规范

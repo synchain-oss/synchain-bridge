@@ -143,7 +143,7 @@ cmake --build build --config Release
 
 CMake 会在配置期用 `nuget` 把 `Microsoft.Web.WebView2` 拉到 `build/packages` 并链接静态 loader,无需手动装 SDK。
 
-CI(`.github/workflows/ci.yml`,`windows-2022`):clone JUCE 8.0.8 → vcpkg 装 ixwebsocket → 装 WebView2 Evergreen Runtime → CMake 配置(拉 WebView2 NuGet)→ 构建 → pluginval `--skip-gui-tests`(strictness 5)。含 Editor 的全量 strictness-5 在真实 Windows 11 本地验证 —— 无桌面的 Server runner 无法托管 WebView2 编辑器。
+CI(`.github/workflows/ci.yml`,job `build-and-validate`,`windows-2022`):clone JUCE 8.0.8 → vcpkg 装 ixwebsocket → 装 WebView2 Evergreen Runtime → CMake 配置(拉 WebView2 NuGet)→ 构建 → pluginval `--skip-gui-tests`(strictness 5)。含 Editor 的全量 strictness-5 在真实 Windows 11 本地验证 —— 无桌面的 Server runner 无法托管 WebView2 编辑器。
 
 ### macOS
 
@@ -155,6 +155,8 @@ cmake --build build --parallel
 ```
 
 无需 vcpkg / NuGet / WebView2 —— ixwebsocket 由 CMake 在配置期按钉死的 tag 拉取,UI 用系统 WKWebView;目标架构 arm64,部署目标 macOS 11.0。完整指南(含 `auval` / pluginval 验收)见 [`docs/build-macos.md`](docs/build-macos.md)。
+
+CI(`.github/workflows/ci.yml`,job `build-and-validate-macos`,`macos-15`):构建两种格式 → 断言产物为 arm64 单架构 → 对 VST3 跑 pluginval `--skip-gui-tests`(strictness 5)、对 AU 跑 `auval` → `ditto` 打 zip 传 artifact。含 GUI 的 pluginval、以及对 AU 的 pluginval 仍是本地门禁。
 
 ## 文档
 

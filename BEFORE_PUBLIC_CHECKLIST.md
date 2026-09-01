@@ -19,8 +19,34 @@
 ## 3. GitHub Actions
 - `allowed_actions` 保持 `selected`（现已配置）
 - fork PR 审批改为 **all_external_contributors**（Settings → Actions → General）
-- 第三方 action 全部锁定 commit SHA（本仓库已 pin，后续升级时保持 pin）
 - 绝不使用 `pull_request_target`（本仓库已禁用，请保持）
+
+### 3.1 第三方 action 全部 pin 到 40 位 SHA（⛔ 转 public 硬门禁，**尚未完成**）
+
+CLAUDE.md §0 铁律 3 要求所有第三方 action pin 到 40 位 commit SHA。当前**只有 `release.yml`
+与 `ci.yml` 的 macOS job 做到了**，其余仍是可变 ref，转 public 前必须清零。
+下表由本节末尾那条断言实扫得出（`branch-gate.yml` 零命中，无需改动）：
+
+| 文件 | 未 pin 的可变 ref 处数 |
+|---|---|
+| `.github/workflows/ci.yml` | 7（windows job 的 `actions/checkout@v4` / `actions/cache@v4` / `actions/upload-artifact@v4`）|
+| `.github/workflows/claude-review.yml` | 1（`actions/checkout@v6`）|
+| `.github/workflows/compliance.yml` | 1（`actions/checkout@v4`）|
+| `.github/workflows/contract-guard.yml` | 1（`actions/github-script@v7`）|
+| `.github/workflows/deepseek-review.yml` | 1（`actions/checkout@v6`）|
+| `.github/workflows/format.yml` | 1（`actions/checkout@v4`）|
+| `.github/workflows/pr-agent.yml` | 1（`actions/checkout@v4`）|
+| `.github/workflows/review-dispatch.yml` | 1（`actions/checkout@v4`）|
+
+处理方式：**另开一个只做 pin 的 PR**（不与功能改动混在一起），逐个换成
+`owner/repo@<40 位 SHA> # vX.Y.Z`，`release.yml` 是现成范本。验收断言（零命中即通过）：
+
+```bash
+grep -rnE 'uses:[[:space:]]*[^@]+@(v[0-9]|main|master)' .github/workflows
+```
+
+> 现有功能分支以「不改现有 job 任何一行」为施工纪律不动它们，是合理的；但这条不能停在
+> 疑点清单里 —— 公开后可变 ref 意味着上游被劫持即可在本仓 CI 里执行任意代码。
 
 ## 4. 依赖安全
 - Dependabot alerts + security updates 保持开启（现已配置）

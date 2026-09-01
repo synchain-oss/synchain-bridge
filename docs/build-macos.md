@@ -198,9 +198,14 @@ mac 上建议用 Chrome / Edge / Firefox 打开 Creative Space；注意这些浏
 
 ## CI 对照
 
-CI（`.github/workflows/`）目前覆盖 Windows 构建与 pluginval；**macOS 侧的验收以本地门禁为准** ——
-即上面「验证」一节的三条全过：`auval`、VST3 的全量（含 GUI）`pluginval`、`.component`（AU）的同参 `pluginval`。
+`.github/workflows/ci.yml` 的 `build-and-validate-macos`（`macos-15`，arm64 原生）跑的是本页流程的
+子集：Ninja Release 构建（第一方代码零警告）→ 产物定位与 **arm64 单架构断言** → VST3 的
+`pluginval --strictness-level 5 --skip-gui-tests` → `.component` 的 `auval` → `ditto` 打 zip 传 artifact。
 
-`scripts/gates.ps1`（CLAUDE.md §2 的本地门禁）目前是纯 Windows 实现（依赖 vswhere / VS 生成器 / nuget /
-`pluginval.exe`），mac 上跑不了；mac 贡献者按本页手动执行上述三条即可，等价的 mac 门禁脚本是待跟进项
-（见 CHANGELOG「文档 / 合规」的遗留说明）。
+对照本页「验证」一节，CI **没有**覆盖两处，仍以本地门禁为准：① VST3 的**含 GUI** 全量 `pluginval`
+（无桌面会话的托管 runner 托不住 WKWebView 编辑器，与 Windows 侧 WebView2 同一原因）；② `.component`
+（AU）的 `pluginval` —— CI 对 AU 只跑 `auval`，而 `auval` 只覆盖 AU 的宿主契约。这两条请 mac 贡献者
+按本页在本机跑；CI 的 zip artifact 可直接下来做真机冒烟。
+
+`scripts/gates.ps1`（CLAUDE.md §2 的本地门禁）仍是纯 Windows 实现（依赖 vswhere / VS 生成器 / nuget /
+`pluginval.exe`），mac 上跑不了；等价的 mac 门禁脚本是待跟进项（见 CHANGELOG「文档 / 合规」的遗留说明）。

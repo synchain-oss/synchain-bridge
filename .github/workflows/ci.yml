@@ -146,3 +146,302 @@ jobs:
           path: ${{ runner.temp }}/pluginval-logs
           retention-days: 7
           if-no-files-found: ignore
+
+  # ============================================================================
+  # macOS(Apple Silicon)—— VST3 + AU,arm64-only,不签名不公证(U13)
+  #
+  # ⚠️ 成本:本 job 没有额外 if: 闸门,触发面完全继承本 workflow(pull_request→dev 的每次
+  #    synchronize + push→dev/'feature/**')。GitHub 托管 macOS runner 按 **10 倍分钟数**
+  #    计费,与 CLAUDE.md §4「runner 就低不就高」存在张力。全触发面常开是一项待用户拍板的
+  #    成本决策 —— 若要收敛,最小改动是给本 job 加
+  #      if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'macos')
+  #    在用户明确批准前不擅自加闸门(收窄会让 mac 侧回归漏到 dev)。
+  # ============================================================================
+  build-and-validate-macos:
+    name: build-and-validate-macos
+    runs-on: macos-15                   # arm64 原生;macos-14 已进弃用窗口
+    permissions:
+      contents: read                    # 本 job 只读源码;上传 artifact 不需要 contents 写权限
+    timeout-minutes: 60                 # 与 windows job 对称:两边都要从零 clone JUCE 并编译两个
+                                        # format wrapper,mac 侧还多一次 ixwebsocket 的 FetchContent
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      # 0) 版本单一真源:与 windows job 同一份 .juce-version / .pluginval-version(12 §6.3),
+      #    只是把 pwsh 换成 bash。REF_SLUG 同样把 '/' 换成 '-'(upload-artifact@v4 拒绝含 '/' 的名)。
+      #    ref_name 经 env 间接读入,不直接插值进脚本:分支名允许 '$'、';' 等字符,直接插值即注入面。
+      #    MAC_ZIP 也在这里算:定值 zip 名会让不同 PR 的 artifact 解压到同一目录时互相覆盖
+      #    且看不出区别,故把 slug 与短 sha 编进内层 zip 名(外层 artifact 名同样带)。
+      - name: Resolve pinned versions & ref slug
+        shell: bash
+        env:
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          juce=$(tr -d '[:space:]' < .juce-version)
+          pv=$(tr -d '[:space:]' < .pluginval-version)
+          if [ -z "$juce" ] || [ -z "$pv" ]; then
+            echo "::error::empty .juce-version / .pluginval-version"; exit 1
+          fi
+          slug="$(printf '%s' "$REF_NAME" | tr '/\\' '--')"
+          echo "JUCE_TAG=$juce"      >> "$GITHUB_ENV"
+          echo "PLUGINVAL_TAG=$pv"   >> "$GITHUB_ENV"
+          echo "REF_SLUG=$slug"      >> "$GITHUB_ENV"
+          echo "MAC_ZIP=SynchainBridge-macos-arm64-${slug}-${GITHUB_SHA:0:7}.zip" >> "$GITHUB_ENV"
+
+      # 1) 工具链留痕:runner 镜像每月轮换,Xcode/SDK/CMake 一动构建行为就可能变,
+      #    出问题时这段日志是判断「代码回归 or 镜像漂移」的第一手材料。
+      - name: Record toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          sw_vers
+          uname -m
+          cmake --version
+          clang --version
+          xcodebuild -version
+
+      # 2) JUCE:浅克隆锁 tag(与 windows job 同策略,不用 FetchContent 避免上游漂移)
+      - name: Clone JUCE (shallow, pinned)
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --depth 1 --branch "$JUCE_TAG" https://github.com/juce-framework/JUCE.git "${{ github.workspace }}/JUCE"
+
+      # 3) Ninja:macOS 镜像通常自带;缺失时按需装,避免镜像轮换把 job 弄红
+      - name: Ensure Ninja
+        shell: bash
+        run: |
+          set -euo pipefail
+          command -v ninja >/dev/null 2>&1 || brew install ninja
+          ninja --version
+
+      # 4) Configure:OSX 相关参数(架构/部署目标/FORMATS)全在 CMakeLists,命令行不重复 —— 单一真源
+      - name: Configure CMake (Ninja)
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DJUCE_PATH="${{ github.workspace }}/JUCE"
+
+      # 5) Build + clang 零警告门 —— 与 windows 的 /W4 门**同构的黑名单**(06 §4.1 ⑧):
+      #    只排除第三方,其余一律算(白名单式的 `grep '/src/'` 会让 cmake/ 生成物、
+      #    juce_add_binary_data 产出、以及将来新增的源码目录静默逃过门禁)。
+      #    - 只认编译器诊断行 `file:line:col: warning:`,与 windows 侧只匹配 `warning Cxxxx`
+      #      (不匹配 LNK4xxx)同口径 —— `ld: warning:` 这类链接器噪音不进门禁。
+      #    - 排除项写成 (^|/):Ninja 生成器把 FetchContent 依赖写成相对构建目录的
+      #      `_deps/<name>-src/...`(无前导斜杠),只写 `/_deps/` 排不掉。
+      - name: Build (fail on any first-party clang warning)
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake --build build --parallel 2>&1 | tee build.log
+          warns=$(grep -E ':[0-9]+:[0-9]+: warning:' build.log | grep -vE '(^|/)(_deps|JUCE|vcpkg)/' || true)
+          if [ -n "$warns" ]; then
+            printf '%s\n' "$warns" | while IFS= read -r line; do echo "::error::$line"; done
+            echo "::error::first-party clang warnings: $(printf '%s\n' "$warns" | wc -l | tr -d ' '); zero-warning gate"
+            exit 1
+          fi
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: failure()
+        with:
+          name: SynchainBridge-macos-build-log-${{ github.sha }}
+          path: build.log
+          retention-days: 7
+
+      # 6) 定位产物 + 架构断言:必须是 arm64 单架构(U13 决定 v1 不出 universal/x86_64)。
+      #    数量断言写死「恰好 1 个」而不是「取第一个」:build 下真冒出第 2 个同类 bundle 说明构建
+      #    目录不干净,此时静默取第一个会让 CI 绿着把不确定的产物带下去。定位一律用
+      #    `-print -quit`:`find | head -n 1` 在 pipefail 下会
+      #    因 SIGPIPE(141)被 set -e 杀掉步骤,只要 build 下出现第 2 个匹配就随机翻车。
+      - name: Locate artefacts & assert arm64-only
+        shell: bash
+        run: |
+          set -euo pipefail
+          for spec in 'vst3:.vst3' 'component:.component'; do
+            ext="${spec%%:*}"; label="${spec##*:}"
+            n=$(find build -type d -name "*.$ext" | wc -l | tr -d '[:space:]')
+            if [ "$n" != "1" ]; then
+              echo "::error::expected exactly 1 $label bundle under build, found $n"; exit 1
+            fi
+          done
+          vst3=$(find build -type d -name '*.vst3' -print -quit)
+          au=$(find build -type d -name '*.component' -print -quit)
+          # 路径含空格('Synchain Bridge.vst3');用带随机分隔符的 heredoc 形式写 GITHUB_ENV,
+          # 免得将来路径里出现换行/等号时被静默截断。
+          {
+            echo "VST3_PATH<<GHENV_${GITHUB_RUN_ID}"
+            echo "$vst3"
+            echo "GHENV_${GITHUB_RUN_ID}"
+            echo "AU_PATH<<GHENV_${GITHUB_RUN_ID}"
+            echo "$au"
+            echo "GHENV_${GITHUB_RUN_ID}"
+          } >> "$GITHUB_ENV"
+          archs=$(file "$vst3"/Contents/MacOS/* "$au"/Contents/MacOS/*)
+          printf '%s\n' "$archs"
+          printf '%s\n' "$archs" | grep -q 'arm64' || { echo "::error::mach-o is not arm64"; exit 1; }
+          if printf '%s\n' "$archs" | grep -q 'x86_64'; then
+            echo "::error::x86_64 slice present; v1 ships arm64-only"; exit 1
+          fi
+
+      # 7) pluginval strictness 5 --skip-gui-tests(无头 runner 上 WebView 编辑器会崩,与 windows 同口径)。
+      #    上游 zip 的可执行位不保证保留,chmod +x 是必需步骤而非保险。
+      - name: Download pluginval
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsSL -o pluginval.zip "https://github.com/Tracktion/pluginval/releases/download/$PLUGINVAL_TAG/pluginval_macOS.zip"
+          unzip -q pluginval.zip -d pluginval
+          chmod +x pluginval/pluginval.app/Contents/MacOS/pluginval
+
+      - name: Validate VST3 (pluginval)
+        shell: bash
+        run: |
+          set -euo pipefail
+          # --validate 显式给出:两种 CLI 语义解释下都成立(是开关则路径仍作位置参数,
+          # 取值则吃掉路径),且与 docs/build-macos.md 口径一致(采纳 #20 review)。
+          # 本地 Windows 实证:位置参数与 --validate 两种写法均真实跑完全部测试项。
+          echo "::group::pluginval $(basename "$VST3_PATH")"
+          rc=0
+          ./pluginval/pluginval.app/Contents/MacOS/pluginval \
+            --strictness-level 5 --timeout-ms 60000 --skip-gui-tests \
+            --output-dir "$RUNNER_TEMP/pluginval-logs" --validate "$VST3_PATH" || rc=$?
+          echo "::endgroup::"   # 失败也闭合分组,后续日志不被吞进折叠区
+          [ "$rc" -eq 0 ] || exit "$rc"
+          echo "Non-GUI strictness-5 passed; full GUI validation is a LOCAL gate."
+
+      # 8) AU 只能用 auval 验:必须 ditto(cp -r 会丢符号链接与扩展属性,bundle 会散架),
+      #    装完踢一次 AudioComponentRegistrar 强制重扫。
+      #    - 四字码不写死:从 CMakeLists.txt 的 PLUGIN_CODE / PLUGIN_MANUFACTURER_CODE /
+      #      AU_MAIN_TYPE 现读(与「版本号 / JUCE tag / pluginval 版本单一真源」同纪律)。
+      #      改码时 CI 会因解析不到而报确切错误,而不是变成「auval 找不到组件」的语义无关报错。
+      #    - auval 的退出码历史上不可靠,一律以输出里的 'AU VALIDATION SUCCEEDED' 为准;
+      #      故只给 auval 那一条挂 `|| true`,前面的 mkdir/ditto 仍在 set -e 下 —— 否则
+      #      ditto 失败(bundle 半残)会被误诊成「插件没通过校验」,排障方向直接带偏。
+      - name: Validate AU (auval)
+        shell: bash
+        run: |
+          set -euo pipefail
+          code=$(awk '$1 == "PLUGIN_CODE" { print $2; exit }' CMakeLists.txt)
+          mfr=$(awk '$1 == "PLUGIN_MANUFACTURER_CODE" { print $2; exit }' CMakeLists.txt)
+          au_main=$(awk '$1 == "AU_MAIN_TYPE" { print $2; exit }' CMakeLists.txt)
+          if [ -z "$code" ] || [ -z "$mfr" ]; then
+            echo "::error::cannot parse PLUGIN_CODE / PLUGIN_MANUFACTURER_CODE from CMakeLists.txt"; exit 1
+          fi
+          case "$au_main" in
+            kAudioUnitType_Effect)        au_type=aufx ;;
+            kAudioUnitType_MusicEffect)   au_type=aumf ;;
+            kAudioUnitType_MusicDevice)   au_type=aumu ;;
+            kAudioUnitType_MIDIProcessor) au_type=aumi ;;
+            *) echo "::error::cannot map AU_MAIN_TYPE '$au_main' from CMakeLists.txt to an auval type"; exit 1 ;;
+          esac
+          mkdir -p "$HOME/Library/Audio/Plug-Ins/Components"
+          ditto "$AU_PATH" "$HOME/Library/Audio/Plug-Ins/Components/$(basename "$AU_PATH")"
+          killall -9 AudioComponentRegistrar 2>/dev/null || true
+          # 注册器被 -9 后由 launchd 按需重启并重新扫描 Components/,扫描完成前 auval 会报
+          # 「找不到组件」。轮询到 auval -a 能列出本组件为止,最多 30s —— 否则这一步是偶发红灯
+          # (采纳 #21 claude-review:发版侧 publish 双平台强依赖,一次抖动 = 整个 tag 无产物)。
+          # 先把 auval -a 的输出落进变量再匹配:`auval -a | grep -q` 会因 grep 命中即退出而给
+          # auval 送 SIGPIPE(141),pipefail 下整条管道判非零,循环就永远 break 不出去;
+          # 且按 type/code/mfr 三元组锚定行首,防其它插件描述里撞子串误判(采纳 #20 review)。
+          registered=0
+          for _ in $(seq 1 30); do
+            au_list="$(auval -a 2>/dev/null || true)"
+            if grep -qE "^[[:space:]]*$au_type[[:space:]]+$code[[:space:]]+$mfr([[:space:]]|$)" <<< "$au_list"; then
+              registered=1; break
+            fi
+            sleep 1
+          done
+          if [ "$registered" != "1" ]; then
+            # 只警告不失败:真正的判定在下游 AU VALIDATION SUCCEEDED 断言;此处正则依赖
+            # auval -a 的未文档化排版,猜错时应退化为「直接验」而不是硬红(采纳 #21 review)。
+            echo "::warning::component $au_type/$code/$mfr not seen in auval -a within polling window; proceeding to auval -v anyway"
+            echo "::group::auval -a head (diagnostics)"
+            auval -a 2>/dev/null | head -40 || true
+            echo "::endgroup::"
+          fi
+          echo "::group::auval -v $au_type $code $mfr"
+          auval -v "$au_type" "$code" "$mfr" 2>&1 | tee auval.log || true
+          echo "::endgroup::"
+          if ! grep -q 'AU VALIDATION SUCCEEDED' auval.log; then
+            echo "::error::auval did not report 'AU VALIDATION SUCCEEDED'"
+            exit 1
+          fi
+          echo "auval OK"
+
+      # 9) artifact 传输封装(**不是发行打包**):这里只解决 upload-artifact 不保留 POSIX
+      #    权限位的问题 —— 直接传 bundle 目录 = 下载方拿到不可执行的死壳。合规文件 /
+      #    sha256 / INSTALL.txt 那套发行打包由发版链路的打包脚本负责,不在本 job 内。
+      #    ditto 的 --norsrc --noextattr:插件 bundle 不需要资源叉,而 --sequesterRsrc 的定义
+      #    就是把资源叉/扩展属性写进 zip 的 __MACOSX/ 目录 —— 那些条目权限恒为 -rw-r--r--,
+      #    会被下面的可执行位断言当成真条目而必然误报(pluginval/auval 已 dlopen 过 bundle,
+      #    com.apple.provenance 之类 xattr 一定存在);顺带也不给下载方塞 __MACOSX 垃圾。
+      #    断言里仍显式排除 __MACOSX/,免得将来有人把 ditto 参数改回去就静默变成假失败。
+      - name: Pack bundles (ditto zip preserves exec bits)
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf stage "$MAC_ZIP"
+          mkdir -p stage
+          ditto "$VST3_PATH" "stage/$(basename "$VST3_PATH")"
+          ditto "$AU_PATH"   "stage/$(basename "$AU_PATH")"
+          ditto -c -k --norsrc --noextattr stage "$MAC_ZIP"
+          unzip -Z1 "$MAC_ZIP"
+          # 只挑 Contents/MacOS/ 下的**文件**条目:目录条目本身是 d 开头,拿它比可执行位会误报
+          macho=$(unzip -Z "$MAC_ZIP" | grep -v '__MACOSX/' | grep -E '/Contents/MacOS/[^[:space:]]' || true)
+          if [ -z "$macho" ]; then echo "::error::zip has no Contents/MacOS/ file entries"; exit 1; fi
+          # 首字符放行 `-`(普通文件)与 `l`(符号链接):bundle 里出现指向可执行体的 symlink 时
+          # unzip -Z 打的是 `lrwxrwxrwx`,只认 `^-rwx` 会把它当成丢了可执行位而假失败。
+          if printf '%s\n' "$macho" | grep -vE '^[-l]rwx'; then
+            echo "::error::zip lost the executable bit on Contents/MacOS/*"; exit 1
+          fi
+
+      # 10) artifact 三档:条件与保留天数与 windows job 逐一对齐(06 §6.3),名字一律用 REF_SLUG
+      - name: Upload macOS bundles (PR)
+        if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: SynchainBridge-macos-arm64-pr${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}
+          path: ${{ env.MAC_ZIP }}
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload macOS bundles (dev snapshot)
+        if: github.event_name == 'push' && github.ref_name == 'dev'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: SynchainBridge-macos-arm64-dev-${{ github.sha }}
+          path: ${{ env.MAC_ZIP }}
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload macOS bundles (preview / feature mainline)
+        if: github.event_name == 'push' && github.ref_name != 'dev'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: SynchainBridge-macos-arm64-preview-${{ env.REF_SLUG }}-${{ github.sha }}
+          path: ${{ env.MAC_ZIP }}
+          if-no-files-found: error
+          retention-days: 30
+
+      # 失败日志先归拢到工作区同一目录再上传:直接同时给 $RUNNER_TEMP/... 与工作区路径,
+      # upload-artifact 会以两者的最近公共祖先(/Users/runner/work)展开,artifact 里变成
+      # _temp/pluginval-logs/… 与 bridge/bridge/auval.log 这种别扭结构。
+      - name: Collect validation logs (on failure)
+        if: failure()
+        shell: bash
+        run: |
+          set -uo pipefail
+          mkdir -p validation-logs
+          cp -R "$RUNNER_TEMP/pluginval-logs" validation-logs/ 2>/dev/null || true
+          cp auval.log validation-logs/ 2>/dev/null || true
+          ls -lR validation-logs || true
+
+      - name: Upload pluginval / auval logs (on failure)
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: SynchainBridge-macos-validation-logs-${{ github.sha }}
+          path: validation-logs
+          retention-days: 7
+          if-no-files-found: ignore
