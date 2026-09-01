@@ -1,7 +1,7 @@
 **English** | [简体中文](README.zh-CN.md)
 
 [![License: GPL-3.0-or-later](https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg)](LICENSE)
-![Platform: Windows x64 VST3](https://img.shields.io/badge/platform-Windows%20x64%20VST3-lightgrey.svg)
+![Platform: Windows x64 VST3 / macOS arm64 VST3 + AU](https://img.shields.io/badge/platform-Windows%20x64%20%C2%B7%20macOS%20arm64-lightgrey.svg)
 
 # Synchain Bridge
 
@@ -9,7 +9,7 @@
 
 ## What it does
 
-Synchain Bridge is a **VST3 audio plugin** that captures a stereo bus from your DAW and streams it, losslessly as PCM, to remote collaborators over a local WebSocket:
+Synchain Bridge is an **audio plugin** — VST3 on Windows and macOS, plus Audio Unit (AU) on macOS — that captures a stereo bus from your DAW and streams it, losslessly as PCM, to remote collaborators over a local WebSocket:
 
 ```
 DAW → Synchain Bridge (PCM float32) → WebSocket (127.0.0.1) → browser → AudioWorklet → LiveKit Opus → server
@@ -35,7 +35,7 @@ The wire protocol is specified in [`BRIDGE_CONTRACT.md`](BRIDGE_CONTRACT.md).
 
 ## Screenshots
 
-Synchain Bridge uses a glassmorphism WebView UI (JUCE 8 WebView; WebView2 on Windows). Screenshots will be published with the first public release. The UI provides:
+Synchain Bridge uses a glassmorphism WebView UI (JUCE 8 WebView; WebView2 on Windows, WKWebView on macOS). Screenshots will be published with the first public release. The UI provides:
 
 - Language switcher (中文 / EN / FR), persisted
 - Status pill (online / offline, pulse dot) + connected client count
@@ -47,17 +47,31 @@ Synchain Bridge uses a glassmorphism WebView UI (JUCE 8 WebView; WebView2 on Win
 
 ## Requirements
 
-- **Windows x64** with **Visual Studio 2022** (Desktop development with C++; MSVC v143 + Windows SDK). VS2019 BuildTools (v142) also works.
+Common to both platforms:
+
 - **CMake** ≥ 3.22
 - **JUCE 8.0.8** — https://github.com/juce-framework/JUCE
+
+Windows:
+
+- **Windows x64** with **Visual Studio 2022** (Desktop development with C++; MSVC v143 + Windows SDK). VS2019 BuildTools (v142) also works.
 - **vcpkg** + `ixwebsocket:x64-windows-static`
 - **NuGet CLI** (`nuget.exe` on PATH; CMake fetches `Microsoft.Web.WebView2` at configure time)
 - **Microsoft Edge WebView2 Runtime** (preinstalled on Windows 11; on Windows 10 install the Evergreen runtime)
-- macOS: uses the system WKWebView; no NuGet / WebView2 runtime required.
+
+macOS:
+
+- **macOS 11.0+ (Big Sur) on Apple Silicon — arm64 only**, with **Xcode Command Line Tools** (`xcode-select --install`).
+- **Ninja** (optional; `brew install ninja` — the documented commands use it, but the Xcode and Makefile generators work too).
+- No vcpkg / NuGet / WebView2: ixwebsocket is fetched by CMake at configure time (pinned tag) and the UI runs on the system WKWebView.
 
 ## Install
 
-Grab a prebuilt Windows x64 build from [GitHub Releases](https://github.com/synchain-oss/synchain-bridge/releases) (`SynchainBridge-VST3-vX.Y.Z-win64.zip`, Release build validated with pluginval strictness 5), or build from source (below).
+Prebuilt **Windows x64** builds are on [GitHub Releases](https://github.com/synchain-oss/synchain-bridge/releases) (`SynchainBridge-VST3-vX.Y.Z-win64.zip`, Release build validated with pluginval strictness 5). **No macOS artifact is published yet** — on macOS, build from source (below); signed/notarized mac builds will follow in a later release.
+
+The plugin uses dedicated manufacturer/plugin codes (`Snch` / `Snb1`), so DAWs see it as an independent plugin. Changing these codes would generate a new VST3 unique ID (and a new AU component identity) and orphan existing projects — **never alter them, on either platform**.
+
+### Windows
 
 The build produces (or the zip contains) `Synchain Bridge.vst3` — a **bundle directory**, not a single file. Install either way:
 
@@ -67,9 +81,30 @@ The build produces (or the zip contains) `Synchain Bridge.vst3` — a **bundle d
   ```
 - **No admin**: put the `.vst3` anywhere and add that folder as a VST3 scan path in your DAW (Reaper: Options → Preferences → Plug-ins/VST → Add path → rescan).
 
-macOS: place the `.vst3` in `~/Library/Audio/Plug-Ins/VST3/`.
+### macOS
 
-The plugin uses dedicated manufacturer/plugin codes (`Snch` / `Snb1`), so DAWs see it as an independent plugin. Changing these codes would generate a new VST3 unique ID and orphan existing projects — never alter them.
+Two formats are produced: `Synchain Bridge.vst3` and `Synchain Bridge.component` (AU). Both are **bundle directories**. Use `ditto` rather than `cp -r` so symlinks and extended attributes survive — and delete the previous install first, because `ditto` *merges* into an existing bundle and would leave stale files (renamed fonts, old helpers) behind:
+
+```bash
+rm -rf ~/Library/Audio/Plug-Ins/VST3/"Synchain Bridge.vst3" \
+       ~/Library/Audio/Plug-Ins/Components/"Synchain Bridge.component"
+ditto "<path>/Synchain Bridge.vst3"      ~/Library/Audio/Plug-Ins/VST3/"Synchain Bridge.vst3"
+ditto "<path>/Synchain Bridge.component" ~/Library/Audio/Plug-Ins/Components/"Synchain Bridge.component"
+killall -9 AudioComponentRegistrar   # drop the cached AU component info, otherwise the DAW rescans the old copy
+```
+
+The macOS builds are **unsigned and un-notarized** (v1). A bundle you built yourself carries no quarantine flag; *if* you install one that came from a download (a zip from a browser, AirDrop, …), macOS will refuse to load it until the flag is cleared:
+
+```bash
+xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/VST3/"Synchain Bridge.vst3"
+xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/Components/"Synchain Bridge.component"
+```
+
+## Known limitations on macOS
+
+- **Apple Silicon (arm64) only.** There is no x86_64 slice, so Intel Macs are not supported — and on an Apple Silicon Mac, ticking **"Open using Rosetta"** on your DAW **will not make it load either**: a Rosetta (x86_64) host cannot load an arm64 plugin. Launch the DAW natively. This is the failure most often mistaken for a broken plugin.
+- **GarageBand may refuse the AU.** GarageBand only loads AUs that declare themselves sandbox-safe. This plugin listens on a local socket and hosts a WebView, neither of which works inside the AU sandbox, so it does not make that declaration. Use Logic, Reaper, Live or another host that loads non-sandboxed AUs.
+- **Safari is expected not to reach the bridge (not yet verified on a real Mac).** The web app is served over https while bridge #2 is a plain `ws://127.0.0.1` socket; unlike Chromium, Safari is not known to grant a mixed-content exemption for loopback, so the handshake should be blocked before it ever reaches the plugin. Prefer Chrome, Edge or Firefox on macOS — and note those may still show a *local network access* permission prompt the first time. Both halves of this are inferred from browser behaviour, not measured here; if you test it, please report what you see in an issue.
 
 ## Quick start
 
@@ -87,6 +122,8 @@ npm run serve         # serves ../web over http (not file://; ES modules are blo
 ```
 
 ## Build from source
+
+### Windows
 
 ```powershell
 # One-time setup
@@ -106,7 +143,18 @@ cmake --build build --config Release
 
 At configure time CMake uses `nuget` to fetch `Microsoft.Web.WebView2` into `build/packages` and links the static loader — no manual SDK install needed.
 
-CI (`.github/workflows/build-vst3.yml`, `windows-2022`) clones JUCE 8.0.8, installs ixwebsocket via vcpkg, installs the WebView2 Evergreen runtime, configures, builds, and runs pluginval `--skip-gui-tests` (strictness 5). The full strictness-5 run including the WebView2 editor is validated locally on real Windows 11 — a headless server runner cannot host the editor.
+CI (`.github/workflows/ci.yml`, `windows-2022`) clones JUCE 8.0.8, installs ixwebsocket via vcpkg, installs the WebView2 Evergreen runtime, configures, builds, and runs pluginval `--skip-gui-tests` (strictness 5). The full strictness-5 run including the WebView2 editor is validated locally on real Windows 11 — a headless server runner cannot host the editor.
+
+### macOS
+
+```bash
+git clone --depth 1 --branch "$(tr -d '[:space:]' < .juce-version)" https://github.com/juce-framework/JUCE.git ~/dev/JUCE
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DJUCE_PATH="$HOME/dev/JUCE"
+cmake --build build --parallel
+# Artifacts: build/SynchainBridgeVST_artefacts/Release/{VST3,AU}/
+```
+
+No vcpkg, NuGet or WebView2 needed — CMake fetches ixwebsocket at configure time from a pinned tag, and the UI runs on the system WKWebView. The build targets arm64 with a macOS 11.0 deployment target. Full guide, including `auval` / pluginval acceptance: [`docs/build-macos.md`](docs/build-macos.md).
 
 ## Documentation
 
@@ -115,6 +163,7 @@ CI (`.github/workflows/build-vst3.yml`, `windows-2022`) clones JUCE 8.0.8, insta
 - [`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md) — third-party license notices.
 - [`CHANGELOG.md`](CHANGELOG.md) — release history.
 - [`docs/build-windows.md`](docs/build-windows.md) — Windows build from source (deps, configure, pitfalls).
+- [`docs/build-macos.md`](docs/build-macos.md) — macOS build from source (arm64, VST3 + AU, install, `auval` / pluginval).
 - [`docs/release.md`](docs/release.md) — release runbook (version bump → tag → `release.yml`).
 - [`docs/web-client.md`](docs/web-client.md) — where the browser-side client lives and its coupling points.
 - [`docs/webview-ui-pattern.md`](docs/webview-ui-pattern.md) — how to replicate this WebView UI (copy checklist + pitfalls).
@@ -141,4 +190,4 @@ Complete corresponding source for every released binary is available in this rep
 
 ## Status
 
-Windows x64 VST3 ships first; macOS follows (aligned with the platform roadmap). See [`CHANGELOG.md`](CHANGELOG.md) for the version history.
+Windows x64 (VST3) shipped first and is the only platform with prebuilt Releases. macOS on Apple Silicon (VST3 + AU) is supported **from source** as of v1.5.0 — unsigned, arm64 only; publishing mac artifacts comes in a later release. See [`CHANGELOG.md`](CHANGELOG.md) for the version history.

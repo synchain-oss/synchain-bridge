@@ -1,6 +1,6 @@
 {
   "name": "synchain-bridge-web-preview",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "private": true,
   "description": "Synchain Bridge WebView UI preview: mock bridge #2 server + PCM frame builder + static http serve",
   "scripts": {

@@ -16,11 +16,15 @@
 
 ## 1. 改版本号
 
-把 `CMakeLists.txt:9` 的 VERSION 改成目标版本：
+把 `CMakeLists.txt` 顶层 `project()` 调用里的 VERSION 改成目标版本（**按构造名定位，不按行号**：加平台支持会让这行整体移位）：
 
 ```
 project(SynchainBridgeVST VERSION 1.4.0)
 ```
+
+> 本节以 `1.4.0` 为例，与下文第 4/5 步的示例版本一致；实际发版时全部换成目标版本。
+
+同一版本号在 `web-preview/`（`mock-server.mjs` 的 `PLUGIN_VERSION`、`package.json` / `package-lock.json` 的 `version`）有一份镜像，改完由 `pwsh scripts/gates.ps1` 的版本一致性 gate 断言，不一致会直接 FAIL。
 
 版本经 `JucePlugin_VersionString` 自动流入插件 UI 与 `status` 帧上报，无需再改任何手写常量（见 `BRIDGE_CONTRACT.md` §三）。
 
