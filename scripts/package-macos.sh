@@ -1,0 +1,257 @@
+#!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Synchain <contact@synchain.ca>
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# scripts/package-macos.sh —— macOS 打包唯一真源(本地发版与 CI 共用同一脚本)。
+# 与 scripts/package.ps1 并列:Windows 侧走 .ps1,macOS 侧走本脚本,两边互不改动、六条硬要求逐条对齐:
+#   1. zip 名从 --version 算出来(SynchainBridge-VST3-AU-v$VERSION-macos-arm64.zip),绝不写字面量
+#   2. 枚举 bundle 并断言恰好 1 个 .vst3 + 1 个 .component,名字精确,层级保住 Contents/
+#   3. 生成 .sha256 独立资产 + $OUT_DIR/package-summary.md(version/zipFileName/sizeBytes/sha256/releaseDate)
+#   4. 生成 INSTALL.txt(安装路径 + 不签名相关说明 + 精确到 tag 的源码声明)
+#   5. 许可证与声明文件入 zip 根目录(LICENSE.txt / THIRD-PARTY-NOTICES.md / LICENSES/OFL-1.1.txt;
+#      U2 = 不附 LICENSE-EXCEPTION.md,依赖 GPLv3 系统库例外默认解释)
+#   6. 打包后断言:zip 内 bundle 层级 + 四个合规文件 + Contents/MacOS/* 仍是可执行位;缺一即退出 1
+# mac 专属的两条:
+#   - arm64-only 断言(U13:v1 不出 universal,也不出 x86_64)
+#   - 一律用 ditto 拷贝与压缩:cp -r / zip -r 会丢符号链接与可执行位,
+#     用户解压后拿到的是加载不了的死壳 —— 这是 mac 分发的第一杀手。
+# 绝不在 workflow 里内联打包命令 —— 打包逻辑只在此处。
+#
+# 用法:
+#   bash scripts/package-macos.sh [--version X.Y.Z] [--build-dir build] [--out-dir dist] [--dry-run]
+
+set -euo pipefail
+
+die() {
+    echo "package-macos: $*" >&2
+    exit 1
+}
+
+usage() {
+    cat <<'USAGE'
+用法: package-macos.sh [选项]
+  --version <X.Y.Z>   版本号(不带 v 前缀);留空则从 CMakeLists.txt 读唯一真源
+  --build-dir <path>  构建目录(内含 .vst3 / .component bundle);相对路径按仓库根解析,默认 build
+  --out-dir <path>    输出目录(zip / .sha256 / summary);相对路径按仓库根解析,默认 dist
+  --dry-run           只打印计划并校验合规源文件存在,不产出任何产物(gate 用)
+USAGE
+}
+
+VERSION=""
+BUILD_DIR="build"
+OUT_DIR="dist"
+DRY_RUN=0
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --version)   [ $# -ge 2 ] || die "--version 缺少取值";   VERSION="$2";   shift 2 ;;
+        --build-dir) [ $# -ge 2 ] || die "--build-dir 缺少取值"; BUILD_DIR="$2"; shift 2 ;;
+        --out-dir)   [ $# -ge 2 ] || die "--out-dir 缺少取值";   OUT_DIR="$2";   shift 2 ;;
+        --dry-run)   DRY_RUN=1; shift ;;
+        -h|--help)   usage; exit 0 ;;
+        *)           usage >&2; die "unknown argument: $1" ;;
+    esac
+done
+
+# 仓库根 = 本脚本上一级目录(与调用时的 CWD 无关)
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+REPO_ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd -P)"
+
+resolve_repo_path() {
+    case "$1" in
+        /*) printf '%s' "$1" ;;
+        *)  printf '%s/%s' "$REPO_ROOT" "$1" ;;
+    esac
+}
+BUILD_DIR="$(resolve_repo_path "$BUILD_DIR")"
+OUT_DIR="$(resolve_repo_path "$OUT_DIR")"
+
+# 1) Version:参数优先;留空则从 CMakeLists.txt(版本唯一真源)读。
+#    容忍调用方直接把 tag 传进来,顺手去掉 v 前缀,免得 zip 名与源码 URL 出现 vv1.2.3。
+if [ -z "$VERSION" ]; then
+    VERSION="$(sed -nE 's/.*project[[:space:]]*\([[:space:]]*[^[:space:]]+[[:space:]]+VERSION[[:space:]]+([0-9]+\.[0-9]+\.[0-9]+).*/\1/p' \
+        "$REPO_ROOT/CMakeLists.txt" | head -n 1)"
+    [ -n "$VERSION" ] || die "cannot parse VERSION from CMakeLists.txt"
+fi
+VERSION="${VERSION#v}"
+
+# 2) zip 名从 Version 算出来(硬要求 #1)
+ZIP_NAME="SynchainBridge-VST3-AU-v$VERSION-macos-arm64.zip"
+ZIP_PATH="$OUT_DIR/$ZIP_NAME"
+SHA_NAME="$ZIP_NAME.sha256"
+SHA_PATH="$OUT_DIR/$SHA_NAME"
+SUMMARY_PATH="$OUT_DIR/package-summary.md"
+
+VST3_NAME="Synchain Bridge.vst3"
+AU_NAME="Synchain Bridge.component"
+
+# 3) 合规源文件清单(硬要求 #5)
+LICENSE_SRC="$REPO_ROOT/LICENSE"                  # GPLv3 全文 → zip 内 LICENSE.txt
+NOTICES_SRC="$REPO_ROOT/THIRD-PARTY-NOTICES.md"
+OFL_SRC="$REPO_ROOT/LICENSES/OFL-1.1.txt"         # 字体子集嵌进二进制,OFL 全文须随分发
+
+if [ "$DRY_RUN" -eq 1 ]; then
+    echo "[DryRun] RepoRoot : $REPO_ROOT"
+    echo "[DryRun] Version  : $VERSION"
+    echo "[DryRun] BuildDir : $BUILD_DIR"
+    echo "[DryRun] OutDir   : $OUT_DIR"
+    echo "[DryRun] zip      : $ZIP_PATH"
+    echo "[DryRun] sha256   : $SHA_PATH"
+    for f in "$LICENSE_SRC" "$NOTICES_SRC" "$OFL_SRC"; do
+        [ -f "$f" ] || die "compliance source missing: $f"
+        echo "[DryRun] compliance ok : $f"
+    done
+    echo "[DryRun] OK —— 未创建任何产物。"
+    exit 0
+fi
+
+for f in "$LICENSE_SRC" "$NOTICES_SRC" "$OFL_SRC"; do
+    [ -f "$f" ] || die "compliance source missing: $f"
+done
+[ -d "$BUILD_DIR" ] || die "build dir not found: $BUILD_DIR"
+
+# 4) 枚举 bundle 目录并断言恰好 1 个(硬要求 #2)。
+#    BUNDLE_PATH 用全局变量回传:放进 $( ) 里 die 只会杀子 shell。
+BUNDLE_PATH=""
+require_single_bundle() {
+    local ext="$1"
+    local want="$2"
+    local n base
+    n="$(find "$BUILD_DIR" -type d -name "*.$ext" | wc -l | tr -d '[:space:]')"
+    [ "$n" = "1" ] || die "expected exactly 1 .$ext bundle under '$BUILD_DIR', found $n"
+    BUNDLE_PATH="$(find "$BUILD_DIR" -type d -name "*.$ext" | head -n 1)"
+    base="$(basename "$BUNDLE_PATH")"
+    [ "$base" = "$want" ] || die "unexpected bundle name '$base' (expected '$want')"
+    [ -d "$BUNDLE_PATH/Contents" ] || die "bundle '$BUNDLE_PATH' missing Contents/ hierarchy"
+    [ -d "$BUNDLE_PATH/Contents/MacOS" ] || die "bundle '$BUNDLE_PATH' missing Contents/MacOS/"
+}
+
+require_single_bundle vst3 "$VST3_NAME"
+VST3_BUNDLE="$BUNDLE_PATH"
+require_single_bundle component "$AU_NAME"
+AU_BUNDLE="$BUNDLE_PATH"
+
+# 5) 架构断言:必须是 arm64 单架构。带 x86_64 的胖二进制在此直接失败,
+#    否则 arm64-only 的分发承诺(和 INSTALL.txt 里的说明)就成了假话。
+assert_arm64_only() {
+    local archs
+    archs="$(file "$1"/Contents/MacOS/*)"
+    printf '%s\n' "$archs"
+    printf '%s\n' "$archs" | grep -q 'arm64' || die "'$1' is not arm64"
+    ! printf '%s\n' "$archs" | grep -q 'x86_64' || die "'$1' contains an x86_64 slice; v1 ships arm64-only"
+}
+assert_arm64_only "$VST3_BUNDLE"
+assert_arm64_only "$AU_BUNDLE"
+
+# 6) 组装 staging 目录:bundle 一律 ditto(保住符号链接 / 可执行位 / 扩展属性)
+STAGING="$OUT_DIR/_staging"
+rm -rf "$STAGING"
+mkdir -p "$OUT_DIR" "$STAGING/LICENSES"
+
+ditto "$VST3_BUNDLE" "$STAGING/$VST3_NAME"
+ditto "$AU_BUNDLE"   "$STAGING/$AU_NAME"
+cp "$LICENSE_SRC" "$STAGING/LICENSE.txt"
+cp "$NOTICES_SRC" "$STAGING/THIRD-PARTY-NOTICES.md"
+cp "$OFL_SRC"     "$STAGING/LICENSES/OFL-1.1.txt"
+
+# 7) INSTALL.txt(硬要求 #4;含精确到 tag 的源码获取声明)
+cat > "$STAGING/INSTALL.txt" <<EOF
+Synchain Bridge for macOS —— 安装说明
+=====================================
+
+版本:$VERSION
+
+先读这一段:本包只有 Apple Silicon(arm64)版
+------------------------------------------
+包内 VST3 / AU 只含 arm64 一个架构,不含 x86_64。
+如果宿主 DAW 是 Intel 版,或虽在 Apple Silicon 上、但被勾了「使用 Rosetta 打开」,
+宿主进程就是 x86_64,插件不会出现在插件列表里 —— 这不是装错了,是架构不匹配。
+处理:在「访达」里选中 DAW → 显示简介 → 取消勾选「使用 Rosetta 打开」,再以原生 arm64 重开 DAW。
+
+安装路径
+--------
+把压缩包内的两个 bundle 整体复制到(全局安装,推荐):
+
+  VST3:  /Library/Audio/Plug-Ins/VST3/$VST3_NAME
+  AU:    /Library/Audio/Plug-Ins/Components/$AU_NAME
+
+只给当前用户安装则换成家目录下的同名位置:~/Library/Audio/Plug-Ins/VST3/
+与 ~/Library/Audio/Plug-Ins/Components/。
+
+首次加载:去掉隔离属性(U13:v1 不签名、不公证)
+--------------------------------------------
+本插件未签名也未公证。浏览器下载的压缩包会被打上 com.apple.quarantine,
+宿主会以「无法验证开发者」为由拒绝加载。安装到全局路径后,在「终端」各执行一条:
+
+  xattr -dr com.apple.quarantine "/Library/Audio/Plug-Ins/VST3/$VST3_NAME"
+  xattr -dr com.apple.quarantine "/Library/Audio/Plug-Ins/Components/$AU_NAME"
+
+装在家目录则把上面两条路径换成 ~/Library/... 下的对应位置。
+
+AU 没出现在宿主的插件列表里
+---------------------------
+macOS 的 AU 组件缓存不会自动刷新。执行下面一条强制重扫,再重启宿主:
+
+  killall -9 AudioComponentRegistrar
+
+浏览器
+------
+接收端是 Synchain 网页应用里项目的 Creative Space 页面。
+macOS 上请用 Chrome / Edge / Firefox 打开;Safari 不在验证矩阵内,不建议使用。
+浏览器必须与插件在同一台机器上 —— 桥 #2 只监听本机回环地址。
+
+源码获取
+--------
+Complete corresponding source for this exact build: https://github.com/synchain-oss/synchain-bridge/tree/v$VERSION
+EOF
+
+# 8) 压缩:ditto -c -k(不加 --keepParent,staging 内容平铺到 zip 根,
+#    与 package.ps1 的 includeBaseDirectory=false 一致);--sequesterRsrc 收拢资源分叉。
+rm -f "$ZIP_PATH"
+ditto -c -k --sequesterRsrc "$STAGING" "$ZIP_PATH"
+
+# 9) 打包后断言(硬要求 #6):层级 + 四个合规文件 + 可执行位;缺一即退出 1。
+#    前缀/全名比对用 awk 做字面匹配,避免 bundle 名里的 '.' 被当成正则通配。
+NAMES="$(unzip -Z1 "$ZIP_PATH")"
+for b in "$VST3_NAME" "$AU_NAME"; do
+    printf '%s\n' "$NAMES" | awk -v p="$b/Contents/" 'index($0, p) == 1 { hit = 1 } END { exit !hit }' \
+        || die "zip assertion failed: no entries under '$b/Contents/'"
+done
+for r in 'LICENSE.txt' 'THIRD-PARTY-NOTICES.md' 'LICENSES/OFL-1.1.txt' 'INSTALL.txt'; do
+    printf '%s\n' "$NAMES" | awk -v f="$r" '$0 == f { hit = 1 } END { exit !hit }' \
+        || die "zip assertion failed: missing '$r'"
+done
+
+# 可执行位:只挑 Contents/MacOS/ 下的**文件**条目 —— 目录条目本身是 d 开头,拿它比会误报。
+MACHO="$(unzip -Z "$ZIP_PATH" | grep -E '/Contents/MacOS/[^[:space:]]' || true)"
+[ -n "$MACHO" ] || die "zip assertion failed: no Contents/MacOS/ file entries"
+NOT_EXEC="$(printf '%s\n' "$MACHO" | grep -v '^-rwx' || true)"
+[ -z "$NOT_EXEC" ] || die "zip assertion failed: exec bit lost on:
+$NOT_EXEC"
+
+rm -rf "$STAGING"
+
+# 10) .sha256 独立资产 + package-summary.md(硬要求 #3)。
+#     .sha256 的格式与 package.ps1 逐字一致:"<小写 hash><两个空格><zip 文件名>"。
+HASH="$(shasum -a 256 "$ZIP_PATH" | awk '{ print $1 }')"
+printf '%s  %s\n' "$HASH" "$ZIP_NAME" > "$SHA_PATH"
+
+SIZE_BYTES="$(wc -c < "$ZIP_PATH" | tr -d '[:space:]')"
+RELEASE_DATE="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+
+# summary 以空行分段追加:同一个 OutDir 下可能已有别的平台/上一次运行写的段落。
+# 同名 zip 的旧段落先删掉,避免重复跑脚本时越堆越长。
+if [ -f "$SUMMARY_PATH" ]; then
+    awk -v RS='' -v ORS='\n\n' -v z="zipFileName: $ZIP_NAME" 'index($0, z) == 0' "$SUMMARY_PATH" > "$SUMMARY_PATH.tmp"
+    mv "$SUMMARY_PATH.tmp" "$SUMMARY_PATH"
+fi
+cat >> "$SUMMARY_PATH" <<EOF
+version: $VERSION
+zipFileName: $ZIP_NAME
+sizeBytes: $SIZE_BYTES
+sha256: $HASH
+releaseDate: $RELEASE_DATE
+EOF
+
+echo "Packaged: $ZIP_PATH ($SIZE_BYTES bytes)"
+echo "SHA256:   $HASH"

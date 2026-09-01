@@ -1,30 +1,41 @@
 # release.yml —— tag v* 触发草稿 Release(08 §5.2 / 06 §3.8 / 06 §4.1 Bridge 侧)
 # 不设 workflow_dispatch:B08 验收要验证的正是 push: tags: ['v*'] 这个触发器本身,
 # 用 workflow_dispatch 替代实测会被判不合格(07 §B08)。tag 格式 vX.Y.Z(08 §3.4,去 vst- 前缀)。
+#
+# 四段式:gate(版本门禁)→ release / release-macos(两平台并行构建+打包)→ publish(建 draft Release)。
+# 版本门禁独立成 job 并前置:两个平台的构建都在门禁绿了之后才起,tag 打错时不浪费 windows/macOS 分钟数。
 name: Release
 
 on:
   push:
     tags: ['v*']
 
-# release.yml 是唯一被授予 contents: write 的 workflow(06 §3.8),爆炸半径最大。
+# contents: write 只授给 publish 一个 job —— 它是唯一需要写 Release 的地方。
+# workflow 级降为只读:构建 job 跑的是第三方代码(JUCE / vcpkg / pluginval),
+# 拿不到写权限,爆炸半径从整个 workflow 收敛到最后一步(06 §3.8)。
 # 第三方 action 一律 pin 到 40 位 commit SHA(06 §8.4 铁律),注释写版本号便于 dependabot。
 # 绝不使用 pull_request_target(J20 禁令,全域有效)。
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  release:
-    name: release
-    runs-on: windows-2022
-    timeout-minutes: 60
-    env:
-      WEBVIEW2_NUGET_VERSION: '1.0.2957.106'
+  # ============================================================================
+  # gate —— 版本一致性门禁(平台无关,放最便宜的 runner 上)
+  # ============================================================================
+  gate:
+    name: gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       # ---- 版本一致性门禁(06 §3.8 / 08 §5.2):tag 与 CMake VERSION 不一致时 job 必须 fail ----
+      # 逻辑与拆 job 前逐字相同,只是多导出一个 outputs.version 给下游两个构建 job 用;
+      # pwsh 在 ubuntu-latest 上预装,不需要额外安装步骤。
       - name: Verify tag matches CMake VERSION
+        id: version
         shell: pwsh
         run: |
           $tag  = "${{ github.ref_name }}"
@@ -44,6 +55,20 @@ jobs:
             }
             Write-Host "version gate OK: tag '$tag' == CMake VERSION '$cmake'"
           }
+          "version=$want" | Out-File $env:GITHUB_OUTPUT -Append
+
+  # ============================================================================
+  # release —— Windows x64(VST3)
+  # ============================================================================
+  release:
+    name: release
+    runs-on: windows-2022
+    needs: gate
+    timeout-minutes: 60
+    env:
+      WEBVIEW2_NUGET_VERSION: '1.0.2957.106'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       # ---- 以下构建步骤与 ci.yml 同构(读 .juce-version / .pluginval-version,去 vst-plugin/ 前缀)----
       - name: Resolve pinned versions
@@ -124,12 +149,237 @@ jobs:
         shell: pwsh
         run: Get-Content dist/package-summary.md | Out-File $env:GITHUB_STEP_SUMMARY -Append
 
+      # ---- 产物交给 publish job 统一挂到 Release 上:本 job 只读权限,写 Release 的只有 publish ----
+      - name: Upload dist (win64)
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: dist-win64
+          path: |
+            dist/SynchainBridge-VST3-*-win64.zip
+            dist/SynchainBridge-VST3-*-win64.zip.sha256
+            dist/package-summary.md
+          if-no-files-found: error
+          retention-days: 7
+
+  # ============================================================================
+  # release-macos —— macOS(Apple Silicon):VST3 + AU,arm64-only,不签名不公证(U13)
+  # 与 ci.yml 的 build-and-validate-macos 同构,末尾多一步 scripts/package-macos.sh。
+  # ============================================================================
+  release-macos:
+    name: release-macos
+    runs-on: macos-15                   # arm64 原生;macos-14 已进弃用窗口
+    needs: gate
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Resolve pinned versions
+        shell: bash
+        run: |
+          set -euo pipefail
+          juce=$(tr -d '[:space:]' < .juce-version)
+          pv=$(tr -d '[:space:]' < .pluginval-version)
+          if [ -z "$juce" ] || [ -z "$pv" ]; then
+            echo "::error::empty .juce-version / .pluginval-version"; exit 1
+          fi
+          echo "JUCE_TAG=$juce"    >> "$GITHUB_ENV"
+          echo "PLUGINVAL_TAG=$pv" >> "$GITHUB_ENV"
+
+      # 工具链留痕:runner 镜像每月轮换,出问题时这段日志用于区分「代码回归 or 镜像漂移」
+      - name: Record toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          sw_vers
+          uname -m
+          cmake --version
+          clang --version
+          xcodebuild -version
+
+      - name: Clone JUCE (shallow, pinned)
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --depth 1 --branch "$JUCE_TAG" https://github.com/juce-framework/JUCE.git "${{ github.workspace }}/JUCE"
+
+      # Ninja:macOS 镜像通常自带;缺失时按需装,避免镜像轮换把发版弄红
+      - name: Ensure Ninja
+        shell: bash
+        run: |
+          set -euo pipefail
+          command -v ninja >/dev/null 2>&1 || brew install ninja
+          ninja --version
+
+      # OSX 相关参数(架构/部署目标/FORMATS)全在 CMakeLists,命令行不重复 —— 单一真源
+      - name: Configure CMake (Ninja)
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DJUCE_PATH="${{ github.workspace }}/JUCE"
+
+      # clang 零警告门:只统计路径含 /src/ 的告警行,排除 _deps / JUCE 的第三方噪音
+      - name: Build (fail on any clang warning in src/)
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake --build build --parallel 2>&1 | tee build.log
+          warns=$(grep -E 'warning:' build.log | grep '/src/' | grep -v '/_deps/' | grep -v '/JUCE/' || true)
+          if [ -n "$warns" ]; then
+            printf '%s\n' "$warns" | while IFS= read -r line; do echo "::error::$line"; done
+            echo "::error::clang warnings in src/: $(printf '%s\n' "$warns" | wc -l | tr -d ' '); zero-warning gate"
+            exit 1
+          fi
+
+      - name: Locate artefacts & assert arm64-only
+        shell: bash
+        run: |
+          set -euo pipefail
+          vst3=$(find build -type d -name '*.vst3' -print | head -n 1)
+          au=$(find build -type d -name '*.component' -print | head -n 1)
+          if [ -z "$vst3" ]; then echo "::error::no .vst3 bundle found under build"; exit 1; fi
+          if [ -z "$au" ];   then echo "::error::no .component bundle found under build"; exit 1; fi
+          echo "VST3_PATH=$vst3" >> "$GITHUB_ENV"
+          echo "AU_PATH=$au"     >> "$GITHUB_ENV"
+          archs=$(file "$vst3"/Contents/MacOS/* "$au"/Contents/MacOS/*)
+          printf '%s\n' "$archs"
+          printf '%s\n' "$archs" | grep -q 'arm64' || { echo "::error::mach-o is not arm64"; exit 1; }
+          if printf '%s\n' "$archs" | grep -q 'x86_64'; then
+            echo "::error::x86_64 slice present; v1 ships arm64-only"; exit 1
+          fi
+
+      # 上游 zip 的可执行位不保证保留,chmod +x 是必需步骤而非保险
+      - name: Download pluginval
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsSL -o pluginval.zip "https://github.com/Tracktion/pluginval/releases/download/$PLUGINVAL_TAG/pluginval_macOS.zip"
+          unzip -q pluginval.zip -d pluginval
+          chmod +x pluginval/pluginval.app/Contents/MacOS/pluginval
+
+      - name: Validate VST3 (pluginval)
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "::group::pluginval $(basename "$VST3_PATH")"
+          ./pluginval/pluginval.app/Contents/MacOS/pluginval \
+            --strictness-level 5 --timeout-ms 60000 --skip-gui-tests \
+            --output-dir "$RUNNER_TEMP/pluginval-logs" "$VST3_PATH"
+          echo "::endgroup::"
+          echo "Non-GUI strictness-5 passed; full GUI validation is a LOCAL gate."
+
+      # AU 只能用 auval 验:必须 ditto(cp -r 会丢符号链接与扩展属性,bundle 会散架),
+      # 装完踢一次 AudioComponentRegistrar 强制重扫。auval 的退出码历史上不可靠,
+      # 一律以输出里的 'AU VALIDATION SUCCEEDED' 为准 —— 所以这一步关掉 -e,
+      # 否则 killall / grep 的中间态非零退出会先把步骤杀掉。
+      - name: Validate AU (auval)
+        shell: bash
+        run: |
+          set +e
+          set -uo pipefail
+          mkdir -p "$HOME/Library/Audio/Plug-Ins/Components"
+          ditto "$AU_PATH" "$HOME/Library/Audio/Plug-Ins/Components/$(basename "$AU_PATH")"
+          killall -9 AudioComponentRegistrar 2>/dev/null || true
+          echo "::group::auval -v aufx Snb1 Snch"
+          auval -v aufx Snb1 Snch 2>&1 | tee auval.log
+          echo "::endgroup::"
+          if ! grep -q 'AU VALIDATION SUCCEEDED' auval.log; then
+            echo "::error::auval did not report 'AU VALIDATION SUCCEEDED'"
+            exit 1
+          fi
+          echo "auval OK"
+
+      # ---- 打包:唯一真源 = scripts/package-macos.sh;绝不在 YAML 内联 ditto/zip ----
+      - name: Package
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash scripts/package-macos.sh --version "${{ needs.gate.outputs.version }}" --build-dir build --out-dir dist
+
+      - name: Publish job summary
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat dist/package-summary.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload dist (macos-arm64)
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: dist-macos-arm64
+          path: |
+            dist/SynchainBridge-VST3-AU-*-macos-arm64.zip
+            dist/SynchainBridge-VST3-AU-*-macos-arm64.zip.sha256
+            dist/package-summary.md
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload pluginval / auval logs (on failure)
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: SynchainBridge-macos-validation-logs-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/pluginval-logs
+            auval.log
+          retention-days: 7
+          if-no-files-found: ignore
+
+  # ============================================================================
+  # publish —— 全仓唯一持 contents: write 的 job:复验哈希后一次性建 draft Release
+  # ============================================================================
+  publish:
+    name: publish
+    runs-on: ubuntu-latest
+    needs: [release, release-macos]
+    timeout-minutes: 10
+    permissions:
+      contents: write                   # 唯一需要写 Release 的地方,权限只放这一个 job
+    steps:
+      # 不带 name 下载全部 artifact:每个 artifact 落到 artifacts/<name>/ 下,
+      # 两个平台各自的 package-summary.md 因此不会互相覆盖。
+      - name: Download platform artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          path: artifacts
+
+      - name: Flatten & verify checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          cp artifacts/dist-win64/*.zip artifacts/dist-win64/*.zip.sha256 dist/
+          cp artifacts/dist-macos-arm64/*.zip artifacts/dist-macos-arm64/*.zip.sha256 dist/
+          # package.ps1 落盘的 .sha256 行尾是 CRLF,而 sha256sum -c 会把结尾的 \r 当成文件名的一部分,
+          # 校验必失败。统一成 LF 后再验 —— 用户在 mac/Linux 上手动 sha256sum -c 也才不会踩同一个坑。
+          for f in dist/*.sha256; do
+            tr -d '\r' < "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+          done
+          cd dist
+          # 跨 job 复验:构建 job 算出的哈希与 publish 实际下载到的字节必须对得上,
+          # 否则说明 artifact 上传/下载路径上出了问题,绝不能挂到 Release 上。
+          sha256sum -c ./*.sha256
+          ls -l
+
+      - name: Publish job summary
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "## Release assets — ${{ github.ref_name }}"
+            echo
+            echo '```'
+            cat dist/*.sha256
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # 两个平台的产物一次性建成同一个 draft Release;generate_release_notes 全流程只在这里跑一次。
       - name: Create draft GitHub Release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
-          name: Synchain Bridge VST3 ${{ github.ref_name }} (Windows x64)
+          name: Synchain Bridge ${{ github.ref_name }} (Windows x64 · macOS arm64)
           draft: true
           generate_release_notes: true
           files: |
             dist/SynchainBridge-VST3-*-win64.zip
             dist/SynchainBridge-VST3-*-win64.zip.sha256
+            dist/SynchainBridge-VST3-AU-*-macos-arm64.zip
+            dist/SynchainBridge-VST3-AU-*-macos-arm64.zip.sha256
