@@ -1,7 +1,7 @@
 # web/fonts — 离线子集字体
 
 插件 WebView UI 用的字体，**离线打包**进 VST3（DAW 联网敏感，绝不运行期拉 Google Fonts）。
-每个 `.woff2` 都是 **text= 子集**：只含 UI 实际用到的字形，四款合计 ~78KB。
+每个 `.woff2` 都是 **text= 子集**：只含 UI 实际用到的字形，四款合计 ~73KB。
 
 | 文件 | @font-face family | 来源家族（上游） | 字重 | 用途（styles.css 变量） |
 |---|---|---|---|---|
@@ -19,24 +19,38 @@
 
 - **子集化 = 修改**：产物是许可证意义上的 *Modified Version*。
 - **§3 保留字体名（Reserved Font Name）**：IBM Plex 家族的保留字体名是 **`Plex`**，Modified Version
-  **不得**在名字里使用它。因此本仓的分发名去掉了 `Plex`：文件名 `BridgeSans.woff2` / `BridgeMono.woff2`，
-  `@font-face` family `Bridge Sans` / `Bridge Mono`，`styles.css` 的字体栈同步改名。
-- **§4 署名**：woff2 二进制**未改动**，其 `name` 表里的上游版权与家族署名随产物原样分发；
-  上游家族、许可证与版权行另见 [`THIRD-PARTY-NOTICES.md`](../../THIRD-PARTY-NOTICES.md)。
+  **不得**在名字里使用它。§3 明确「This restriction only applies to the primary font name as
+  presented to the users」——受限的是**呈现给用户的主字体名**，也就是字体 `name` 表里的家族名 /
+  全名 / PostScript 名，**不只是文件名和 CSS family**。因此本仓两层都去掉了 `Plex`：
+  - 外层：文件名 `BridgeSans.woff2` / `BridgeMono.woff2`，`@font-face` family `Bridge Sans` /
+    `Bridge Mono`，`styles.css` 的字体栈同步改名；
+  - 二进制内：`scripts/fetch_fonts.py` 的 `rename_font()` 下载后用 fontTools 重写 `name` 表的
+    nameID 1/3/4/6，改名后 `name` 表内不含 `Plex`（该函数带 fail-closed 断言，没改干净就不产出）。
+- **§2 署名**：`name` 表里的 nameID 0（上游版权）与 14（OFL 许可证 URL）**逐字保留**，并补齐上游
+  子集缺失的 nameID 13（OFL 许可证声明）；OFL 全文另由 `scripts/package.ps1` 放进发布 zip。
+  上游家族、许可证与版权行见 [`THIRD-PARTY-NOTICES.md`](../../THIRD-PARTY-NOTICES.md)。
+  （注：§4 是**禁止背书**条款，不是署名条款；此处早前编号写错，现更正为 §2。）
 - 另两款不受影响：**Space Grotesk 无保留字体名**；**Noto Sans SC 的保留字体名是 `Source`**，
-  分发名里不含它。故两者继续沿用上游家族名。
+  分发名与 `name` 表里都不含它。故两者继续沿用上游家族名，二进制原样分发。
 
 引用这些字体时请用**分发名**（`Bridge Sans` / `Bridge Mono`）；上游家族名只出现在「来源说明」语境里。
 
 ## 重新生成
 
 字形有增改时（新增 UI 文案/语言）重新子集：脚本用 Google Fonts CSS2 `text=` 接口直接取子集 WOFF2，
-无需本地装 `fonttools`。
+再对 `BridgeSans` / `BridgeMono` 两款做 OFL §3 改名（需 `fontTools` + `brotli`）。
 
 ```bash
+pip install "fonttools[woff]"      # 仅改名两款需要
 python scripts/fetch_fonts.py <这个目录的绝对路径>
 ```
 
 改字符集：编辑脚本里的 `LATIN` / `CJK` 常量后重跑，再确认 `styles.css` 的 `@font-face` 文件名一致。
+改完复核 `name` 表已无保留字体名：
+
+```bash
+python -c "from fontTools.ttLib import TTFont; import glob; \
+print([(p, TTFont(p)['name'].getDebugName(1)) for p in sorted(glob.glob('web/fonts/*.woff2'))])"
+```
 > 注意：`Noto Sans SC` 只挂在 `--ff-sans/--ff-mono/--ff-grotesk` 三条栈的**拉丁字体之后**——
 > 拉丁字体无 CJK 字形，浏览器按栈逐字回退到 Noto，保证离线确定性渲染（不依赖宿主系统 CJK 字体）。
