@@ -119,7 +119,10 @@ juce_add_binary_data(SynchainBridgeWebAssets SOURCES
 # Windows: vcpkg x64-windows-static（全静态）。macOS: FetchContent，tag 钉死，不引入包管理器。
 
 if(APPLE)
-  set(IXWEBSOCKET_TAG "v11.4.6" CACHE STRING "IXWebSocket pinned git tag")
+  # 与 Windows 侧 vcpkg x64-windows-static 实际安装的 ixwebsocket 版本对齐（同为 12.0.1）：
+  # 两平台跑同一个 WebSocket 实现的同一个版本，permessage-deflate 协商 / close code /
+  # handshake header 解析这些 wire 层行为才是单一契约（CLAUDE.md §5 §7）。
+  set(IXWEBSOCKET_TAG "v12.0.1" CACHE STRING "IXWebSocket pinned git tag")
   # 桥 #2 只在 127.0.0.1 上服务明文 ws://（见 VstBridgeServer::start），无 TLS 需求；
   # 关 TLS 即不需要 mbedtls/Security.framework。CMP0077=NEW 下 set 可压过 option，CACHE FORCE 双保险。
   set(USE_TLS             OFF CACHE BOOL "" FORCE)
@@ -128,6 +131,10 @@ if(APPLE)
   set(USE_WS              OFF CACHE BOOL "" FORCE)
   set(USE_TEST            OFF CACHE BOOL "" FORCE)
   set(BUILD_DEMO          OFF CACHE BOOL "" FORCE)
+  # 上游 option 默认 OFF，但外层只要带 -DBUILD_SHARED_LIBS=ON（superbuild，或复用了别的 build 目录的
+  # cache），ixwebsocket 就会变成 dylib：它不会被拷进 .vst3/.component 的 Frameworks，也没有任何 rpath
+  # 处理，装到 ~/Library 后换台机器直接加载失败。mac 侧产物必须自包含，故与上面五个变量同样写死。
+  set(BUILD_SHARED_LIBS   OFF CACHE BOOL "" FORCE)
   # 上游默认 TRUE：不关掉会把 ixwebsocket 的 install 规则挂进本工程的 INSTALL 目标。
   set(IXWEBSOCKET_INSTALL OFF CACHE BOOL "" FORCE)
   # USE_ZLIB 保持上游默认 ON（与 vcpkg port 一致，permessage-deflate 行为跨平台不漂移）；macOS SDK 自带 libz。
