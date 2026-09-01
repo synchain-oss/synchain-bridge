@@ -315,10 +315,12 @@ jobs:
         run: |
           set -euo pipefail
           echo "::group::pluginval $(basename "$VST3_PATH")"
+          rc=0
           ./pluginval/pluginval.app/Contents/MacOS/pluginval \
             --strictness-level 5 --timeout-ms 60000 --skip-gui-tests \
-            --output-dir "$RUNNER_TEMP/pluginval-logs" "$VST3_PATH"
-          echo "::endgroup::"
+            --output-dir "$RUNNER_TEMP/pluginval-logs" --validate "$VST3_PATH" || rc=$?
+          echo "::endgroup::"   # 失败也闭合分组(与 ci.yml 同参)
+          [ "${rc:-0}" -eq 0 ] || exit "${rc}"
           echo "Non-GUI strictness-5 passed; full GUI validation is a LOCAL gate."
 
       # AU 只能用 auval 验:必须 ditto(cp -r 会丢符号链接与扩展属性,bundle 会散架),
@@ -360,8 +362,12 @@ jobs:
             sleep 1
           done
           if [ "$registered" != "1" ]; then
-            echo "::error::AU component $au_type/$code/$mfr not registered after 30s; auval would fail with an unrelated component-not-found"
-            exit 1
+            # 只警告不失败:真正判定在下游 AU VALIDATION SUCCEEDED;正则猜错排版时退化为
+            # 「直接验」而不是让整个 tag 无产物(采纳 #21 review,与 ci.yml 同参)。
+            echo "::warning::component $au_type/$code/$mfr not seen in auval -a within polling window; proceeding to auval -v anyway"
+            echo "::group::auval -a head (diagnostics)"
+            auval -a 2>/dev/null | head -40 || true
+            echo "::endgroup::"
           fi
           echo "::group::auval -v $au_type $code $mfr"
           auval -v "$au_type" "$code" "$mfr" 2>&1 | tee auval.log || true
