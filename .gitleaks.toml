@@ -12,11 +12,92 @@ useDefault = true
 #   regexes.synchain  —— 08 §4.3 U4 决定公开保留的 Origin 白名单常量(仅 synchain.cn/.ca 默认值;
 #                       部署平台预览域名等额外来源按 U4 经构建期注入,不入库)。
 #                       白名单是客户端二进制内的安全设计,非凭据。
+#                       **必须整串锚定**:这是全局 allowlist,对所有规则生效。不锚定时
+#                       `attacker@synchain.ca.evil.example.com` 会因为含 `synchain.ca` 子串被整条豁免,
+#                       连带把下面 non-org-email 的结尾锚定一起架空(金丝雀已复验)。
 #   (文档占位凭据串:B01 扫描已核验 Bridge 源文件零命中,故本仓无需登记;如未来新增示例凭据串,在此逐条登记。)
 description = "误报逐条登记(理由见文件头注释)"
 paths = [
   '''LICENSES/''',
+  # 本地构建/依赖/工具产物(全部已 gitignore,永不入库;--no-git 树扫描不认 .gitignore,故在此逐条
+  # 豁免,否则 CMake 缓存与生成工程、虚拟环境、.pyc(co_filename 内嵌构建机绝对路径)里的本机路径
+  # 会把本地 gates 打红。CI 是干净 checkout,这些路径根本不存在,豁免不削弱 CI 侧防护):
+  '''^build[^/\\]*[/\\]''',
+  '''^dist[/\\]''',
+  '''^out[/\\]''',
+  '''^\.vs[/\\]''',
+  '''^\.venv[/\\]''',
+  '''node_modules[/\\]''',
+  '''__pycache__[/\\]''',
+  # BEFORE_PUBLIC_CHECKLIST.md §5.3 要求在**本地**创建的真值验收文件(已 gitignore,真值绝不入库)。
+  # 不豁免它就是自锁死:该文件装的就是下面三类规则要防的形态,一旦存在,树扫描必然命中自己的规则,
+  # 于是「跑 §5.3 验收」与「gates 全绿」互斥 —— 验收流程会被门禁挡住。
+  '''^\.leakscan-patterns$''',
 ]
 regexes = [
-  '''synchain\.(cn|ca)''',
+  '''^synchain\.(cn|ca)$''',
+]
+
+# ---------------------------------------------------------------------------
+# 自定义规则:非密钥型敏感信息(转 public 后的防再泄漏门禁)。
+# 规则只写「类别模式」,绝不把待防的具体字符串写进本文件——那等于在公开仓复制一份要清除的东西。
+# 覆盖三类:本机用户路径(Windows / macOS / Linux 三种形态,暴露用户名与机器布局)、
+# 部署平台团队域名(U4:构建期注入,不入库)、
+# 非组织邮箱(U17:对外一律 contact@synchain.ca,提交用 noreply@synchain.ca)。
+# gitleaks 的 regex 引擎是 RE2(不支持 lookahead),豁免一律走 [rules.allowlist]。
+# ---------------------------------------------------------------------------
+
+[[rules]]
+id = "personal-local-path-windows"
+description = "Windows 本机用户绝对路径不得入库(文档/表格用上游 URL 或相对路径替代)"
+regex = '''(?i)C:[\\/]+Users[\\/][A-Za-z0-9._-]+'''
+
+[[rules]]
+id = "personal-local-path-macos"
+description = "macOS 本机用户绝对路径不得入库(文档一律用 ~ 或 $HOME)"
+regex = '''/Users/[A-Za-z0-9._-]+/'''
+[rules.allowlist]
+# GitHub Actions macOS runner 的标准家目录(/Users/runner,公开常识,非个人信息)——
+# workflow 注释/步骤会合法提及(如解释 upload-artifact 的路径展开行为)。
+regexes = ['''/Users/runner/''']
+
+[[rules]]
+id = "personal-local-path-linux"
+description = "Linux 本机用户绝对路径不得入库(文档一律用 ~ 或 $HOME)"
+# CI runner 与外部贡献者多为 Linux;.pyc 的 co_filename 内嵌的正是这个形态。
+# secretGroup=1 是**必需的,不是风格选择**:useDefault 引入的默认全局 allowlist 会豁免
+# 形如 `/home/...` 的整段绝对路径(macOS 的 `/Users/...` 与 Windows 路径不受影响),
+# 若把整段路径当 secret,本规则在 `useDefault = true` 下永远不会命中。改为只把**用户名**
+# 作为 secret 即可正常触发,匹配条件不变(仍要求完整的 `/home/<name>/` 形态)。
+# 改这条规则后务必用金丝雀复验它确实还会命中。
+regex = '''/home/([A-Za-z0-9._-]+)/'''
+secretGroup = 1
+[rules.allowlist]
+# GitHub Actions Linux runner 的标准家目录(/home/runner),同 macOS 侧理由。
+# secretGroup=1 下 secret 是用户名本身,故按全串锚定,防 myrunner 之类混过。
+regexes = ['''^runner$''']
+
+[[rules]]
+id = "deploy-team-preview-domain"
+description = "部署平台团队预览域名不得入库(U4:额外 Origin 经构建期 -DBRIDGE_EXTRA_ALLOWED_ORIGIN_HOSTS 注入)"
+regex = '''[a-z0-9-]+-projects\.vercel\.app'''
+
+[[rules]]
+id = "non-org-email"
+description = "非组织邮箱不得入库(U17)"
+regex = '''[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}'''
+[rules.allowlist]
+# 第三方声明豁免:OFL-1.1 §2 要求上游版权行**逐字**保留,而 OFL 惯例的版权行常带作者邮箱 ——
+# 改写它就违反 §2,故整份文件退出本规则。tradeoff:该文件里的邮箱不再由门禁看守,新增条目时
+# 靠人工 review 确认它确实抄自上游许可证原文,而不是我们自己的地址。
+paths = [
+  '''^THIRD-PARTY-NOTICES\.md$''',
+]
+# 组织邮箱与 GitHub noreply 是仅有的两类合法邮箱;example.* 供文档示例用。
+# **必须锚定结尾**:不锚定时 attacker@synchain.ca.evil.example.com 会因为含合法子串而被误豁免 ——
+# 豁免的判定对象是整个命中的邮箱,只有 `$` 才能保证合法域是它的结尾而不是中间一段。
+regexes = [
+  '''@synchain\.ca$''',
+  '''@users\.noreply\.github\.com$''',
+  '''@example\.(com|org|net)$''',
 ]

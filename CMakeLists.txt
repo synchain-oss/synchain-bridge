@@ -217,11 +217,13 @@ endif()
 #   cmake -S . -B build -DBRIDGE_EXTRA_ALLOWED_ORIGIN_HOSTS="example-git-*-example-team.example.app;preview.example.com"
 #
 # ';' or ',' separated host patterns, at most ONE '*' per pattern. The '*' matches a
-# non-empty run of characters within a SINGLE DNS label (it never crosses a '.'), and a
-# pattern must carry a real domain anchor — after dropping the '*' the remainder needs a
-# '.' followed by an all-alphabetic TLD of 2+ chars, so punctuation-only patterns such as
-# '*', '*.' or '-*' are dropped fail-closed. https is still required. Empty by default
-# -> the macro is NOT defined -> a default build allows no extra origin at all.
+# non-empty run of characters within a SINGLE DNS label (it never crosses a '.'), it must
+# sit inside the LEFTMOST label, and what follows the first '.' must still be a 2+ segment
+# domain anchor whose last segment is an all-alphabetic TLD of 2+ chars. So '*', '*.',
+# '-*', '*.com' and '*example.app' are all dropped fail-closed — none of them may turn into
+# a blanket wildcard. https is still required. Empty by default -> the macro is NOT defined
+# -> a default build allows no extra origin at all. Rules live in src/OriginAllowlist.h and
+# are asserted by tests/origin_allowlist_selftest.cpp (-DBRIDGE_BUILD_SELFTESTS=ON).
 set(BRIDGE_EXTRA_ALLOWED_ORIGIN_HOSTS "" CACHE STRING
   "Extra Origin host patterns to allow (';' or ',' separated; at most one '*' per pattern)")
 
@@ -254,6 +256,23 @@ endif()
 configure_file(cmake/BridgeOriginConfig.h.in
   "${CMAKE_CURRENT_BINARY_DIR}/generated/BridgeOriginConfig.h" @ONLY)
 target_include_directories(SynchainBridgeVST PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
+
+# --- Optional: Origin allow-list selftest ---
+# Asserts the pure string logic of src/OriginAllowlist.h (normalisation, injected-pattern
+# usability, pattern matching). Standard library only: no JUCE, no ixwebsocket, no link
+# against the plugin target — so it builds and runs in seconds. OFF by default; the local
+# gate script (scripts/gates.ps1) configures with -DBRIDGE_BUILD_SELFTESTS=ON and runs it.
+option(BRIDGE_BUILD_SELFTESTS "Build origin allowlist selftest" OFF)
+if(BRIDGE_BUILD_SELFTESTS)
+  add_executable(origin_allowlist_selftest tests/origin_allowlist_selftest.cpp)
+  target_compile_features(origin_allowlist_selftest PRIVATE cxx_std_17)
+  target_include_directories(origin_allowlist_selftest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+  if(MSVC)
+    target_compile_options(origin_allowlist_selftest PRIVATE /W4 /utf-8)
+  else()
+    target_compile_options(origin_allowlist_selftest PRIVATE -Wall -Wextra -Wpedantic)
+  endif()
+endif()
 
 # --- Platform-Specific ---
 if(WIN32)

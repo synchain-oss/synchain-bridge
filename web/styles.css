@@ -11,7 +11,7 @@
      字体族用 CSS 变量集中管理并自带 system-ui / Segoe UI / Microsoft YaHei 回退。
    ========================================================================== */
 
-/* ---- 本地字体：text= 子集 WOFF2（仅内嵌用到的字形，四款共 ~78KB，随插件离线打包）；
+/* ---- 本地字体：text= 子集 WOFF2（仅内嵌用到的字形，四款共 ~73KB，随插件离线打包）；
        Noto Sans SC 为可变字重(400..700)，CJK 字重跟随元素；font-display:swap + 字体栈回落，
        加载/缺失都不阻塞渲染。子集脚本见 web/fonts/README。
        'Bridge Sans' / 'Bridge Mono' 是上游家族子集的改名分发（OFL-1.1 §3 保留字体名，Modified

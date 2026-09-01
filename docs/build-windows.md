@@ -52,13 +52,37 @@ cmake -S . -B build -G "Visual Studio 17 2022" -A x64 `
   匹配前统一小写归一，FQDN 尾点（`https://example.com.`）会被剥掉后再比。
 - `*` 只匹配**单个 DNS 标签内**的一段非空字符：**通配段不跨 `.`**。即 `a-*-b.example.app` 匹配
   `a-x-b.example.app`，但**不**匹配 `a-x.evil.com-b.example.app`。
-- 模式必须带**真实域名锚点**才会被采纳：去掉 `*` 后剩下的字面量须含 `.`，且最后一个 `.` 之后是一段
-  纯字母、长度 ≥2 的 TLD。因此 `*`、`*.`、`-*`、`*-`、`*.example.*` 这类「字面量全是标点 / 通配到 TLD」
-  的模式会被 **fail-closed 丢弃**（含多个 `*` 的模式同样丢弃），不会变成变相的全通配。
+- 模式必须带**真实域名锚点**才会被采纳，且 `*` 必须落在**最左 label 内**（位置在第一个 `.` 之前）。
 - 额外来源同样**只在 https 下生效**（非 https 的远程来源一律拒）。
 - 值里**不得含双引号或反斜杠**：该值最终会进生成头 `BridgeOriginConfig.h` 的字符串字面量，
   CMake 配置期检测到会直接 `FATAL_ERROR`。
-- **不传即不定义该宏**：默认构建不放行任何额外来源。实现见 `src/VstBridgeServer.cpp` 的 `isAllowedOrigin()`。
+- **不传即不定义该宏**：默认构建不放行任何额外来源。实现见 `src/OriginAllowlist.h`（纯匹配逻辑，
+  断言见 `tests/origin_allowlist_selftest.cpp`）与 `src/VstBridgeServer.cpp` 的 `isAllowedOrigin()`。
+
+### 不合法模式会被静默丢弃（fail-closed）
+
+**校验不通过的模式不会报错，也不会留下任何运行期日志**——它只是不进白名单，用它的来源随后握手会
+收到 `close(4403, "origin not allowed")`。这是刻意的（握手路径不打日志，避免把注入值写进日志），
+代价是**拼错的模式看起来和没注入一样**。会被丢弃的形态：
+
+| 形态 | 例子（域名均为虚构） | 原因 |
+|---|---|---|
+| 多于一个 `*` | `*.*.example.app`、`**.example.app` | 不在约定内 |
+| 无 ≥2 段域名锚点 | `*.com`、`*.app`、`*example.app`、`*-team.app` | 第一个 `.` 之后只剩一段 TLD，等于放行整个 TLD |
+| `*` 不在最左 label | `preview.*.example.app`、`example.*.app`、`example.app-*` | 通配跨到锚点里 |
+| 字面量全是标点 / 无点 | `*`、`*.`、`-*`、`*-`、`localhost` | 没有域名锚点，等于全通配 |
+| TLD 非 2+ 纯字母 | `*.example.a`、`*.example.a1`、`*.192.168.0.1` | 末段不是合法 TLD |
+| punycode / IDN TLD | `*.example.xn--p1ai` | **不支持**：TLD 段含 `-` 与数字，一律丢弃 |
+| 以 `.` 结尾 | `example.app.` | host 归一化会剥掉尾点，带尾点的模式永远匹配不上 |
+
+**注入后请实测一次**，别只看构建成功。在目标页面的浏览器控制台跑：
+
+```js
+new WebSocket("ws://127.0.0.1:9420").addEventListener("close", (e) => console.log(e.code, e.reason));
+```
+
+握手被接受时不会打印 `4403`；打印 `4403 origin not allowed` 就说明该 Origin 没进白名单
+（模式被丢弃、拼错，或页面不是 https）。
 
 ## 关键坑（必读）
 

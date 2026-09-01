@@ -21,34 +21,45 @@
 ## 3. GitHub Actions
 - `allowed_actions` 保持 `selected`（现已配置）
 - fork PR 审批改为 **all_external_contributors**（Settings → Actions → General）
+- 第三方**与 first-party** action 全部锁定 40 位 commit SHA —— **✅ 已完成（2026-09-01）**，见 §3.1
 - 绝不使用 `pull_request_target`（本仓库已禁用，请保持）
 
-### 3.1 第三方 action 全部 pin 到 40 位 SHA（⛔ 转 public 硬门禁，**尚未完成**）
+### 3.1 action pin 实扫清单（转 public 硬门禁 —— **✅ 已完成（2026-09-01）**）
 
-CLAUDE.md §0 铁律 3 要求所有第三方 action pin 到 40 位 commit SHA。当前**只有 `release.yml`
-与 `ci.yml` 的 macOS job 做到了**，其余仍是可变 ref，转 public 前必须清零。
-下表由本节末尾那条断言实扫得出（`branch-gate.yml` 零命中，无需改动）：
+`@v4` / `@v6` 这类可变 tag 上游随时可以重指，等于把本仓 runner 上的代码执行权交给对方；
+`actions/*` 是 first-party 也不例外（CLAUDE.md §0 铁律第 3 条）。本次把 `.github/workflows/`
+下**全部 21 条 `uses:`** 统一钉到 40 位 commit SHA，注释写版本号供 dependabot 升级。
+落地 commit：`ci(security): 全部 workflow action pin 到 40 位 commit SHA(转 public 硬门禁)`
+（分支 `feat/prepublic-pin`，`git log --grep 'pin 到 40 位 commit SHA'` 可定位）。
 
-| 文件 | 未 pin 的可变 ref 处数 |
-|---|---|
-| `.github/workflows/ci.yml` | 7（windows job 的 `actions/checkout@v4` / `actions/cache@v4` / `actions/upload-artifact@v4`）|
-| `.github/workflows/claude-review.yml` | 1（`actions/checkout@v6`）|
-| `.github/workflows/compliance.yml` | 1（`actions/checkout@v4`）|
-| `.github/workflows/contract-guard.yml` | 1（`actions/github-script@v7`）|
-| `.github/workflows/deepseek-review.yml` | 1（`actions/checkout@v6`）|
-| `.github/workflows/format.yml` | 1（`actions/checkout@v4`）|
-| `.github/workflows/pr-agent.yml` | 1（`actions/checkout@v4`）|
-| `.github/workflows/review-dispatch.yml` | 1（`actions/checkout@v4`）|
+| action | commit SHA | 版本 | 出现于 |
+|---|---|---|---|
+| `actions/checkout` | `11d5960a326750d5838078e36cf38b85af677262` | v4.4.0 | ci / compliance / format / pr-agent / release / review-dispatch |
+| `actions/checkout` | `d23441a48e516b6c34aea4fa41551a30e30af803` | v6.1.0 | claude-review / deepseek-review |
+| `actions/cache` | `0057852bfaa89a56745cba8c7296529d2fc39830` | v4.3.0 | ci / release |
+| `actions/upload-artifact` | `ea165f8d65b6e75b540449e92b4886f43607fa02` | v4.6.2 | ci（5 处） |
+| `actions/github-script` | `f28e40c7f34bde8b3046d885e986cb6290c5673b` | v7.1.0 | contract-guard |
+| `anthropics/claude-code-action` | `239e3a730883eeb5c53db12b0fc9573b3024b126` | v1.0.191 | claude-review / deepseek-review / review-dispatch |
+| `qodo-ai/pr-agent` | `8e4d32e5497defd43c023a404f73560c62728961` | v0.39.0 | pr-agent |
+| `softprops/action-gh-release` | `3bb12739c298aeb8a4eeaf626c5b8d85266b0e65` | v2.6.2 | release |
 
-处理方式：**另开一个只做 pin 的 PR**（不与功能改动混在一起），逐个换成
-`owner/repo@<40 位 SHA> # vX.Y.Z`，`release.yml` 是现成范本。验收断言（零命中即通过）：
+口径说明：
+
+- 每个 SHA 均由 `gh api repos/<owner>/<repo>/git/ref/tags/<tag>` 现场解析；annotated tag
+  （`anthropics/claude-code-action`）再经 `gh api repos/<o>/<r>/git/tags/<sha>` 解一层取
+  `object.sha`。**不凭记忆写 SHA**：写错一位就是钉到一个不存在或不受控的对象上。
+- `actions/checkout` 保留 v4 / v6 两条 major 线，是**刻意不动版本**：本次只把可变 ref 换成
+  等价的 SHA，不顺手升级——升级要单独走 PR 并跑一遍 CI，混进 pin 里会让「绿变红」无从归因。
+- 已 pin 的三个（claude-code-action / pr-agent / action-gh-release）SHA 未动，只把注释补成
+  具体版本号；`# pin SHA` 这类注释说不出是哪一版，dependabot 与人都无从判断该不该升。
+
+复核断言（应为「21 条全部 40 位 hex，无 unpinned」）：
 
 ```bash
-grep -rnE 'uses:[[:space:]]*[^@]+@(v[0-9]|main|master)' .github/workflows
+grep -rn "uses:" .github/workflows/                              # 逐行看
+# 抽出每条 uses 的 ref，滤掉已是 40 位 hex 的；零命中（exit 1）即通过
+grep -rhoE "uses:[[:space:]]*[^[:space:]]+" .github/workflows/ | grep -vE "@[0-9a-f]{40}$"
 ```
-
-> 现有功能分支以「不改现有 job 任何一行」为施工纪律不动它们，是合理的；但这条不能停在
-> 疑点清单里 —— 公开后可变 ref 意味着上游被劫持即可在本仓 CI 里执行任意代码。
 
 ### 3.2 `ci.yml` windows job 的 `${{ github.ref_name }}` 直插改 env 间接（来源：PR #21 审查）
 
@@ -83,47 +94,69 @@ $slug = "${{ github.ref_name }}" -replace '[/\\]','-'
 
 Windows 侧不受影响（走 vcpkg port，版本由 vcpkg 的 baseline 钉住，不经 `FetchContent`）。
 
-## 5. 历史清扫（⛔ 转 public 的硬门禁，**尚未完成**）
+## 5. 历史清扫（原转 public 硬门禁 —— **✅ 已完成（2026-09-01）**）
 
-- 公开前扫描 git 历史中的敏感信息（secret scanning 回溯 + gitleaks/trufflehog）
-- 确认历史中从未提交过 .env、私钥、数据库连接串等
+转 public 暴露的是**全部 ref 与全部历史**，不是工作树；工作树清干净不构成历史清扫证据。
+该清扫已于 2026-09-01 执行完毕，记录如下。
 
-### 5.1 已知未清除项（转 public 前必须先处理）
+### 5.1 已执行的重写（历史记录，相关串均已清除）
 
-转 public 暴露的是**全部 ref 与全部历史**，不是工作树。下面三类串在工作树里已清干净，但**仍在历史里**，
-且在三个已发布 ref 的顶端（`origin/dev`、`origin/feature/extraction`、tag `v1.4.0`；`v1.4.0` 已是 HEAD 的祖先）：
+用 `git filter-repo --replace-text` 重写了当时的**全部 21 个 commit**，把三类串替换为占位：
 
-| 泄漏串（此处只描述形态，**真值不入库** —— 见 5.3） | 位置 | 历史命中 |
+| 类别（只记类别，**真值与旧 SHA 均不入库**） | 曾出现于 | 替换为 |
 |---|---|---|
-| 部署预览域 slug（`-<owner>-projects.<平台域>` 形态，出现在旧的 Origin 白名单规则里） | `src/VstBridgeServer.cpp`、`docs/DAW_TEST_GUIDE.md` | 15 个 commit（含首个抽取 commit `380d250`、`1ea25fc`、`cb2b46e`） |
-| 构建机的 Windows 用户目录绝对路径（含用户名，两处工具链目录） | `THIRD-PARTY-NOTICES.md`（5 行） | 同批历史，`v1.4.0` 顶端仍带 |
-| 维护者个人邮箱（非 noreply 地址） | `CLAUDE.md` | 15 个 commit（自首个抽取 commit 起） |
+| 部署平台的团队预览域 slug（旧 Origin 白名单规则里的硬编码值） | `src/VstBridgeServer.cpp`、`docs/DAW_TEST_GUIDE.md` | 占位串；该类来源改走构建期注入（决策 U4） |
+| 构建机的 Windows 用户目录绝对路径（含用户名） | `THIRD-PARTY-NOTICES.md` | 占位串；该表的核验来源已改为上游公开引用 |
+| 维护者个人邮箱（非 noreply 地址） | `CLAUDE.md` | `noreply@synchain.ca` |
 
-> ⚠️ 只扫工作树会对这一层完全失明 —— 任何加了 `--exclude-dir=.git` 的 grep 断言都**不构成**历史清扫证据。
+随后的收尾动作：
 
-### 5.2 二选一，并把决策记进 08 文档
+- force-push 了 `dev` 与 `feature/extraction`；tag `v1.4.0` 按重写后的新 commit 重打，
+  当前指向 `5bb8e3675513e5f85e7acc87435d55776fd544b8`（`git rev-list -1 v1.4.0` 可复核）。
+- 重写前的**全量备份 bundle** 已在仓库外的本地留存（路径不入库）。
+- 重写前的旧 draft release 已删除，改由 CI 从重写后的干净源码重新构建产物。
+- ⚠️ 重写会改写全部 commit SHA：**任何旧的本地副本 / worktree 必须重新 clone**，
+  否则一次 push 就会把污染历史送回去。历史文档里引用旧 SHA 的地方也已改为描述性引用。
 
-- **① 重写历史**：`git filter-repo --replace-text`（把上述三类串换成占位）重写
-  `dev` / `feature/extraction` 全历史 → 删除 `v1.4.0` 并按新 SHA 重打 → force-push →
-  **所有 worktree 必须重新 clone**（旧本地副本会把污染历史推回来）。
-- **② 不接受重写**：推迟 `v1.4.0` tag 与转 public，先在私有仓 squash 重建首 commit，再重新发首个公开 tag。
+### 5.2 采纳的方案
 
-### 5.3 验收断言（必须扫**历史**，不是工作树）
+采纳「① 重写历史」（另一选项「推迟 tag 与转 public、squash 重建首 commit」未采纳）。决策已记进 08 文档。
 
-待扫串本身**不写进仓库**（写进来就等于在公开仓复制了一份要清除的东西）。放进本地
-`.leakscan-patterns`（已在 `.gitignore` 中，一行一个 grep 模式；真值来自 08 决策文档）后执行 ——
-两条都必须**零命中**才允许转 public：
+### 5.3 验收断言：**已执行，零命中**
+
+待扫串本身**不写进仓库**（写进来就等于在公开仓复制了一份要清除的东西）。真值放进本地
+`.leakscan-patterns`（已在 `.gitignore` 中，一行一个 grep 模式；来自 08 决策文档）后执行的两条断言
+**均为零命中**：
 
 ```bash
 # ① 历史（唯一有效的清扫证据）
 git grep -I -n -f .leakscan-patterns $(git rev-list --all)
 
-# ② 工作树（转 public 前也要保持零命中，但不能替代 ①）
+# ② 工作树（不能替代 ①）
 grep -rn -f .leakscan-patterns --exclude-dir=.git .
 ```
 
-`.leakscan-patterns` 至少要覆盖：部署预览域 slug、Windows 用户目录路径前缀、维护者个人邮箱与其域名、
+覆盖的四类模式：部署平台预览域 slug、Windows 用户目录路径前缀、维护者个人邮箱与其域名、
 以及上游保留字体名的无空格拼法。
 
+后续由 **`compliance` workflow 的 `Secret scan (git history)` 步骤持续看守**（`fetch-depth: 0` 全历史，
+规则见 `.gitleaks.toml` 的非密钥型自定义规则），不再依赖人工记得复扫。
+
+> ⚠️ **两者不等价，别把 CI 绿灯当成 §5.3 的替代品。** CI 历史扫描的绿灯只说明「`.gitleaks.toml` 的三条
+> 类别规则所覆盖的**形态**零命中」；§5.3 是拿**真值**逐串比对的一次性本地验收，覆盖面更窄但更确切
+> （结果已留档于此）。类别规则写不出的变体（例如换了写法的 slug、别的路径前缀）只有真值断言拦得住，
+> 反之真值断言也看不见未来新引入的其它形态——两者互补，缺一不可。
+> 另注：本地 `gates.ps1` 的历史扫描走 `git log` 全部 ref，**含本地未推送分支**，CI 只看 checkout 的那份，
+> 因此「本地红 / CI 绿」是可能的，方向是 fail-closed。
+
 > 字体那条只对文本文件有意义：`web/fonts/*.woff2` 是 brotli 压缩的，grep 不命中**不等于**
-> 字体 `name` 表已改名。二进制侧的真实断言见 `THIRD-PARTY-NOTICES.md` 的 fontTools 复核命令。
+> 字体 `name` 表已改名。二进制侧的真实断言由 `scripts/check-font-names.py` 做，同样已接进
+> `compliance` workflow 与本地 gate。
+
+### 5.4 残留风险（转 public 后仍需处理）
+
+**GitHub 上转 public 之前的旧 PR（#1–#17）diff 页面在仓库转 public 后仍会展示重写前的内容。**
+force-push 只改分支与 tag 指向，不删除 GitHub 侧那些 PR 快照所引用的孤儿对象。
+
+- 处置：转 public 后向 GitHub support 申请清理孤儿对象 / 隐藏旧 PR diff。**（待办）**
+- 在该申请完成前，把仓库转 public 等于把这三类串以 PR diff 的形式重新公开一次。
