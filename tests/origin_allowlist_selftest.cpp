@@ -87,6 +87,8 @@ int main()
     CHECK(!isUsableHostPattern("preview.*.example.app"));
     CHECK(!isUsableHostPattern("example.*.app"));
     CHECK(!isUsableHostPattern("example.app-*"));
+    CHECK(!isUsableHostPattern("example.c*m")); // `*` 落在锚点的 TLD 段里
+    CHECK(!isUsableHostPattern("exa*ple.com")); // `*` 位置合法,但锚点只剩一段
 
     // ---- isUsableHostPattern：至多一个 `*` ---------------------------------
     CHECK(!isUsableHostPattern("*.*.example.app"));
