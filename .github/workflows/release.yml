@@ -348,10 +348,21 @@ jobs:
           # 注册器被 -9 后由 launchd 按需重启并重新扫描 Components/,扫描完成前 auval 会报
           # 「找不到组件」。轮询到 auval -a 能列出本组件为止,最多 30s —— 否则是偶发红灯,
           # 而 publish 双平台强依赖,一次抖动 = 整个 tag 无产物(采纳 #21 review)。
-          for i in $(seq 1 30); do
-            if auval -a 2>/dev/null | grep -q "$code"; then break; fi
+          # 先落变量再 here-string 匹配:grep -q 直连管道会因命中即退给 auval -a 送 SIGPIPE,
+          # pipefail 下管道判非零导致 break 永不触发;并按 type/code/mfr 锚定行首防子串误判,
+          # 超时显式报错(与 ci.yml 同参,采纳 #20 第三轮 review)。
+          registered=0
+          for _ in $(seq 1 30); do
+            au_list="$(auval -a 2>/dev/null || true)"
+            if grep -qE "^[[:space:]]*$au_type[[:space:]]+$code[[:space:]]+$mfr([[:space:]]|$)" <<< "$au_list"; then
+              registered=1; break
+            fi
             sleep 1
           done
+          if [ "$registered" != "1" ]; then
+            echo "::error::AU component $au_type/$code/$mfr not registered after 30s; auval would fail with an unrelated component-not-found"
+            exit 1
+          fi
           echo "::group::auval -v $au_type $code $mfr"
           auval -v "$au_type" "$code" "$mfr" 2>&1 | tee auval.log || true
           echo "::endgroup::"
