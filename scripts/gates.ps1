@@ -148,6 +148,11 @@ function Test-Gitleaks {
         try {
             & gitleaks detect --no-git --source . --redact -v --config .gitleaks.toml 2>&1 | ForEach-Object { Write-Host $_ }
             if ($LASTEXITCODE -ne 0) { $ok = $false; $detail = 'gitleaks 检出密钥;误报请登记进 .gitleaks.toml allowlist,不得绕过' }
+            # 历史扫描(与 compliance.yml 的 "Secret scan (git history)" 同参):敏感信息不借任何历史 commit 入库
+            if ($ok) {
+                & gitleaks detect --source . --redact -v --config .gitleaks.toml 2>&1 | ForEach-Object { Write-Host $_ }
+                if ($LASTEXITCODE -ne 0) { $ok = $false; $detail = 'gitleaks 历史扫描检出敏感信息;历史处置见 BEFORE_PUBLIC_CHECKLIST.md §5' }
+            }
         } finally { Pop-Location }
     }
     Add-Result 'gitleaks (--no-git --redact)' ($(if ($ok) { 'PASS' } else { 'FAIL' })) $detail

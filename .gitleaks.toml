@@ -16,7 +16,47 @@ useDefault = true
 description = "误报逐条登记(理由见文件头注释)"
 paths = [
   '''LICENSES/''',
+  # 本地构建/依赖产物(已 gitignore,永不入库;--no-git 树扫描不认 .gitignore,故在此豁免,
+  # 否则 CMake 缓存/生成工程里的本机绝对路径会把本地 gates 打红。CI 是干净 checkout,不受影响):
+  '''^build[^/\\]*[/\\]''',
+  '''^dist[/\\]''',
+  '''node_modules[/\\]''',
 ]
 regexes = [
   '''synchain\.(cn|ca)''',
+]
+
+# ---------------------------------------------------------------------------
+# 自定义规则:非密钥型敏感信息(转 public 后的防再泄漏门禁)。
+# 规则只写「类别模式」,绝不把待防的具体字符串写进本文件——那等于在公开仓复制一份要清除的东西。
+# 覆盖三类:本机用户路径(暴露用户名/机器布局)、部署平台团队域名(U4:构建期注入,不入库)、
+# 非组织邮箱(U17:对外一律 contact@synchain.ca,提交用 noreply@synchain.ca)。
+# gitleaks 的 regex 引擎是 RE2(不支持 lookahead),豁免一律走 [rules.allowlist]。
+# ---------------------------------------------------------------------------
+
+[[rules]]
+id = "personal-local-path-windows"
+description = "Windows 本机用户绝对路径不得入库(文档/表格用上游 URL 或相对路径替代)"
+regex = '''(?i)C:[\\/]+Users[\\/][A-Za-z0-9._-]+'''
+
+[[rules]]
+id = "personal-local-path-macos"
+description = "macOS 本机用户绝对路径不得入库(文档一律用 ~ 或 $HOME)"
+regex = '''/Users/[A-Za-z0-9._-]+/'''
+
+[[rules]]
+id = "deploy-team-preview-domain"
+description = "部署平台团队预览域名不得入库(U4:额外 Origin 经构建期 -DBRIDGE_EXTRA_ALLOWED_ORIGIN_HOSTS 注入)"
+regex = '''[a-z0-9-]+-projects\.vercel\.app'''
+
+[[rules]]
+id = "non-org-email"
+description = "非组织邮箱不得入库(U17)"
+regex = '''[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}'''
+[rules.allowlist]
+# 组织邮箱与 GitHub noreply 是仅有的两类合法邮箱;example.* 供文档示例用。
+regexes = [
+  '''@synchain\.ca''',
+  '''@users\.noreply\.github\.com''',
+  '''@example\.(com|org|net)''',
 ]
