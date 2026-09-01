@@ -1,17 +1,18 @@
 # Third-Party Notices
 
 本文件列出 Synchain Bridge 分发产物中随附的第三方依赖的许可证信息。
-每条许可证结论均以实际安装版本的 LICENSE / copyright 文件逐条核实(核验来源路径见末列),无「待验证」项。
+每条许可证结论均以**实际安装/链接版本对应的上游许可证原文**逐条核实(核验出处见末列,均为可公开访问的上游权威来源:
+版本 tag 下的 LICENSE 文件、上游官网许可页或包分发页),无「待验证」项。
 静态链接闭包经机器枚举 vcpkg x64-windows-static 实际安装的全部包(ixwebsocket + 传递依赖),与 08 §3.1 表一致。
 
-| 依赖 | 版本 | 许可证(SPDX) | URL | 核验来源(LICENSE 路径) |
+| 依赖 | 版本 | 许可证(SPDX) | URL | 核验来源(上游许可证原文) |
 |---|---|---|---|---|
-| JUCE Framework(静态链接) | 8.0.8 | AGPL-3.0-or-later(双授权:AGPLv3 / 商业;本项目取 AGPLv3) | https://github.com/juce-framework/JUCE | [REDACTED-PATH]/juce/LICENSE.md(git tag 8.0.8) |
+| JUCE Framework(静态链接) | 8.0.8 | AGPL-3.0-or-later(双授权:AGPLv3 / 商业;本项目取 AGPLv3) | https://github.com/juce-framework/JUCE | tag 8.0.8 的 LICENSE.md:https://github.com/juce-framework/JUCE/blob/8.0.8/LICENSE.md(原文:"The JUCE Framework modules are dual-licensed under the AGPLv3 and the commercial JUCE licence") |
 | JUCE JS helper(web/js/juce/*.js) | 随 JUCE 8.0.8 | AGPL-3.0-or-later(双授权) | https://github.com/juce-framework/JUCE | 文件头 "Copyright (c) Raw Material Software Limited"(web/js/juce/index.js、check_native_interop.js 第 4–5 行)+ 同上 LICENSE.md |
-| ixwebsocket(vcpkg 静态链接) | 12.0.1 | BSD-3-Clause | https://github.com/machinezone/IXWebSocket | [REDACTED-PATH]/vcpkg/installed/x64-windows-static/share/ixwebsocket/copyright(Copyright (c) 2018 Machine Zone, Inc.) |
-| mbedtls(ixwebsocket 内置 TLS,静态链接) | 3.6.5 | Apache-2.0 OR GPL-2.0-or-later(双授权) | https://github.com/Mbed-TLS/mbedtls | [REDACTED-PATH]/vcpkg/installed/x64-windows-static/share/mbedtls/copyright(双授权声明见文件首 2 行) |
-| zlib(ixwebsocket 传递依赖,静态链接) | 1.3.2 | Zlib | https://zlib.net | [REDACTED-PATH]/vcpkg/installed/x64-windows-static/share/zlib/copyright(Copyright (C) 1995-2026 Jean-loup Gailly and Mark Adler) |
-| Microsoft WebView2 SDK(静态 loader) | 1.0.2957.106 | BSD-3-Clause(Microsoft) | https://www.nuget.org/packages/Microsoft.Web.WebView2 | [REDACTED-PATH]/packages/microsoft.web.webview2/1.0.2957.106/LICENSE.txt |
+| ixwebsocket(vcpkg 静态链接) | 12.0.1 | BSD-3-Clause | https://github.com/machinezone/IXWebSocket | tag v12.0.1 的 LICENSE.txt:https://github.com/machinezone/IXWebSocket/blob/v12.0.1/LICENSE.txt(首行 "Copyright (c) 2018 Machine Zone, Inc. All rights reserved.",正文为 BSD 三条款) |
+| mbedtls(ixwebsocket 内置 TLS,静态链接) | 3.6.5 | Apache-2.0 OR GPL-2.0-or-later(双授权) | https://github.com/Mbed-TLS/mbedtls | tag mbedtls-3.6.5 的 LICENSE:https://github.com/Mbed-TLS/mbedtls/blob/mbedtls-3.6.5/LICENSE(双授权声明见文件首 2 行:"provided under a dual Apache-2.0 OR GPL-2.0-or-later license",两份全文附于其后,取哪一份由使用者选择) |
+| zlib(ixwebsocket 传递依赖,静态链接) | 1.3.2 | Zlib | https://zlib.net | 官网许可页:https://zlib.net/zlib_license.html(与所链版本一致,版权行 "Copyright (C) 1995-2026 Jean-loup Gailly and Mark Adler") |
+| Microsoft WebView2 SDK(静态 loader) | 1.0.2957.106 | BSD-3-Clause(Microsoft) | https://www.nuget.org/packages/Microsoft.Web.WebView2 | 该版本 NuGet 包的 License 页(即包内 LICENSE.txt 原文):https://www.nuget.org/packages/Microsoft.Web.WebView2/1.0.2957.106/License(BSD 三条款,版权归 Microsoft) |
 | Space Grotesk(子集 web/fonts/SpaceGrotesk.woff2) | Google Fonts text= 子集 | OFL-1.1(无 Reserved Font Name) | https://github.com/google/fonts/tree/main/ofl/spacegrotesk | 上游 OFL.txt:"Copyright 2020 The Space Grotesk Project Authors (https://github.com/floriankarsten/space-grotesk)" |
 | IBM Plex Sans(来源家族;子集按 §3 改名分发 web/fonts/BridgeSans.woff2 / family "Bridge Sans") | Google Fonts text= 子集 | OFL-1.1(Reserved Font Name "Plex") | https://github.com/google/fonts/tree/main/ofl/ibmplexsans | 上游 OFL.txt:"Copyright © 2017 IBM Corp. with Reserved Font Name 'Plex'" |
 | IBM Plex Mono(来源家族;子集按 §3 改名分发 web/fonts/BridgeMono.woff2 / family "Bridge Mono") | Google Fonts text= 子集 | OFL-1.1(Reserved Font Name "Plex") | https://github.com/google/fonts/tree/main/ofl/ibmplexmono | 上游 OFL.txt:"Copyright © 2017 IBM Corp. with Reserved Font Name 'Plex'" |
