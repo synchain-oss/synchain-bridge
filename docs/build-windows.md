@@ -47,9 +47,16 @@ cmake -S . -B build -G "Visual Studio 17 2022" -A x64 `
   -DBRIDGE_EXTRA_ALLOWED_ORIGIN_HOSTS="example-git-*-example-team.example.app;preview.example.com"
 ```
 
-- 值为 `;` 或 `,` 分隔的 **host 模式**列表；每个模式**至多一个 `*`** 通配段，通配段必须匹配到非空内容
-  （前后缀夹逼），无 `*` 时按精确 host 匹配；匹配前统一小写归一。
-- 额外来源同样**只在 https 下生效**（非 https 的远程来源一律拒），且 `*` 单独作为模式、含多个 `*` 的模式会被丢弃。
+- 值为 `;` 或 `,` 分隔的 **host 模式**列表；每个模式**至多一个 `*`**，无 `*` 时按精确 host 匹配；
+  匹配前统一小写归一，FQDN 尾点（`https://example.com.`）会被剥掉后再比。
+- `*` 只匹配**单个 DNS 标签内**的一段非空字符：**通配段不跨 `.`**。即 `a-*-b.example.app` 匹配
+  `a-x-b.example.app`，但**不**匹配 `a-x.evil.com-b.example.app`。
+- 模式必须带**真实域名锚点**才会被采纳：去掉 `*` 后剩下的字面量须含 `.`，且最后一个 `.` 之后是一段
+  纯字母、长度 ≥2 的 TLD。因此 `*`、`*.`、`-*`、`*-`、`*.example.*` 这类「字面量全是标点 / 通配到 TLD」
+  的模式会被 **fail-closed 丢弃**（含多个 `*` 的模式同样丢弃），不会变成变相的全通配。
+- 额外来源同样**只在 https 下生效**（非 https 的远程来源一律拒）。
+- 值里**不得含双引号或反斜杠**：该值最终会进生成头 `BridgeOriginConfig.h` 的字符串字面量，
+  CMake 配置期检测到会直接 `FATAL_ERROR`。
 - **不传即不定义该宏**：默认构建不放行任何额外来源。实现见 `src/VstBridgeServer.cpp` 的 `isAllowedOrigin()`。
 
 ## 关键坑（必读）
