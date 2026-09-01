@@ -43,6 +43,13 @@ jobs:
         # 非密钥类:本机路径/团队域名/非组织邮箱,见 .gitleaks.toml)不借任何历史 commit 入库。
         # 公开仓的历史一旦被 fork/缓存即不可撤回,故此门禁必须常绿。
         run: gitleaks detect --source . --redact -v --config .gitleaks.toml
+      - name: Origin allowlist selftest
+        # 51 条纯逻辑断言(tests/origin_allowlist_selftest.cpp):CSWSH 白名单通配匹配的已知
+        # 绕过形态逐条反例。src/OriginAllowlist.h 零第三方依赖(纯 C++17),ubuntu 上秒级编译。
+        # 与本地 gate 5b 同源同用例 —— 安全关键纯逻辑的断言不能只靠人记得在本地跑。
+        run: |
+          g++ -std=c++17 -I src -o /tmp/origin_allowlist_selftest tests/origin_allowlist_selftest.cpp
+          /tmp/origin_allowlist_selftest
       - name: REUSE lint
         # 与 §5.1 gate 3c 逐字同参
         run: pipx run reuse lint
