@@ -25,47 +25,62 @@
 ## 4. 依赖安全
 - Dependabot alerts + security updates 保持开启（现已配置）
 
-## 5. 历史清扫（⛔ 转 public 的硬门禁，**尚未完成**）
+## 5. 历史清扫（原转 public 硬门禁 —— **✅ 已完成（2026-09-01）**）
 
-- 公开前扫描 git 历史中的敏感信息（secret scanning 回溯 + gitleaks/trufflehog）
-- 确认历史中从未提交过 .env、私钥、数据库连接串等
+转 public 暴露的是**全部 ref 与全部历史**，不是工作树；工作树清干净不构成历史清扫证据。
+该清扫已于 2026-09-01 执行完毕，记录如下。
 
-### 5.1 已知未清除项（转 public 前必须先处理）
+### 5.1 已执行的重写（历史记录，相关串均已清除）
 
-转 public 暴露的是**全部 ref 与全部历史**，不是工作树。下面三类串在工作树里已清干净，但**仍在历史里**，
-且在三个已发布 ref 的顶端（`origin/dev`、`origin/feature/extraction`、tag `v1.4.0`；`v1.4.0` 已是 HEAD 的祖先）：
+用 `git filter-repo --replace-text` 重写了当时的**全部 21 个 commit**，把三类串替换为占位：
 
-| 泄漏串（此处只描述形态，**真值不入库** —— 见 5.3） | 位置 | 历史命中 |
+| 类别（只记类别，**真值与旧 SHA 均不入库**） | 曾出现于 | 替换为 |
 |---|---|---|
-| 部署预览域 slug（`-<owner>-projects.<平台域>` 形态，出现在旧的 Origin 白名单规则里） | `src/VstBridgeServer.cpp`、`docs/DAW_TEST_GUIDE.md` | 15 个 commit（含首个抽取 commit `380d250`、`1ea25fc`、`cb2b46e`） |
-| 构建机的 Windows 用户目录绝对路径（含用户名，两处工具链目录） | `THIRD-PARTY-NOTICES.md`（5 行） | 同批历史，`v1.4.0` 顶端仍带 |
-| 维护者个人邮箱（非 noreply 地址） | `CLAUDE.md` | 15 个 commit（自首个抽取 commit 起） |
+| 部署平台的团队预览域 slug（旧 Origin 白名单规则里的硬编码值） | `src/VstBridgeServer.cpp`、`docs/DAW_TEST_GUIDE.md` | 占位串；该类来源改走构建期注入（决策 U4） |
+| 构建机的 Windows 用户目录绝对路径（含用户名） | `THIRD-PARTY-NOTICES.md` | 占位串；该表的核验来源已改为上游公开引用 |
+| 维护者个人邮箱（非 noreply 地址） | `CLAUDE.md` | `noreply@synchain.ca` |
 
-> ⚠️ 只扫工作树会对这一层完全失明 —— 任何加了 `--exclude-dir=.git` 的 grep 断言都**不构成**历史清扫证据。
+随后的收尾动作：
 
-### 5.2 二选一，并把决策记进 08 文档
+- force-push 了 `dev` 与 `feature/extraction`；tag `v1.4.0` 按重写后的新 commit 重打，
+  当前指向 `5bb8e3675513e5f85e7acc87435d55776fd544b8`（`git rev-list -1 v1.4.0` 可复核）。
+- 重写前的**全量备份 bundle** 已在仓库外的本地留存（路径不入库）。
+- 重写前的旧 draft release 已删除，改由 CI 从重写后的干净源码重新构建产物。
+- ⚠️ 重写会改写全部 commit SHA：**任何旧的本地副本 / worktree 必须重新 clone**，
+  否则一次 push 就会把污染历史送回去。历史文档里引用旧 SHA 的地方也已改为描述性引用。
 
-- **① 重写历史**：`git filter-repo --replace-text`（把上述三类串换成占位）重写
-  `dev` / `feature/extraction` 全历史 → 删除 `v1.4.0` 并按新 SHA 重打 → force-push →
-  **所有 worktree 必须重新 clone**（旧本地副本会把污染历史推回来）。
-- **② 不接受重写**：推迟 `v1.4.0` tag 与转 public，先在私有仓 squash 重建首 commit，再重新发首个公开 tag。
+### 5.2 采纳的方案
 
-### 5.3 验收断言（必须扫**历史**，不是工作树）
+采纳「① 重写历史」（另一选项「推迟 tag 与转 public、squash 重建首 commit」未采纳）。决策已记进 08 文档。
 
-待扫串本身**不写进仓库**（写进来就等于在公开仓复制了一份要清除的东西）。放进本地
-`.leakscan-patterns`（已在 `.gitignore` 中，一行一个 grep 模式；真值来自 08 决策文档）后执行 ——
-两条都必须**零命中**才允许转 public：
+### 5.3 验收断言：**已执行，零命中**
+
+待扫串本身**不写进仓库**（写进来就等于在公开仓复制了一份要清除的东西）。真值放进本地
+`.leakscan-patterns`（已在 `.gitignore` 中，一行一个 grep 模式；来自 08 决策文档）后执行的两条断言
+**均为零命中**：
 
 ```bash
 # ① 历史（唯一有效的清扫证据）
 git grep -I -n -f .leakscan-patterns $(git rev-list --all)
 
-# ② 工作树（转 public 前也要保持零命中，但不能替代 ①）
+# ② 工作树（不能替代 ①）
 grep -rn -f .leakscan-patterns --exclude-dir=.git .
 ```
 
-`.leakscan-patterns` 至少要覆盖：部署预览域 slug、Windows 用户目录路径前缀、维护者个人邮箱与其域名、
+覆盖的四类模式：部署平台预览域 slug、Windows 用户目录路径前缀、维护者个人邮箱与其域名、
 以及上游保留字体名的无空格拼法。
 
+后续由 **`compliance` workflow 的 `Secret scan (git history)` 步骤持续看守**（`fetch-depth: 0` 全历史，
+规则见 `.gitleaks.toml` 的非密钥型自定义规则），不再依赖人工记得复扫。
+
 > 字体那条只对文本文件有意义：`web/fonts/*.woff2` 是 brotli 压缩的，grep 不命中**不等于**
-> 字体 `name` 表已改名。二进制侧的真实断言见 `THIRD-PARTY-NOTICES.md` 的 fontTools 复核命令。
+> 字体 `name` 表已改名。二进制侧的真实断言由 `scripts/check-font-names.py` 做，同样已接进
+> `compliance` workflow 与本地 gate。
+
+### 5.4 残留风险（转 public 后仍需处理）
+
+**GitHub 上转 public 之前的旧 PR（#1–#17）diff 页面在仓库转 public 后仍会展示重写前的内容。**
+force-push 只改分支与 tag 指向，不删除 GitHub 侧那些 PR 快照所引用的孤儿对象。
+
+- 处置：转 public 后向 GitHub support 申请清理孤儿对象 / 隐藏旧 PR diff。**（待办）**
+- 在该申请完成前，把仓库转 public 等于把这三类串以 PR diff 的形式重新公开一次。
