@@ -340,9 +340,9 @@ jobs:
           fi
           echo "auval OK"
 
-      # 9) artifact 传输封装(**不是发行打包**:发行 zip 的唯一真源是 scripts/package-macos.sh,
-      #    由 release.yml 调用;这里只解决 upload-artifact 不保留 POSIX 权限位的问题 ——
-      #    直接传 bundle 目录 = 下载方拿到不可执行的死壳)。
+      # 9) artifact 传输封装(**不是发行打包**):这里只解决 upload-artifact 不保留 POSIX
+      #    权限位的问题 —— 直接传 bundle 目录 = 下载方拿到不可执行的死壳。合规文件 /
+      #    sha256 / INSTALL.txt 那套发行打包由发版链路的打包脚本负责,不在本 job 内。
       #    ditto 的 --norsrc --noextattr:插件 bundle 不需要资源叉,而 --sequesterRsrc 的定义
       #    就是把资源叉/扩展属性写进 zip 的 __MACOSX/ 目录 —— 那些条目权限恒为 -rw-r--r--,
       #    会被下面的可执行位断言当成真条目而必然误报(pluginval/auval 已 dlopen 过 bundle,
