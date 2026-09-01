@@ -61,12 +61,15 @@ Windows:
 
 macOS:
 
-- **macOS 11.0+ (Big Sur) on Apple Silicon — arm64 only**, with **Xcode Command Line Tools** (`xcode-select --install`) and **Ninja**.
+- **macOS 11.0+ (Big Sur) on Apple Silicon — arm64 only**, with **Xcode Command Line Tools** (`xcode-select --install`).
+- **Ninja** (optional; `brew install ninja` — the documented commands use it, but the Xcode and Makefile generators work too).
 - No vcpkg / NuGet / WebView2: ixwebsocket is fetched by CMake at configure time (pinned tag) and the UI runs on the system WKWebView.
 
 ## Install
 
-Grab a prebuilt build from [GitHub Releases](https://github.com/synchain-oss/synchain-bridge/releases) (Release builds validated with pluginval strictness 5), or build from source (below).
+Prebuilt **Windows x64** builds are on [GitHub Releases](https://github.com/synchain-oss/synchain-bridge/releases) (`SynchainBridge-VST3-vX.Y.Z-win64.zip`, Release build validated with pluginval strictness 5). **No macOS artifact is published yet** — on macOS, build from source (below); signed/notarized mac builds will follow in a later release.
+
+The plugin uses dedicated manufacturer/plugin codes (`Snch` / `Snb1`), so DAWs see it as an independent plugin. Changing these codes would generate a new VST3 unique ID (and a new AU component identity) and orphan existing projects — **never alter them, on either platform**.
 
 ### Windows
 
@@ -80,28 +83,28 @@ The build produces (or the zip contains) `Synchain Bridge.vst3` — a **bundle d
 
 ### macOS
 
-Two formats are produced: `Synchain Bridge.vst3` and `Synchain Bridge.component` (AU). Both are **bundle directories**. Use `ditto` rather than `cp -r` so symlinks and extended attributes survive:
+Two formats are produced: `Synchain Bridge.vst3` and `Synchain Bridge.component` (AU). Both are **bundle directories**. Use `ditto` rather than `cp -r` so symlinks and extended attributes survive — and delete the previous install first, because `ditto` *merges* into an existing bundle and would leave stale files (renamed fonts, old helpers) behind:
 
 ```bash
+rm -rf ~/Library/Audio/Plug-Ins/VST3/"Synchain Bridge.vst3" \
+       ~/Library/Audio/Plug-Ins/Components/"Synchain Bridge.component"
 ditto "<path>/Synchain Bridge.vst3"      ~/Library/Audio/Plug-Ins/VST3/"Synchain Bridge.vst3"
 ditto "<path>/Synchain Bridge.component" ~/Library/Audio/Plug-Ins/Components/"Synchain Bridge.component"
 killall -9 AudioComponentRegistrar   # drop the cached AU component info, otherwise the DAW rescans the old copy
 ```
 
-The macOS builds are **unsigned and un-notarized** (v1). Anything downloaded from Releases carries the quarantine flag and macOS will refuse to load it, so clear the flag once after installing:
+The macOS builds are **unsigned and un-notarized** (v1). A bundle you built yourself carries no quarantine flag; *if* you install one that came from a download (a zip from a browser, AirDrop, …), macOS will refuse to load it until the flag is cleared:
 
 ```bash
 xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/VST3/"Synchain Bridge.vst3"
 xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/Components/"Synchain Bridge.component"
 ```
 
-The plugin uses dedicated manufacturer/plugin codes (`Snch` / `Snb1`), so DAWs see it as an independent plugin. Changing these codes would generate a new VST3 unique ID (and a new AU component identity) and orphan existing projects — never alter them.
-
 ## Known limitations on macOS
 
 - **Apple Silicon (arm64) only.** There is no x86_64 slice, so Intel Macs are not supported — and on an Apple Silicon Mac, ticking **"Open using Rosetta"** on your DAW **will not make it load either**: a Rosetta (x86_64) host cannot load an arm64 plugin. Launch the DAW natively. This is the failure most often mistaken for a broken plugin.
 - **GarageBand may refuse the AU.** GarageBand only loads AUs that declare themselves sandbox-safe. This plugin listens on a local socket and hosts a WebView, neither of which works inside the AU sandbox, so it does not make that declaration. Use Logic, Reaper, Live or another host that loads non-sandboxed AUs.
-- **Safari cannot reach the bridge.** The web app is served over https while bridge #2 is a plain `ws://127.0.0.1` socket, and Safari grants no mixed-content exemption for localhost — the handshake is blocked before it reaches the plugin. On macOS, open the Creative Space in Chrome, Edge or Firefox.
+- **Safari is expected not to reach the bridge (not yet verified on a real Mac).** The web app is served over https while bridge #2 is a plain `ws://127.0.0.1` socket; unlike Chromium, Safari is not known to grant a mixed-content exemption for loopback, so the handshake should be blocked before it ever reaches the plugin. Prefer Chrome, Edge or Firefox on macOS — and note those may still show a *local network access* permission prompt the first time. Both halves of this are inferred from browser behaviour, not measured here; if you test it, please report what you see in an issue.
 
 ## Quick start
 
@@ -187,4 +190,4 @@ Complete corresponding source for every released binary is available in this rep
 
 ## Status
 
-Windows x64 (VST3) shipped first; macOS on Apple Silicon (VST3 + AU) is supported from v1.5.0 — unsigned, arm64 only. See [`CHANGELOG.md`](CHANGELOG.md) for the version history.
+Windows x64 (VST3) shipped first and is the only platform with prebuilt Releases. macOS on Apple Silicon (VST3 + AU) is supported **from source** as of v1.5.0 — unsigned, arm64 only; publishing mac artifacts comes in a later release. See [`CHANGELOG.md`](CHANGELOG.md) for the version history.

@@ -61,12 +61,15 @@ Windows:
 
 macOS:
 
-- **macOS 11.0+(Big Sur)、Apple Silicon —— 仅 arm64**,需 **Xcode Command Line Tools**(`xcode-select --install`)与 **Ninja**。
+- **macOS 11.0+(Big Sur)、Apple Silicon —— 仅 arm64**,需 **Xcode Command Line Tools**(`xcode-select --install`)。
+- **Ninja**(可选;`brew install ninja` —— 文档里的命令以 Ninja 为例,用 Xcode 或 Makefile 生成器同样能出产物)。
 - 无需 vcpkg / NuGet / WebView2:ixwebsocket 由 CMake 在配置期按钉死的 tag 自动拉取,UI 用系统 WKWebView。
 
 ## 安装
 
-从 [GitHub Releases](https://github.com/synchain-oss/synchain-bridge/releases) 下载预编译版(Release 构建 + pluginval strictness 5 验证),或从源码构建(见下)。
+[GitHub Releases](https://github.com/synchain-oss/synchain-bridge/releases) 上目前**只有 Windows x64 预编译版**(`SynchainBridge-VST3-vX.Y.Z-win64.zip`,Release 构建 + pluginval strictness 5 验证)。**macOS 产物尚未发布** —— mac 上请从源码构建(见下);签名/公证的 mac 产物留待后续版本。
+
+插件用独立厂商码/插件码(`Snch` / `Snb1`),DAW 将其识别为独立插件。改这两个码会生成新的 VST3 唯一 ID(AU 身份同样变化),DAW 视为全新插件、旧工程会丢插件 —— **两个平台都绝对禁止改动**。
 
 ### Windows
 
@@ -80,28 +83,28 @@ macOS:
 
 ### macOS
 
-产物有两份:`Synchain Bridge.vst3` 与 `Synchain Bridge.component`(AU),都是 **bundle 目录**。用 `ditto` 而不是 `cp -r`,以原样保留符号链接与扩展属性:
+产物有两份:`Synchain Bridge.vst3` 与 `Synchain Bridge.component`(AU),都是 **bundle 目录**。用 `ditto` 而不是 `cp -r`,以原样保留符号链接与扩展属性;并且**先删掉上一版**再拷 —— `ditto` 对已存在的目标目录是**合并**语义,上一版里被删掉的文件(改过名的字体、旧 helper 等)会留在新 bundle 里:
 
 ```bash
+rm -rf ~/Library/Audio/Plug-Ins/VST3/"Synchain Bridge.vst3" \
+       ~/Library/Audio/Plug-Ins/Components/"Synchain Bridge.component"
 ditto "<产物路径>/Synchain Bridge.vst3"      ~/Library/Audio/Plug-Ins/VST3/"Synchain Bridge.vst3"
 ditto "<产物路径>/Synchain Bridge.component" ~/Library/Audio/Plug-Ins/Components/"Synchain Bridge.component"
 killall -9 AudioComponentRegistrar   # 清掉 AU 组件缓存,否则 DAW 扫到的仍是旧副本
 ```
 
-macOS 版本**不签名、不公证**(v1)。从 Releases 下载的产物带 quarantine 属性,系统会直接拒绝加载,安装后解除一次隔离:
+macOS 版本**不签名、不公证**(v1)。自己构建出来的 bundle 不带 quarantine 属性;**若**你装的是下载来的产物(浏览器下载的 zip、AirDrop 等),系统会带上 quarantine 并直接拒绝加载,需解除一次隔离:
 
 ```bash
 xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/VST3/"Synchain Bridge.vst3"
 xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/Components/"Synchain Bridge.component"
 ```
 
-插件用独立厂商码/插件码(`Snch` / `Snb1`),DAW 将其识别为独立插件。改这两个码会生成新的 VST3 唯一 ID(AU 身份同样变化),DAW 视为全新插件、旧工程会丢插件 —— 绝对禁止改动。
-
 ## macOS 已知限制
 
 - **仅 arm64(Apple Silicon)**。产物没有 x86_64 slice,Intel Mac 不支持;并且在 Apple Silicon 上给 DAW 勾**「使用 Rosetta 打开」也加载不了** —— Rosetta(x86_64)宿主装不下 arm64 插件。请以原生 arm64 方式启动 DAW。这条最容易被误判成「插件坏了」。
 - **GarageBand 可能拒载 AU**。GarageBand 只加载申报了 sandbox-safe 的 AU。本插件要监听本地 socket 并托管 WebView,两者在 AU sandbox 里都会被拒,故不作此申报。请用 Logic / Reaper / Live 等能加载非沙箱 AU 的宿主。
-- **Safari 连不上桥**。网页走 https,桥 #2 是明文 `ws://127.0.0.1`,而 **Safari 不给 localhost 开 mixed content 豁免** —— 握手在到达插件之前就被拦掉。mac 上请用 Chrome / Edge / Firefox 打开 Creative Space。
+- **Safari 预计连不上桥(尚未在真机验证)**。网页走 https,桥 #2 是明文 `ws://127.0.0.1`;与 Chromium 不同,Safari 未知会给回环开 mixed content 豁免,握手预计在到达插件之前就被拦掉。mac 上建议用 Chrome / Edge / Firefox 打开 Creative Space —— 但这些浏览器首次也可能弹**本地网络访问**授权提示。以上两点均由浏览器行为推断、非本仓实测;若你实测过,欢迎开 issue 反馈结果。
 
 ## 快速上手
 
@@ -187,4 +190,4 @@ VST 是 Steinberg Media Technologies GmbH 的商标。**VST3 SDK** 自 2025 年 
 
 ## 状态
 
-Windows x64(VST3)先行;macOS Apple Silicon(VST3 + AU)自 v1.5.0 起支持 —— 不签名、仅 arm64。版本历史见 [`CHANGELOG.md`](CHANGELOG.md)。
+Windows x64(VST3)先行,也是目前唯一有预编译 Release 的平台;macOS Apple Silicon(VST3 + AU)自 v1.5.0 起支持**从源码构建** —— 不签名、仅 arm64,发布 mac 产物留待后续版本。版本历史见 [`CHANGELOG.md`](CHANGELOG.md)。
