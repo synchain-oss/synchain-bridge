@@ -81,11 +81,12 @@
 - **坑**：静态文案走 `data-t="key"` 标签 + `applyI18n` 全量刷新；动态文案（状态/声道/按钮/提示）由 `index.html` 调 `dict(lang)` 自行渲染；未知语言回落中文。SCVB 换自己的字典键，机制不变。
 
 ### 13. 本地字体 + 字体栈回落
-- **复制来源**：`web/styles.css:17-40`（`@font-face`）、`42-53`（`:root` 字体变量）、`55-66`（禁滚动）
-- **坑**：DAW 离线，**无 Google Fonts / CDN**；子集 WOFF2 随插件打包（`CMakeLists.txt:89-92`）。CJK 走内嵌 `Noto Sans SC`（排在拉丁字体之后、系统字体之前），`font-display:swap` + `font-synthesis:none` 保证离线确定性渲染、不阻塞、不发糊。子集脚本见 `web/fonts/README.md`。
+- **复制来源**：`web/styles.css:19-42`（`@font-face`）、`44-55`（`:root` 字体变量）、`57-68`（禁滚动）
+- **坑**：DAW 离线，**无 Google Fonts / CDN**；子集 WOFF2 随插件打包（`CMakeLists.txt:90-93`）。CJK 走内嵌 `Noto Sans SC`（排在拉丁字体之后、系统字体之前），`font-display:swap` + `font-synthesis:none` 保证离线确定性渲染、不阻塞、不发糊。子集脚本见 `web/fonts/README.md`。
+- **命名**：拉丁正文/等宽两族以 `Bridge Sans` / `Bridge Mono` 分发——子集 = OFL 意义上的 Modified Version，§3 的保留字体名不许沿用，故分发名与上游家族名不同（来源家族与核验见 `THIRD-PARTY-NOTICES.md`）。SCVB 复制时若子集同一上游家族，需自取一个不含保留字体名的分发名。
 
 ### 14. 视口锁死 + 玻璃拟态卡片
-- **复制来源**：`web/index.html:16-63`（`#vst-root` + `data-card`）、`141-207`（玻璃面板）、`web/styles.css:58-71`（`html/body/#vst-root` 满高禁滚动）
+- **复制来源**：`web/index.html:16-63`（`#vst-root` + `data-card`）、`141-207`（玻璃面板）、`web/styles.css:60-73`（`html/body/#vst-root` 满高禁滚动）
 - **坑**：`#vst-root` 用 `position:fixed; inset:0; overflow:hidden` 永不滚动/露白；卡片固定设计盒 + `zoom:F` 铺满（尺寸只用常量、不读视口，DPI 稳健）；内容列 `flex:1 + justify-content:space-between` 让各区块均匀铺满高度、页脚贴底，消除上下暗带（`web/index.html:209-220`）。
 
 ### 15. 电平表 rAF 弹道

@@ -23,9 +23,10 @@
 
 ### 文档 / 合规
 
-- 内嵌 IBM Plex 子集字体按 OFL-1.1 §3(Reserved Font Name "Plex")改名分发:`BridgeSans.woff2` /
-  `BridgeMono.woff2`,`@font-face` family 改为 `Bridge Sans` / `Bridge Mono`(woff2 二进制与其 name 表署名不动)。
-  Space Grotesk(无 RFN)与 Noto Sans SC(RFN "Source")命名不受影响。
+- 内嵌的拉丁正文/等宽子集字体按 OFL-1.1 §3(Reserved Font Name)改名分发:`BridgeSans.woff2` /
+  `BridgeMono.woff2`,`@font-face` family 改为 `Bridge Sans` / `Bridge Mono`(woff2 二进制与其 name 表署名不动);
+  来源家族与逐家族 RFN 核验见 `THIRD-PARTY-NOTICES.md`。Space Grotesk(无 RFN)与 Noto Sans SC(RFN "Source")
+  命名不受影响。
 - `THIRD-PARTY-NOTICES.md`:补四款字体的 RFN 逐家族核验附注;许可证「核验来源」列由本机绝对路径改为上游权威公开引用
   (核验结论不变,仍为「已核验、无待验证」)。
 

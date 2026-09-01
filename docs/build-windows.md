@@ -68,7 +68,7 @@ ixwebsocket 用静态 triplet 编译（内嵌 mbedtls，无需单独 OpenSSL）�
 
 ### 4. 编译宏组合（必要且易漏）
 
-`CMakeLists.txt:144-153`。三个宏缺一不可：
+`CMakeLists.txt:145-154`。三个宏缺一不可：
 
 - `JUCE_WEB_BROWSER=1` —— 启用 `WebBrowserComponent`
 - `JUCE_USE_WIN_WEBVIEW2=1` —— 启用 WebView2 代码路径

@@ -86,9 +86,10 @@ juce_add_binary_data(SynchainBridgeWebAssets SOURCES
   web/js/juce/index.js
   web/js/juce/check_native_interop.js  # sibling side-effect import of index.js
   # Offline text-subset WOFF2 (Google Fonts, subset to used glyphs only ~60KB total)
+  # Bridge Sans/Mono = renamed-family subsets (OFL-1.1 §3 RFN; upstream families in THIRD-PARTY-NOTICES.md)
   web/fonts/SpaceGrotesk.woff2
-  web/fonts/IBMPlexSans.woff2
-  web/fonts/IBMPlexMono.woff2
+  web/fonts/BridgeSans.woff2
+  web/fonts/BridgeMono.woff2
   web/fonts/NotoSansSC.woff2
 )
 
