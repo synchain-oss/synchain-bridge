@@ -67,7 +67,14 @@ macOS:
 
 ## 安装
 
-[GitHub Releases](https://github.com/synchain-oss/synchain-bridge/releases) 上目前**只有 Windows x64 预编译版**(`SynchainBridge-VST3-vX.Y.Z-win64.zip`,Release 构建 + pluginval strictness 5 验证)。**macOS 产物尚未发布** —— mac 上请从源码构建(见下);签名/公证的 mac 产物留待后续版本。
+两个平台的预编译版都在 [GitHub Releases](https://github.com/synchain-oss/synchain-bridge/releases),均为 Release 构建并经 CI 验证(pluginval strictness 5;AU 另经 `auval`):
+
+| 平台 | 资产 | zip 内容 |
+|---|---|---|
+| Windows x64 | `SynchainBridge-VST3-vX.Y.Z-win64.zip` | `Synchain Bridge.vst3` |
+| macOS arm64 | `SynchainBridge-VST3-AU-vX.Y.Z-macos-arm64.zip` | `Synchain Bridge.vst3` + `Synchain Bridge.component` |
+
+每个资产都附同名 `.sha256`。macOS 版**仅 Apple Silicon,且不签名不公证** —— 见 [macOS 已知限制](#macos-已知限制)与下面的解除隔离步骤。
 
 插件用独立厂商码/插件码(`Snch` / `Snb1`),DAW 将其识别为独立插件。改这两个码会生成新的 VST3 唯一 ID(AU 身份同样变化),DAW 视为全新插件、旧工程会丢插件 —— **两个平台都绝对禁止改动**。
 
@@ -93,7 +100,7 @@ ditto "<产物路径>/Synchain Bridge.component" ~/Library/Audio/Plug-Ins/Compon
 killall -9 AudioComponentRegistrar   # 清掉 AU 组件缓存,否则 DAW 扫到的仍是旧副本
 ```
 
-macOS 版本**不签名、不公证**(v1)。自己构建出来的 bundle 不带 quarantine 属性;**若**你装的是下载来的产物(浏览器下载的 zip、AirDrop 等),系统会带上 quarantine 并直接拒绝加载,需解除一次隔离:
+macOS 版本**不签名、不公证**(v1)。自己构建出来的 bundle 不带 quarantine 属性;从 Releases(或浏览器、AirDrop)下载来的 zip 会带上 quarantine,系统直接拒绝加载,需解除一次隔离。下面两条对应上面的家目录路径,不需要 sudo;若改装到 `/Library/Audio/Plug-Ins/...`,复制需要管理员授权、两条命令都要加 `sudo`:
 
 ```bash
 xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/VST3/"Synchain Bridge.vst3"
@@ -192,4 +199,4 @@ VST 是 Steinberg Media Technologies GmbH 的商标。**VST3 SDK** 自 2025 年 
 
 ## 状态
 
-Windows x64(VST3)先行,也是目前唯一有预编译 Release 的平台;macOS Apple Silicon(VST3 + AU)自 v1.5.0 起支持**从源码构建** —— 不签名、仅 arm64,发布 mac 产物留待后续版本。版本历史见 [`CHANGELOG.md`](CHANGELOG.md)。
+Windows x64(VST3)先行;macOS Apple Silicon(VST3 + AU)自 v1.5.0 起随 Windows zip 一同作为预编译资产发布 —— 不签名、仅 arm64,签名与公证留待后续版本。版本历史见 [`CHANGELOG.md`](CHANGELOG.md)。
