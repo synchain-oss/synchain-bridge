@@ -5,7 +5,9 @@
 ## 0. 基本约定
 
 - 沟通语言:内部沟通用中文;面向外部贡献者的 issue/PR 回复用对方使用的语言。
-- Git 提交身份:`DLsnows / noreply@synchain.ca`(D8:转 org 后继续用 DLsnows 操作,身份不变)。
+- Git 提交身份:`DLsnows <noreply@synchain.ca>`(D8:转 org 后继续用 DLsnows 操作,身份不变)。**本仓一律用
+  noreply 地址提交**,不得把个人邮箱写进 commit 或任何入库文档;GitHub 账号侧同时开启
+  *Keep my email address private* 与 *Block command line pushes that expose my email*。
 - 项目一句话:JUCE 8 + WebView2 的 VST3 插件,经本地 WebSocket(默认端口 9420)推流 DAW 音频;接收端是闭源的 Synchain 网页应用。
 - 签名证书/公证凭据:本项目 v1 **不签名**(U13)。若将来引入代码签名,证书与凭据必须走 secret,绝不落盘明文、绝不进仓库。
 

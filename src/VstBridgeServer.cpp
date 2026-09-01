@@ -3,23 +3,44 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 #include "BridgeApi.h"
+#include "BridgeOriginConfig.h" // CMake 生成：仅在配置期注入了额外来源时定义 BRIDGE_EXTRA_ALLOWED_ORIGIN_HOSTS
+#include "OriginAllowlist.h" // 归一化 / 模式可用性 / 模式匹配（纯 std，自测覆盖见 tests/）
 #include "VstBridgeServer.h"
 #include "WebSocketProtocol.h"
-#include <cctype> // std::tolower
 #include <cstring> // std::memcpy
+#include <vector>
 
 namespace synchain
 {
 
 namespace
 {
+#ifdef BRIDGE_EXTRA_ALLOWED_ORIGIN_HOSTS
+// 构建期注入的额外 host 模式：编译期是一个逗号分隔的字符串常量，运行期拆一次。
+// 拆分结果放函数内 static（C++11 magic static，线程安全初始化）——握手每次都会调用，
+// 避免重复解析/分配。**本目标依赖 MSVC 默认开启的 /Zc:threadSafeInit，禁止为本目标关闭**：
+// 关掉它会让这段白名单初始化退化成无保护的竞态（表现为偶发空白名单或半初始化读越界）。
+// VstBridgeServer::start() 里会显式预热一次，让首个握手不再触发初始化与堆分配。
+// 本函数只在 WebSocket 握手线程调用，不在音频线程。
+const std::vector<std::string>& extraAllowedHostPatterns()
+{
+    static const std::vector<std::string> patterns = origin::parseHostPatterns(BRIDGE_EXTRA_ALLOWED_ORIGIN_HOSTS);
+    return patterns;
+}
+#endif // BRIDGE_EXTRA_ALLOWED_ORIGIN_HOSTS
+
 // CSWSH 防护：只放行 Synchain 自己确切的来源，阻止用户浏览器里的任意第三方站点
-// 静默连上本地端口偷 DAW 母线实时 PCM。白名单（Synchain issue 167）：
+// 静默连上本地端口偷 DAW 母线实时 PCM。仓库内的默认白名单（Synchain issue 167）：
 //   - localhost / 127.0.0.1 / [::1]（本地开发/预览，任意 scheme/端口）
 //   - https://synchain.cn|.ca 、https://www.synchain.cn|.ca 、https://dev.synchain.cn|.ca（精确 host）
-//   - https://synchain-git-<branch>-[REDACTED-TEAM].vercel.app（Vercel 预览，
-//     团队 slug 固定，攻击者无法在该 slug 下部署 → 前后缀夹逼安全）
-// 明确【拒绝】：apex vercel.app 与任意其它 *.vercel.app、非 https 远程、以及一切其它。
+// 部署平台的预览域名等**额外来源**不写进源码，改为构建期注入（决策 U4）：只有配置时传了
+//   -DBRIDGE_EXTRA_ALLOWED_ORIGIN_HOSTS="<host 模式列表>"
+// 才会定义同名字符串宏并参与匹配；**默认构建不含任何额外来源**，即只有上面的默认白名单。
+// 注入值是逗号分隔的 host 模式，每个至多一个 `*` 通配段（虚构示例：example-*-team.example.app），
+// 通配段须非空、**不跨 `.`**（只匹配单个 DNS label）且落在最左 label 内，模式本身须带 ≥2 段的
+// 真实域名锚点（见 OriginAllowlist.h 的 isUsableHostPattern —— `*.com` / `*example.app` 一律拒）；
+// 额外来源同样受下面「非 https 一律拒」的早退约束。
+// 明确【拒绝】：非 https 远程、以及未经注入的一切其它来源（含任意第三方部署域）。
 // 原生/桌面客户端不带 Origin 头（空串）→ 放行；但【不放行字面量 "null"】——沙箱
 // iframe / opaque-origin 文档握手会带 Origin: null，放行它会重开 CSWSH（攻击页可用
 // sandbox=allow-scripts 的 iframe 驱动 ws 连本地端口）。
@@ -49,13 +70,10 @@ bool isAllowedOrigin(const std::string& origin)
         host = (colon == std::string::npos) ? s : s.substr(0, colon);
     }
 
-    const auto toLower = [](std::string v) {
-        for (auto& c : v)
-            c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-        return v;
-    };
-    scheme = toLower(scheme); // scheme/host 大小写不敏感，归一化防 SYNCHAIN.CN 之类绕过
-    host = toLower(host);
+    // scheme/host 大小写不敏感，归一化防 SYNCHAIN.CN 之类绕过；host 另剥掉 FQDN 尾点
+    // （浏览器对 `https://synchain.cn.` 会原样发出带尾点的 Origin），详见 normalizeHost。
+    scheme = origin::toLowerAscii(scheme);
+    host = origin::normalizeHost(host);
 
     // 本地开发/预览：任意 scheme/端口。
     if (host == "localhost" || host == "127.0.0.1" || host == "[::1]")
@@ -70,20 +88,14 @@ bool isAllowedOrigin(const std::string& origin)
         host == "dev.synchain.cn" || host == "dev.synchain.ca")
         return true;
 
-    // Vercel 预览：synchain-git-<branch>-[REDACTED-TEAM].vercel.app。
-    // 要求 branch 段非空（host 长于前缀+后缀），排除前后缀重叠的边界串。
-    const std::string pre = "synchain-git-";
-    const std::string suf = "-[REDACTED-TEAM].vercel.app";
-    const auto startsWith = [](const std::string& v, const std::string& p) {
-        return v.size() >= p.size() && v.compare(0, p.size(), p) == 0;
-    };
-    const auto endsWith = [](const std::string& v, const std::string& t) {
-        return v.size() >= t.size() && v.compare(v.size() - t.size(), t.size(), t) == 0;
-    };
-    if (host.size() > pre.size() + suf.size() && startsWith(host, pre) && endsWith(host, suf))
-        return true;
+#ifdef BRIDGE_EXTRA_ALLOWED_ORIGIN_HOSTS
+    // 构建期注入的额外来源（如部署平台预览域名）。默认构建里该宏未定义，本段不参与编译。
+    for (const auto& pattern : extraAllowedHostPatterns())
+        if (origin::hostMatchesPattern(host, pattern))
+            return true;
+#endif
 
-    return false; // 含 apex vercel.app 与任意其它 *.vercel.app
+    return false; // 其余一律拒（未注入时，任何第三方部署域都落到这里）
 }
 } // namespace
 
@@ -98,6 +110,12 @@ int VstBridgeServer::start(int port)
 {
     if (mRunning)
         return mPort;
+
+#ifdef BRIDGE_EXTRA_ALLOWED_ORIGIN_HOSTS
+    // 在起服务端之前把注入白名单解析好（一次性解析 + 堆分配落到这里，不落到首个握手），
+    // 同时让 magic static 的初始化发生在单线程阶段。
+    (void)extraAllowedHostPatterns();
+#endif
 
     for (int offset = 0; offset < 10; ++offset)
     {

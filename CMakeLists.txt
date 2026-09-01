@@ -85,10 +85,12 @@ juce_add_binary_data(SynchainBridgeWebAssets SOURCES
   web/i18n.js
   web/js/juce/index.js
   web/js/juce/check_native_interop.js  # sibling side-effect import of index.js
-  # Offline text-subset WOFF2 (Google Fonts, subset to used glyphs only ~60KB total)
+  # Offline text-subset WOFF2 (Google Fonts, subset to used glyphs only ~73KB total)
+  # Bridge Sans/Mono = renamed subsets: file name, CSS family AND the woff2 `name` table are
+  # all free of the upstream Reserved Font Name (OFL-1.1 §3; details in THIRD-PARTY-NOTICES.md)
   web/fonts/SpaceGrotesk.woff2
-  web/fonts/IBMPlexSans.woff2
-  web/fonts/IBMPlexMono.woff2
+  web/fonts/BridgeSans.woff2
+  web/fonts/BridgeMono.woff2
   web/fonts/NotoSansSC.woff2
 )
 
@@ -150,6 +152,71 @@ if(WIN32)
     JUCE_USE_WIN_WEBVIEW2=1
     JUCE_USE_WIN_WEBVIEW2_WITH_STATIC_LINKING=1  # static loader -> no WebView2Loader.dll at runtime
   )
+endif()
+
+# --- Origin allow-list: extra hosts injected at build time (decision U4) ---
+# The repository source only carries the synchain.ca/.cn defaults (see isAllowedOrigin()
+# in src/VstBridgeServer.cpp). Deployment-platform preview domains and any other extra
+# origins are NOT stored in the repo: pass them at configure time instead.
+#
+#   cmake -S . -B build -DBRIDGE_EXTRA_ALLOWED_ORIGIN_HOSTS="example-git-*-example-team.example.app;preview.example.com"
+#
+# ';' or ',' separated host patterns, at most ONE '*' per pattern. The '*' matches a
+# non-empty run of characters within a SINGLE DNS label (it never crosses a '.'), it must
+# sit inside the LEFTMOST label, and what follows the first '.' must still be a 2+ segment
+# domain anchor whose last segment is an all-alphabetic TLD of 2+ chars. So '*', '*.',
+# '-*', '*.com' and '*example.app' are all dropped fail-closed — none of them may turn into
+# a blanket wildcard. https is still required. Empty by default -> the macro is NOT defined
+# -> a default build allows no extra origin at all. Rules live in src/OriginAllowlist.h and
+# are asserted by tests/origin_allowlist_selftest.cpp (-DBRIDGE_BUILD_SELFTESTS=ON).
+set(BRIDGE_EXTRA_ALLOWED_ORIGIN_HOSTS "" CACHE STRING
+  "Extra Origin host patterns to allow (';' or ',' separated; at most one '*' per pattern)")
+
+# The value ends up inside a C string literal in the generated header, so quotes and
+# backslashes would break out of it — reject them instead of emitting a broken header.
+# Literal string(FIND) rather than a regex: no bracket-expression escaping to get wrong.
+string(FIND "${BRIDGE_EXTRA_ALLOWED_ORIGIN_HOSTS}" "\"" _bridge_origin_quote_at)
+string(FIND "${BRIDGE_EXTRA_ALLOWED_ORIGIN_HOSTS}" "\\" _bridge_origin_backslash_at)
+if(NOT _bridge_origin_quote_at EQUAL -1 OR NOT _bridge_origin_backslash_at EQUAL -1)
+  message(FATAL_ERROR
+    "BRIDGE_EXTRA_ALLOWED_ORIGIN_HOSTS must not contain quotes or backslashes.")
+endif()
+
+if(BRIDGE_EXTRA_ALLOWED_ORIGIN_HOSTS)
+  # CMake lists are ';' separated — normalise to ',', which is what the C++ side splits on.
+  string(REPLACE ";" "," _bridge_extra_origin_hosts "${BRIDGE_EXTRA_ALLOWED_ORIGIN_HOSTS}")
+  set(BRIDGE_EXTRA_ORIGIN_DEFINE
+    "#define BRIDGE_EXTRA_ALLOWED_ORIGIN_HOSTS \"${_bridge_extra_origin_hosts}\"")
+  # Deliberately not echoing the values: build logs of a public CI should not carry them.
+  message(STATUS "Origin allow-list: extra host patterns injected at build time")
+else()
+  set(BRIDGE_EXTRA_ORIGIN_DEFINE
+    "// no extra origins configured -> BRIDGE_EXTRA_ALLOWED_ORIGIN_HOSTS stays undefined")
+endif()
+
+# Generated header rather than target_compile_definitions: a quoted string define is
+# escaped differently by the Visual Studio and Ninja/Makefile generators, while a header
+# is byte-identical everywhere. Always generated (empty when nothing is injected) so the
+# unconditional #include in VstBridgeServer.cpp always resolves.
+configure_file(cmake/BridgeOriginConfig.h.in
+  "${CMAKE_CURRENT_BINARY_DIR}/generated/BridgeOriginConfig.h" @ONLY)
+target_include_directories(SynchainBridgeVST PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
+
+# --- Optional: Origin allow-list selftest ---
+# Asserts the pure string logic of src/OriginAllowlist.h (normalisation, injected-pattern
+# usability, pattern matching). Standard library only: no JUCE, no ixwebsocket, no link
+# against the plugin target — so it builds and runs in seconds. OFF by default; the local
+# gate script (scripts/gates.ps1) configures with -DBRIDGE_BUILD_SELFTESTS=ON and runs it.
+option(BRIDGE_BUILD_SELFTESTS "Build origin allowlist selftest" OFF)
+if(BRIDGE_BUILD_SELFTESTS)
+  add_executable(origin_allowlist_selftest tests/origin_allowlist_selftest.cpp)
+  target_compile_features(origin_allowlist_selftest PRIVATE cxx_std_17)
+  target_include_directories(origin_allowlist_selftest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+  if(MSVC)
+    target_compile_options(origin_allowlist_selftest PRIVATE /W4 /utf-8)
+  else()
+    target_compile_options(origin_allowlist_selftest PRIVATE -Wall -Wextra -Wpedantic)
+  endif()
 endif()
 
 # --- Platform-Specific ---

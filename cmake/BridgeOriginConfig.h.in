@@ -1,0 +1,17 @@
+// Copyright (c) 2026 Synchain
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+//
+// 由 CMake 从 cmake/BridgeOriginConfig.h.in 生成 —— 不要手改生成物。
+//
+// Origin 白名单的「额外来源」注入点（决策 U4）。仓库源码只带 synchain.cn/.ca 系默认域，
+// 部署平台的预览域名等额外来源在配置期经 -DBRIDGE_EXTRA_ALLOWED_ORIGIN_HOSTS 传入。
+// 走生成头而不是 target_compile_definitions 的原因：宏值里的双引号在
+// Visual Studio / Ninja 等不同生成器下转义路径不同，放进头文件则完全绕开该差异。
+//
+// 未注入（默认构建）时下面一行是注释，宏保持**未定义**，isAllowedOrigin() 里
+// #ifdef 包住的整段额外来源匹配不参与编译 —— 默认构建不放行任何额外来源。
+
+#pragma once
+
+@BRIDGE_EXTRA_ORIGIN_DEFINE@

@@ -1,8 +1,9 @@
 <#
 .SYNOPSIS  Synchain Bridge 本地质量门禁 —— 提子 PR 前必须全绿(单 bundle)。
 .DESCRIPTION
-  结构同 06 §5.1,但只有一个 bundle;额外含 vcpkg ixwebsocket 预检(gate 1)与
-  端口 9420 一致性检查(gate 3d:src/BridgeApi.h ↔ web/bridge.js ↔ web-preview/mock-server.mjs)。
+  结构同 06 §5.1,但只有一个 bundle;额外含 vcpkg ixwebsocket 预检(gate 1)、
+  端口 9420 一致性检查(gate 3d:src/BridgeApi.h ↔ web/bridge.js ↔ web-preview/mock-server.mjs)、
+  字体 name 表 RFN 断言(gate 3b2,与 compliance.yml 同参)与 Origin 白名单纯函数自测(gate 5b)。
   任一 gate FAIL 即以非零码退出,最后打印一张可直接粘进 PR 描述的表格。
 .EXAMPLE   pwsh scripts/gates.ps1                         # 全量(含 GUI pluginval)
 .EXAMPLE   pwsh scripts/gates.ps1 -PluginOnly             # 跳过 GUI pluginval(与 CI 等价)
@@ -137,7 +138,10 @@ function Test-Prettier {
     return $ok
 }
 
-# ---- gate 3b:gitleaks(与 compliance.yml 同参) ----
+# ---- gate 3b:gitleaks 树扫描 + 历史扫描(与 compliance.yml 的两个 Secret scan 步骤同参) ----
+# 注意本地与 CI 的口径差:历史扫描走 `git log` 全部 ref,**含本地未推送的分支**,而 CI 只看
+# checkout 出来的那份。所以「本地红 / CI 绿」是可能的,方向是 fail-closed(本地先拦住),
+# 出现时按 BEFORE_PUBLIC_CHECKLIST.md §5 处置本地分支,不要靠 CI 绿灯放行。
 function Test-Gitleaks {
     $ok = $true
     $detail = ''
@@ -148,9 +152,38 @@ function Test-Gitleaks {
         try {
             & gitleaks detect --no-git --source . --redact -v --config .gitleaks.toml 2>&1 | ForEach-Object { Write-Host $_ }
             if ($LASTEXITCODE -ne 0) { $ok = $false; $detail = 'gitleaks 检出密钥;误报请登记进 .gitleaks.toml allowlist,不得绕过' }
+            # 历史扫描(与 compliance.yml 的 "Secret scan (git history)" 同参):敏感信息不借任何历史 commit 入库
+            if ($ok) {
+                & gitleaks detect --source . --redact -v --config .gitleaks.toml 2>&1 | ForEach-Object { Write-Host $_ }
+                if ($LASTEXITCODE -ne 0) { $ok = $false; $detail = 'gitleaks 历史扫描检出敏感信息;历史处置见 BEFORE_PUBLIC_CHECKLIST.md §5' }
+            }
         } finally { Pop-Location }
     }
-    Add-Result 'gitleaks (--no-git --redact)' ($(if ($ok) { 'PASS' } else { 'FAIL' })) $detail
+    Add-Result 'gitleaks (树扫描 + 历史扫描)' ($(if ($ok) { 'PASS' } else { 'FAIL' })) $detail
+    return $ok
+}
+
+# ---- gate 3b2:字体 name 表 RFN(与 compliance.yml 的 "Font name-table RFN check" 同参) ----
+# woff2 是 brotli 压缩的,gitleaks/grep 对二进制失明:只有解出 name 表逐条比对才算 OFL-1.1 §3 的证据。
+# python 或 fontTools/brotli 不可用一律 FAIL —— 静默跳过等于把这条断言从门禁里删掉。
+function Test-FontNames {
+    $ok = $true
+    $detail = ''
+    $py = Get-Command python -ErrorAction SilentlyContinue
+    if (-not $py) { $py = Get-Command python3 -ErrorAction SilentlyContinue }
+    if (-not $py) {
+        $ok = $false; $detail = 'python 不在 PATH(脚本另需 fontTools + brotli:pip install fonttools brotli)'
+    } else {
+        Push-Location $RepoRoot
+        try {
+            & $py.Source scripts/check-font-names.py 2>&1 | ForEach-Object { Write-Host $_ }
+            if ($LASTEXITCODE -ne 0) {
+                $ok = $false
+                $detail = 'check-font-names.py 失败;缺依赖跑 pip install fonttools brotli,重新生成字体见 web/fonts/README.md'
+            }
+        } finally { Pop-Location }
+    }
+    Add-Result '字体 name 表 RFN (OFL-1.1 §3)' ($(if ($ok) { 'PASS' } else { 'FAIL' })) $detail
     return $ok
 }
 
@@ -222,7 +255,8 @@ function Test-Configure {
         '-A', 'x64',
         ('-DJUCE_PATH=' + ($JucePath -replace '\\', '/')),
         ('-DCMAKE_TOOLCHAIN_FILE=' + ($toolchain -replace '\\', '/')),
-        '-DVCPKG_TARGET_TRIPLET=x64-windows-static'
+        '-DVCPKG_TARGET_TRIPLET=x64-windows-static',
+        '-DBRIDGE_BUILD_SELFTESTS=ON' # 供 gate 5b 的 origin selftest;默认 OFF,不影响发布构建
     )
     & cmake @cmakeArgs 2>&1 | ForEach-Object { Write-Host $_ }
     if ($LASTEXITCODE -ne 0) { $ok = $false; $detail = ('cmake configure 失败 (exit ' + $LASTEXITCODE + ')') }
@@ -248,6 +282,28 @@ function Test-Build {
         }
     }
     Add-Result 'build (/W4, 0 warning)' ($(if ($ok) { 'PASS' } else { 'FAIL' })) $detail
+    return $ok
+}
+
+# ---- gate 5b:origin allowlist selftest ----
+# Origin 白名单的纯字符串逻辑(src/OriginAllowlist.h)断言,由 Test-Configure 的
+# -DBRIDGE_BUILD_SELFTESTS=ON 产出;秒级,不依赖 DAW/GUI。
+function Test-OriginSelftest {
+    $ok = $true
+    $detail = ''
+    $exe = Get-ChildItem -Path $BuildDir -Recurse -Filter 'origin_allowlist_selftest.exe' -ErrorAction SilentlyContinue |
+        Select-Object -First 1
+    if (-not $exe) {
+        $ok = $false
+        $detail = ('未找到 origin_allowlist_selftest.exe(configure 须带 -DBRIDGE_BUILD_SELFTESTS=ON): ' + $BuildDir)
+    } else {
+        & $exe.FullName 2>&1 | ForEach-Object { Write-Host $_ }
+        if ($LASTEXITCODE -ne 0) {
+            $ok = $false
+            $detail = ('origin selftest 失败 (exit ' + $LASTEXITCODE + '),用例见 tests/origin_allowlist_selftest.cpp')
+        }
+    }
+    Add-Result 'origin selftest (Origin 白名单纯函数断言)' ($(if ($ok) { 'PASS' } else { 'FAIL' })) $detail
     return $ok
 }
 
@@ -293,18 +349,20 @@ Write-Host ('  BuildDir: ' + $BuildDir)
 Write-Host ('  Mode    : ' + $(if ($Quick) { 'Quick(跳过 pluginval)' } elseif ($PluginOnly) { 'PluginOnly(跳过 GUI pluginval)' } else { '全量(含 GUI pluginval)' }))
 Write-Host ''
 
-# 只读 gate(1,2,3,3b,3c,3d)恒跑,互不依赖
+# 只读 gate(1,2,3,3b,3b2,3c,3d)恒跑,互不依赖
 $roOk = $true
 $roOk = (Test-Deps) -and $roOk
 $roOk = (Test-ClangFormat) -and $roOk
 $roOk = (Test-Prettier) -and $roOk
 $roOk = (Test-Gitleaks) -and $roOk
+$roOk = (Test-FontNames) -and $roOk
 $roOk = (Test-Reuse) -and $roOk
 $roOk = (Test-Port) -and $roOk
 
 if (-not $roOk) {
     Add-Result 'cmake 配置' 'SKIP' '只读 gate 失败,跳过'
     Add-Result 'build (/W4, 0 warning)' 'SKIP' '只读 gate 失败,跳过'
+    Add-Result 'origin selftest (Origin 白名单纯函数断言)' 'SKIP' '只读 gate 失败,跳过'
     Add-Result 'pluginval 非 GUI (strict 5)' 'SKIP' '只读 gate 失败,跳过'
     Add-Result 'pluginval 全量含 GUI (本地真机)' 'SKIP' '只读 gate 失败,跳过'
 } else {
@@ -312,6 +370,11 @@ if (-not $roOk) {
     if ($cfgOk) { $buildOk = Test-Build } else {
         $buildOk = $false
         Add-Result 'build (/W4, 0 warning)' 'SKIP' 'cmake 配置失败,跳过'
+    }
+    if ($cfgOk -and $buildOk) {
+        $null = Test-OriginSelftest
+    } else {
+        Add-Result 'origin selftest (Origin 白名单纯函数断言)' 'SKIP' '构建失败,跳过'
     }
     if ($cfgOk -and $buildOk) {
         if ($Quick) {
