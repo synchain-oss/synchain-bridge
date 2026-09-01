@@ -65,8 +65,8 @@ ditto "build/SynchainBridgeVST_artefacts/Release/AU/Synchain Bridge.component" \
 killall -9 AudioComponentRegistrar
 ```
 
-本地构建出来的 bundle **不带** `com.apple.quarantine`；只有从 Releases 下载的 zip 需要解除隔离，见
-[README](../README.md#install) 的 macOS 小节。
+本地构建出来的 bundle **不带** `com.apple.quarantine`，按本页装完可直接用。只有**下载来的**产物才带该属性
+需要解除隔离（Releases 目前尚无 mac 产物；命令见 [README](../README.md#install) 的 macOS 小节）。
 
 ## 验证
 
