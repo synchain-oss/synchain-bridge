@@ -67,7 +67,14 @@ macOS:
 
 ## Install
 
-Prebuilt **Windows x64** builds are on [GitHub Releases](https://github.com/synchain-oss/synchain-bridge/releases) (`SynchainBridge-VST3-vX.Y.Z-win64.zip`, Release build validated with pluginval strictness 5). **No macOS artifact is published yet** — on macOS, build from source (below); signed/notarized mac builds will follow in a later release.
+Prebuilt builds for both platforms are on [GitHub Releases](https://github.com/synchain-oss/synchain-bridge/releases), each Release build validated in CI (pluginval strictness 5, plus `auval` for the AU):
+
+| Platform | Asset | Contents |
+|---|---|---|
+| Windows x64 | `SynchainBridge-VST3-vX.Y.Z-win64.zip` | `Synchain Bridge.vst3` |
+| macOS arm64 | `SynchainBridge-VST3-AU-vX.Y.Z-macos-arm64.zip` | `Synchain Bridge.vst3` + `Synchain Bridge.component` |
+
+Every asset ships a matching `.sha256`. The macOS build is **Apple Silicon only and is neither signed nor notarized** — see [Known limitations on macOS](#known-limitations-on-macos) and the quarantine step below.
 
 The plugin uses dedicated manufacturer/plugin codes (`Snch` / `Snb1`), so DAWs see it as an independent plugin. Changing these codes would generate a new VST3 unique ID (and a new AU component identity) and orphan existing projects — **never alter them, on either platform**.
 
@@ -93,7 +100,7 @@ ditto "<path>/Synchain Bridge.component" ~/Library/Audio/Plug-Ins/Components/"Sy
 killall -9 AudioComponentRegistrar   # drop the cached AU component info, otherwise the DAW rescans the old copy
 ```
 
-The macOS builds are **unsigned and un-notarized** (v1). A bundle you built yourself carries no quarantine flag; *if* you install one that came from a download (a zip from a browser, AirDrop, …), macOS will refuse to load it until the flag is cleared:
+The macOS builds are **unsigned and un-notarized** (v1). A bundle you built yourself carries no quarantine flag; a zip downloaded from Releases (or via a browser, AirDrop, …) does, and macOS will refuse to load it until the flag is cleared. The commands below are for the per-user paths above and need no `sudo`; installing into `/Library/Audio/Plug-Ins/...` instead requires an admin prompt to copy and `sudo` on both commands:
 
 ```bash
 xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/VST3/"Synchain Bridge.vst3"
@@ -192,4 +199,4 @@ Complete corresponding source for every released binary is available in this rep
 
 ## Status
 
-Windows x64 (VST3) shipped first and is the only platform with prebuilt Releases. macOS on Apple Silicon (VST3 + AU) is supported **from source** as of v1.5.0 — unsigned, arm64 only; publishing mac artifacts comes in a later release. See [`CHANGELOG.md`](CHANGELOG.md) for the version history.
+Windows x64 (VST3) shipped first. macOS on Apple Silicon (VST3 + AU) arrives in v1.5.0 and is published as a prebuilt Release asset alongside the Windows zip — unsigned and arm64 only; signing/notarization comes in a later release. See [`CHANGELOG.md`](CHANGELOG.md) for the version history.

@@ -46,7 +46,7 @@
 - `ci`(job `build-and-validate` = windows-2022;job `build-and-validate-macos` = macos-15,VST3 + AU,arm64-only)/ `format`(job `clang-format`)/ `branch-gate`:`pull_request → dev` + `push → dev, 'feature/**'`。
 - `compliance`(gitleaks + reuse lint):同触发面,无 secrets,fork PR 同样跑。
 - `claude-review`:所有 base 分支、仅 same-repo(J31);`deepseek-review` / `pr-agent` 默认 disable。
-- `release`:push tags `v*` 触发草稿 Release(版本一致性门禁 + pluginval + zip/sha256)。
+- `release`:push tags `v*` 触发草稿 Release,四段式 `gate`(版本一致性门禁,ubuntu-latest)→ `release`(windows-2022)∥ `release-macos`(macos-15)→ `publish`(ubuntu-latest,复验 sha256 后建 draft)。workflow 级 `contents: read`,`contents: write` 只授给 `publish` 一个 job。**任一平台失败 = 整个 tag 无产物**(处理办法见 `docs/release.md` §6.1)。
 - `review-dispatch`:维护者评论 `/review` 显式触发(fork PR 唯一 AI 审查通道)。
 - 成本纪律:runner 就低不就高(V-4 确认前一律 `ubuntu-latest`)、按量计费 bot 克制使用。**例外(待用户拍板)**:`build-and-validate-macos` 必须跑 GitHub 托管 macOS runner(按 **10 倍分钟数**计费),且当前继承整个 `ci` 工作流的触发面、全开;若要收敛,给 job 加 label/事件闸门是最小改动。
 
@@ -87,5 +87,6 @@ Bridge 特有:PCM 发送由后台发送线程经 SPSC ring 转投(移出音频�
 
 - 抽取为公开仓库后 **GitHub Releases 才是真正公开可下载的渠道**(private 仓的 Release 附件匿名下载走不通)。
 - 版本号真源 = 顶层 `CMakeLists.txt` 的 `project(... VERSION)`;网页侧(闭源仓库)存在一份下游版本镜像,发版后必须同步。
-- tag 格式 `vX.Y.Z`(去掉 `vst-` 前缀);首个公开 tag = `v1.4.0`(U6)。
+- tag 格式 `vX.Y.Z`(去掉 `vst-` 前缀);首个公开 tag = `v1.4.0`(U6)。`*-test` 结尾的冒烟 tag 跳过严格版本相等、产物恒为 draft,改过发版链路后先用它端到端实跑(`docs/release.md` §5.1)。
+- Release 资产两个平台各一个,均附同名 `.sha256`:`SynchainBridge-VST3-v<版本>-win64.zip`(VST3)与 `SynchainBridge-VST3-AU-v<版本>-macos-arm64.zip`(VST3 + AU,arm64-only,不签名不公证)。打包唯一真源 = `scripts/package.ps1` / `scripts/package-macos.sh`,绝不在 workflow 里内联打包命令。
 - R2 固定 key 覆盖上传是否保留由 08 文档决策;本仓不默认启用。

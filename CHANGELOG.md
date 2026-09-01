@@ -16,9 +16,9 @@
   `AU_MAIN_TYPE kAudioUnitType_Effect`,即 `aufx`),UI 走系统 **WKWebView**;目标架构 `arm64`,
   部署目标 macOS **11.0**(Big Sur,arm64 Mac 的物理下限)。安装位置为
   `~/Library/Audio/Plug-Ins/VST3` 与 `~/Library/Audio/Plug-Ins/Components`。
-- **macOS 版本不签名、不公证**(沿用 v1 的不签名决策)。本版本**不发布 mac 预编译产物**,mac 侧从源码构建
-  (`release.yml` 仍只跑 `windows-2022`、只上传 `*-win64.zip`);自己构建的 bundle 不带 quarantine,只有
-  下载来的产物才需要 `xattr -dr com.apple.quarantine` 解除一次隔离(README 的「安装」一节有完整命令)。
+- **macOS 版本不签名、不公证**(沿用 v1 的不签名决策)。自己构建的 bundle 不带 quarantine,从 Releases
+  下载来的 zip 才需要 `xattr -dr com.apple.quarantine` 解除一次隔离(README 的「安装」一节有完整命令;
+  装到 `/Library` 全局路径时两条命令都要 `sudo`,家目录则不需要)。
 - **macOS 已知限制**(README 双语各有详述):① 仅 arm64 —— Intel Mac 不支持,且在 Apple Silicon 上给
   DAW 勾「使用 Rosetta 打开」**同样加载不了**(Rosetta 宿主装不下 arm64 插件);② AU **不申报 sandbox-safe**
   (插件需 bind `127.0.0.1` 监听 socket 并托管 WebView,两者在 AU sandbox 内都会被拒),GarageBand 可能拒载,
@@ -88,6 +88,33 @@
 - `BEFORE_PUBLIC_CHECKLIST.md` 新增 §3.1:第三方 action pin 到 40 位 SHA 升为**转 public 硬门禁**并列出
   当前未 pin 的文件清单与验收断言(现状是只有 `release.yml` 与 mac job 做到了)。
 
+### 发布 / 分发(对下游可见)
+
+- **Release 页面新增 macOS 资产**:`SynchainBridge-VST3-AU-v<版本>-macos-arm64.zip` 及同名 `.sha256`
+  (zip 内含 `Synchain Bridge.vst3` + `Synchain Bridge.component` + 与 Windows 侧同一组合规文件
+  `LICENSE.txt` / `THIRD-PARTY-NOTICES.md` / `LICENSES/OFL-1.1.txt` / `INSTALL.txt`)。
+  Windows 资产名与内容不变。
+- **Release 标题变更**:`Synchain Bridge VST3 <tag> (Windows x64)` → `Synchain Bridge <tag> (Windows x64 · macOS arm64)`。
+- **`release.yml` 由 1 个 job 拆成 4 段**:`gate`(版本门禁,`ubuntu-latest`)→ `release`(windows-2022)
+  ∥ `release-macos`(macos-15)→ `publish`(`ubuntu-latest`,建 draft Release)。
+  权限收敛:workflow 级降为 `contents: read`,`contents: write` 只授给 `publish` 一个 job ——
+  跑第三方代码(JUCE / vcpkg / pluginval)的构建 job 一律拿不到写 Release 的权限。
+- **⚠️ 行为权衡**:`publish` 是 `needs: [release, release-macos]`,**任一平台失败 = 整个 tag 一个产物
+  都发不出去**,包括已成功的 Windows zip(旧实现里 windows job 自带 `softprops`,能独立出 Release)。
+  换来的是权限收敛与「两平台产物一次性挂进同一个 Release」。两个构建 job 的 `timeout-minutes` 对齐到 60。
+  处理办法(删 tag 重打)与「若要改成 mac 挂了 Windows 仍能发」的改法都写进了 `docs/release.md` §6.1。
+- 新增 `scripts/package-macos.sh`:macOS 打包唯一真源,与 `scripts/package.ps1` 六条硬要求逐条对齐,
+  另加 arm64-only 断言与全程 `ditto`(`cp -r` / `zip -r` 会丢符号链接与可执行位,用户解压后拿到的是
+  加载不了的死壳)。压缩用 `ditto -c -k --norsrc --noextattr`:`--sequesterRsrc` 会把资源叉/扩展属性
+  写进 `__MACOSX/`,那些条目权限恒为 `-rw-r--r--` 且同样匹配可执行位断言的筛选,会让打包**必然假失败**,
+  也会给用户塞一堆垃圾。`--version` 传空串直接 die(不回落到 CMake 版本),避免产出版本号对不上的资产。
+- **注入面加固覆盖到 `release.yml`**:`gate` 的 tag 名、两个平台 Package 步骤的版本号、`publish` 的
+  job summary 全部改经 step `env` 间接读入。tag 允许 `$`、反引号、`"`,直插 bash 双引号串会真做命令替换,
+  直插 pwsh 可闭合引号 —— 与 `ci.yml` 对 `github.ref_name` 的加固同口径,不能只加固一处。
+- `docs/release.md`:新增 §5.1 冒烟 tag(`v0.0.0-test`)端到端实跑流程、§6.1 「任一平台失败 = 整个 tag
+  无产物」的处理办法;macOS 构建段改为链到 `docs/build-macos.md`(与 Windows 侧结构对称,不再内联命令
+  导致两份说明漂移);`auval` 四字码补明与 `CMakeLists.txt` 三个构造的对应关系与同步清单。
+
 ### 兼容性
 
 - **无契约变更**:桥 #1 / 桥 #2 的 wire 协议与 `BRIDGE_CONTRACT_VERSION = "2.0"` 均零改动。
@@ -116,9 +143,9 @@
   的 gate 3e 把该行一并纳入版本一致性断言(此前只比 CMake ↔ web-preview 三处镜像)。
 - README(双语)与 `docs/build-windows.md` 由「v1 只发布 Windows」更新为双平台:系统要求、安装、从源码构建各
   拆出 Windows / macOS 小节,并新增「macOS 已知限制」章节(两份 README 的标题层级保持对等)。
-  **预编译分发仍只有 Windows**:Releases 目前只有 `*-win64.zip`(`release.yml` 只跑 `windows-2022`),
-  README 的「安装」一节据实写明 mac 侧需从源码构建、quarantine 步骤改为「若你装的是下载来的产物」条件句;
-  厂商码/插件码不可改动的警告移回 `## Install` 正文(两个平台都适用,不再只挂在 macOS 小节下)。
+  **预编译分发同步扩到 mac**:「安装」一节改成两平台资产对照表(zip 名 + zip 内容 + 同名 `.sha256`),
+  「状态」一节由「mac 只能从源码构建」改为「随 Windows zip 一同发布」;quarantine 步骤补上全局路径
+  需 `sudo`、家目录不需要的区别;厂商码/插件码不可改动的警告仍在 `## Install` 正文(两个平台都适用)。
 - `THIRD-PARTY-NOTICES.md`:补平台归属 —— mbedtls / vcpkg zlib / WebView2 SDK 三项标注**仅 Windows 构建**
   链接;macOS 闭包改为**差集派生**:「上表全部条目 − 标注『仅 Windows 构建』的三项」,不再正向枚举
   (正向清单会漏掉同样被编进 mac `.vst3` / `.component` 的四份 OFL-1.1 字体子集与 AGPL 的 JUCE JS helper ——
