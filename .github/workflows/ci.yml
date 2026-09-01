@@ -331,6 +331,13 @@ jobs:
           mkdir -p "$HOME/Library/Audio/Plug-Ins/Components"
           ditto "$AU_PATH" "$HOME/Library/Audio/Plug-Ins/Components/$(basename "$AU_PATH")"
           killall -9 AudioComponentRegistrar 2>/dev/null || true
+          # 注册器被 -9 后由 launchd 按需重启并重新扫描 Components/,扫描完成前 auval 会报
+          # 「找不到组件」。轮询到 auval -a 能列出本组件为止,最多 30s —— 否则这一步是偶发红灯
+          # (采纳 #21 claude-review:发版侧 publish 双平台强依赖,一次抖动 = 整个 tag 无产物)。
+          for i in $(seq 1 30); do
+            if auval -a 2>/dev/null | grep -q "$code"; then break; fi
+            sleep 1
+          done
           echo "::group::auval -v $au_type $code $mfr"
           auval -v "$au_type" "$code" "$mfr" 2>&1 | tee auval.log || true
           echo "::endgroup::"
