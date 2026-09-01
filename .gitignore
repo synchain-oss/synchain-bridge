@@ -1,4 +1,6 @@
 build/
+# 并行 agent 按 CLAUDE.md §2 各用 -BuildDir build-<名>,这些目录同样绝不入库
+build-*/
 dist/
 out/
 .vs/

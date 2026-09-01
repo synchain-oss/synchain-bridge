@@ -48,14 +48,16 @@ jobs:
           # env 间接读入已经堵死了「tag 被当代码求值」,这一条再把奇怪字符挡在链路入口外:
           # 这个值会流进 outputs.version → 两个平台的打包脚本 → zip / .sha256 / INSTALL.txt 的文件名与正文,
           # 与其让 'v1.5.0$(...)' 变成一个畸形资产名,不如在 gate 就红。
-          if ($tag -notmatch '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z.-]*)?$') {
+          # -c* = 大小写敏感:pwsh 默认不敏感,'V1.5.0' 会静默走通并让 INSTALL.txt 里的
+          # 源码 URL(tree/v1.5.0)404 —— GPLv3 对应源声明正靠该链接兑现(采纳 #21 review)。
+          if ($tag -cnotmatch '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z.-]*)?$') {
             Write-Error "tag '$tag' is not vX.Y.Z[-prerelease]"; exit 1
           }
-          $want = $tag -replace '^v',''
+          $want = $tag -creplace '^v',''
           $line = Select-String -Path CMakeLists.txt -Pattern 'project\s*\(\s*\S+\s+VERSION\s+([0-9]+\.[0-9]+\.[0-9]+)'
           if (-not $line) { Write-Error "cannot parse VERSION from CMakeLists.txt"; exit 1 }
           $cmake = $line.Matches[0].Groups[1].Value
-          if ($want -match '-test$') {
+          if ($want -cmatch '-test$') {
             # 冒烟测试 tag(v0.0.0-test):非真实发布,仅端到端验证触发+构建+打包+Release 全链路,
             # 跳过严格版本相等(其版本号有意不同于 CMake VERSION);产物恒为 draft,验完即删。
             Write-Host "::warning::test tag '$tag' bypasses strict version gate (draft-only smoke test)"
@@ -343,6 +345,13 @@ jobs:
           mkdir -p "$HOME/Library/Audio/Plug-Ins/Components"
           ditto "$AU_PATH" "$HOME/Library/Audio/Plug-Ins/Components/$(basename "$AU_PATH")"
           killall -9 AudioComponentRegistrar 2>/dev/null || true
+          # 注册器被 -9 后由 launchd 按需重启并重新扫描 Components/,扫描完成前 auval 会报
+          # 「找不到组件」。轮询到 auval -a 能列出本组件为止,最多 30s —— 否则是偶发红灯,
+          # 而 publish 双平台强依赖,一次抖动 = 整个 tag 无产物(采纳 #21 review)。
+          for i in $(seq 1 30); do
+            if auval -a 2>/dev/null | grep -q "$code"; then break; fi
+            sleep 1
+          done
           echo "::group::auval -v $au_type $code $mfr"
           auval -v "$au_type" "$code" "$mfr" 2>&1 | tee auval.log || true
           echo "::endgroup::"
@@ -409,7 +418,7 @@ jobs:
   publish:
     name: publish
     runs-on: ubuntu-latest
-    needs: [release, release-macos]
+    needs: [gate, release, release-macos]   # gate 在列才能读 needs.gate.outputs.version(needs outputs 不传递)
     timeout-minutes: 10
     permissions:
       contents: write                   # 唯一需要写 Release 的地方,权限只放这一个 job
@@ -423,6 +432,8 @@ jobs:
 
       - name: Flatten & verify checksums
         shell: bash
+        env:
+          GATE_VERSION: ${{ needs.gate.outputs.version }}
         run: |
           set -euo pipefail
           mkdir -p dist
@@ -437,6 +448,10 @@ jobs:
           # 跨 job 复验:构建 job 算出的哈希与 publish 实际下载到的字节必须对得上,
           # 否则说明 artifact 上传/下载路径上出了问题,绝不能挂到 Release 上。
           sha256sum -c ./*.sha256
+          # 资产名必须带本次 tag 的版本号:sha256 只证明字节一致,不证明版本对得上(采纳 #21 review)
+          for f in *.zip; do
+            case "$f" in *"v${GATE_VERSION}"*) ;; *) echo "::error::asset '$f' does not carry version v${GATE_VERSION}"; exit 1 ;; esac
+          done
           ls -l
 
       # tag 名同样经 step env 间接读入:直插 bash 双引号串时 v1.4.0$(...) 形态的 tag 会真做命令替换

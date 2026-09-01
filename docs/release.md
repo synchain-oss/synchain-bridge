@@ -2,7 +2,7 @@
 
 > 发布由 `push: tags: ['v*']` 触发 [.github/workflows/release.yml](../.github/workflows/release.yml)，全自动完成「版本一致性门禁 → 两平台构建 → pluginval / auval → 打包 zip/sha256 → 草稿 Release」。发版者在本地只需两步：**改版本号 + 打 tag**。
 >
-> 版本号唯一真源 = 顶层 `CMakeLists.txt` 的 `project(... VERSION)`；tag 格式 `vX.Y.Z`（去掉旧 `vst-` 前缀）。首个公开 tag = `v1.4.0`。
+> 版本号唯一真源 = 顶层 `CMakeLists.txt` 的 `project(... VERSION)`；tag 格式 `vX.Y.Z`（去掉旧 `vst-` 前缀）。首个公开 tag = `v1.4.0`（历史事实；**打 tag 前先读 CMake 当前 VERSION**——版本不相等会在 `gate` 直接红）。
 
 ## 0. release.yml 做什么
 
@@ -105,8 +105,9 @@ bash scripts/package-macos.sh --dry-run
 ## 5. 打 tag 触发 release.yml
 
 ```powershell
-git tag v1.4.0
-git push origin v1.4.0
+# <X.Y.Z> = CMakeLists.txt 当前 project(... VERSION)——两者不相等 gate 必红
+git tag v<X.Y.Z>
+git push origin v<X.Y.Z>
 ```
 
 触发后：`gate` 校验版本 → `release` / `release-macos` 并行构建、验证、打包 → `publish` 复验哈希并建 **draft** Release。到 GitHub Releases 页面把草稿转正式即可。

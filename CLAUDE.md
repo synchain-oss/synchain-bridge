@@ -87,6 +87,6 @@ Bridge 特有:PCM 发送由后台发送线程经 SPSC ring 转投(移出音频�
 
 - 抽取为公开仓库后 **GitHub Releases 才是真正公开可下载的渠道**(private 仓的 Release 附件匿名下载走不通)。
 - 版本号真源 = 顶层 `CMakeLists.txt` 的 `project(... VERSION)`;网页侧(闭源仓库)存在一份下游版本镜像,发版后必须同步。
-- tag 格式 `vX.Y.Z`(去掉 `vst-` 前缀);首个公开 tag = `v1.4.0`(U6)。`*-test` 结尾的冒烟 tag 跳过严格版本相等、产物恒为 draft,改过发版链路后先用它端到端实跑(`docs/release.md` §5.1)。
+- tag 格式 `vX.Y.Z`(去掉 `vst-` 前缀);首个公开 tag = `v1.4.0`(U6,历史事实——实际打 tag 以 CMake 当前 VERSION 为准,gate 强制相等)。`*-test` 结尾的冒烟 tag 跳过严格版本相等、产物恒为 draft,改过发版链路后先用它端到端实跑(`docs/release.md` §5.1)。
 - Release 资产两个平台各一个,均附同名 `.sha256`:`SynchainBridge-VST3-v<版本>-win64.zip`(VST3)与 `SynchainBridge-VST3-AU-v<版本>-macos-arm64.zip`(VST3 + AU,arm64-only,不签名不公证)。打包唯一真源 = `scripts/package.ps1` / `scripts/package-macos.sh`,绝不在 workflow 里内联打包命令。
 - R2 固定 key 覆盖上传是否保留由 08 文档决策;本仓不默认启用。
