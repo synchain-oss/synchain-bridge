@@ -225,10 +225,17 @@ function Test-Version {
         $ok = $false; $detail = 'CMakeLists.txt 不存在'
     } else {
         $cmakeText = Get-Content -LiteralPath $cmakePath -Raw
-        if ($cmakeText -match 'project\s*\(\s*\S+\s+VERSION\s+([0-9]+\.[0-9]+\.[0-9]+)') {
-            $src = $Matches[1]
-        } else {
+        # 真源取值先剔 CMake 行注释:注释里留着旧版本的 `project(... VERSION x.y.z)`(说明、示例、被注掉的
+        # 旧行)会被 -match 先命中,于是拿一个陈旧版本当真源,再拿它去比镜像 —— 本 gate 会全绿地比错。
+        # 剔完再断言「恰好一处」:多于一处说明真源本身有歧义,报错比静默取第一处安全。
+        $cmakeCode = (($cmakeText -split "`r?`n") -replace '#.*$', '') -join "`n"
+        $vm = [regex]::Matches($cmakeCode, 'project\s*\(\s*\S+\s+VERSION\s+([0-9]+\.[0-9]+\.[0-9]+)')
+        if ($vm.Count -eq 1) {
+            $src = $vm[0].Groups[1].Value
+        } elseif ($vm.Count -eq 0) {
             $ok = $false; $detail = 'CMakeLists.txt 未找到 project(... VERSION x.y.z)'
+        } else {
+            $ok = $false; $detail = 'CMakeLists.txt 有 ' + $vm.Count + ' 处 project(... VERSION),真源有歧义'
         }
     }
     if ($ok) {

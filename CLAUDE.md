@@ -43,12 +43,12 @@
 
 ## 4. 各 Workflow 触发范围一览
 
-- `build-vst3`(job `build-and-validate` = windows-2022;job `build-and-validate-macos` = macos-15,VST3 + AU,arm64-only)/ `format`(job `clang-format`)/ `branch-gate`:`pull_request → dev` + `push → dev, 'feature/**'`。
+- `ci`(job `build-and-validate` = windows-2022;job `build-and-validate-macos` = macos-15,VST3 + AU,arm64-only)/ `format`(job `clang-format`)/ `branch-gate`:`pull_request → dev` + `push → dev, 'feature/**'`。
 - `compliance`(gitleaks + reuse lint):同触发面,无 secrets,fork PR 同样跑。
 - `claude-review`:所有 base 分支、仅 same-repo(J31);`deepseek-review` / `pr-agent` 默认 disable。
 - `release`:push tags `v*` 触发草稿 Release(版本一致性门禁 + pluginval + zip/sha256)。
 - `review-dispatch`:维护者评论 `/review` 显式触发(fork PR 唯一 AI 审查通道)。
-- 成本纪律:runner 就低不就高(V-4 确认前一律 `ubuntu-latest`)、按量计费 bot 克制使用。**例外(待用户拍板)**:`build-and-validate-macos` 与 `release-macos` 必须跑 GitHub 托管 macOS runner(按 **10 倍分钟数**计费),前者当前继承整个 `build-vst3` 触发面、全开;若要收敛,给 job 加 label/事件闸门是最小改动。
+- 成本纪律:runner 就低不就高(V-4 确认前一律 `ubuntu-latest`)、按量计费 bot 克制使用。**例外(待用户拍板)**:`build-and-validate-macos` 必须跑 GitHub 托管 macOS runner(按 **10 倍分钟数**计费),且当前继承整个 `ci` 工作流的触发面、全开;若要收敛,给 job 加 label/事件闸门是最小改动。
 
 ## 5. 协议变更规范
 

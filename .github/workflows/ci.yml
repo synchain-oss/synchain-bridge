@@ -248,9 +248,9 @@ jobs:
           retention-days: 7
 
       # 6) 定位产物 + 架构断言:必须是 arm64 单架构(U13 决定 v1 不出 universal/x86_64)。
-      #    数量断言与 scripts/package-macos.sh 同口径(必须恰好 1 个),CI 绿即代表打包脚本
-      #    的 require_single_bundle 也能过 —— 「CI 取第一个 / 脚本要求唯一」的口径差会让
-      #    CI 绿了发版才炸。定位一律用 `-print -quit`:`find | head -n 1` 在 pipefail 下会
+      #    数量断言写死「恰好 1 个」而不是「取第一个」:build 下真冒出第 2 个同类 bundle 说明构建
+      #    目录不干净,此时静默取第一个会让 CI 绿着把不确定的产物带下去。定位一律用
+      #    `-print -quit`:`find | head -n 1` 在 pipefail 下会
       #    因 SIGPIPE(141)被 set -e 杀掉步骤,只要 build 下出现第 2 个匹配就随机翻车。
       - name: Locate artefacts & assert arm64-only
         shell: bash
@@ -361,7 +361,9 @@ jobs:
           # 只挑 Contents/MacOS/ 下的**文件**条目:目录条目本身是 d 开头,拿它比可执行位会误报
           macho=$(unzip -Z "$MAC_ZIP" | grep -v '__MACOSX/' | grep -E '/Contents/MacOS/[^[:space:]]' || true)
           if [ -z "$macho" ]; then echo "::error::zip has no Contents/MacOS/ file entries"; exit 1; fi
-          if printf '%s\n' "$macho" | grep -v '^-rwx'; then
+          # 首字符放行 `-`(普通文件)与 `l`(符号链接):bundle 里出现指向可执行体的 symlink 时
+          # unzip -Z 打的是 `lrwxrwxrwx`,只认 `^-rwx` 会把它当成丢了可执行位而假失败。
+          if printf '%s\n' "$macho" | grep -vE '^[-l]rwx'; then
             echo "::error::zip lost the executable bit on Contents/MacOS/*"; exit 1
           fi
 
