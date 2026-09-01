@@ -56,6 +56,10 @@ regex = '''(?i)C:[\\/]+Users[\\/][A-Za-z0-9._-]+'''
 id = "personal-local-path-macos"
 description = "macOS 本机用户绝对路径不得入库(文档一律用 ~ 或 $HOME)"
 regex = '''/Users/[A-Za-z0-9._-]+/'''
+[rules.allowlist]
+# GitHub Actions macOS runner 的标准家目录(/Users/runner,公开常识,非个人信息)——
+# workflow 注释/步骤会合法提及(如解释 upload-artifact 的路径展开行为)。
+regexes = ['''/Users/runner/''']
 
 [[rules]]
 id = "personal-local-path-linux"
@@ -68,6 +72,10 @@ description = "Linux 本机用户绝对路径不得入库(文档一律用 ~ 或 
 # 改这条规则后务必用金丝雀复验它确实还会命中。
 regex = '''/home/([A-Za-z0-9._-]+)/'''
 secretGroup = 1
+[rules.allowlist]
+# GitHub Actions Linux runner 的标准家目录(/home/runner),同 macOS 侧理由。
+# secretGroup=1 下 secret 是用户名本身,故按全串锚定,防 myrunner 之类混过。
+regexes = ['''^runner$''']
 
 [[rules]]
 id = "deploy-team-preview-domain"
