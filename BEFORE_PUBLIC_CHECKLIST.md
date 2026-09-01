@@ -25,6 +25,47 @@
 ## 4. 依赖安全
 - Dependabot alerts + security updates 保持开启（现已配置）
 
-## 5. 历史清扫
+## 5. 历史清扫（⛔ 转 public 的硬门禁，**尚未完成**）
+
 - 公开前扫描 git 历史中的敏感信息（secret scanning 回溯 + gitleaks/trufflehog）
 - 确认历史中从未提交过 .env、私钥、数据库连接串等
+
+### 5.1 已知未清除项（转 public 前必须先处理）
+
+转 public 暴露的是**全部 ref 与全部历史**，不是工作树。下面三类串在工作树里已清干净，但**仍在历史里**，
+且在三个已发布 ref 的顶端（`origin/dev`、`origin/feature/extraction`、tag `v1.4.0`；`v1.4.0` 已是 HEAD 的祖先）：
+
+| 泄漏串（此处只描述形态，**真值不入库** —— 见 5.3） | 位置 | 历史命中 |
+|---|---|---|
+| 部署预览域 slug（`-<owner>-projects.<平台域>` 形态，出现在旧的 Origin 白名单规则里） | `src/VstBridgeServer.cpp`、`docs/DAW_TEST_GUIDE.md` | 15 个 commit（含首个抽取 commit `380d250`、`1ea25fc`、`cb2b46e`） |
+| 构建机的 Windows 用户目录绝对路径（含用户名，两处工具链目录） | `THIRD-PARTY-NOTICES.md`（5 行） | 同批历史，`v1.4.0` 顶端仍带 |
+| 维护者个人邮箱（非 noreply 地址） | `CLAUDE.md` | 15 个 commit（自首个抽取 commit 起） |
+
+> ⚠️ 只扫工作树会对这一层完全失明 —— 任何加了 `--exclude-dir=.git` 的 grep 断言都**不构成**历史清扫证据。
+
+### 5.2 二选一，并把决策记进 08 文档
+
+- **① 重写历史**：`git filter-repo --replace-text`（把上述三类串换成占位）重写
+  `dev` / `feature/extraction` 全历史 → 删除 `v1.4.0` 并按新 SHA 重打 → force-push →
+  **所有 worktree 必须重新 clone**（旧本地副本会把污染历史推回来）。
+- **② 不接受重写**：推迟 `v1.4.0` tag 与转 public，先在私有仓 squash 重建首 commit，再重新发首个公开 tag。
+
+### 5.3 验收断言（必须扫**历史**，不是工作树）
+
+待扫串本身**不写进仓库**（写进来就等于在公开仓复制了一份要清除的东西）。放进本地
+`.leakscan-patterns`（已在 `.gitignore` 中，一行一个 grep 模式；真值来自 08 决策文档）后执行 ——
+两条都必须**零命中**才允许转 public：
+
+```bash
+# ① 历史（唯一有效的清扫证据）
+git grep -I -n -f .leakscan-patterns $(git rev-list --all)
+
+# ② 工作树（转 public 前也要保持零命中，但不能替代 ①）
+grep -rn -f .leakscan-patterns --exclude-dir=.git .
+```
+
+`.leakscan-patterns` 至少要覆盖：部署预览域 slug、Windows 用户目录路径前缀、维护者个人邮箱与其域名、
+以及上游保留字体名的无空格拼法。
+
+> 字体那条只对文本文件有意义：`web/fonts/*.woff2` 是 brotli 压缩的，grep 不命中**不等于**
+> 字体 `name` 表已改名。二进制侧的真实断言见 `THIRD-PARTY-NOTICES.md` 的 fontTools 复核命令。

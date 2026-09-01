@@ -41,7 +41,10 @@
 
 ### 4. 浏览器打开 Creative Space 房间
 
-- 打开 Synchain 网页端（Vercel 预览或 dev 部署），**先登录**。
+- 打开 Synchain 网页端的 **dev 部署**（`https://dev.synchain.cn` / `https://dev.synchain.ca`），**先登录**。
+  > 别用预览部署：Releases 提供的是**默认构建**，其 Origin 白名单只含 `synchain.cn`/`.ca` 系域与本地回环，
+  > 预览域名一律被 4403 拒（见下方「Origin 被拒 / 连不上」）。确实要用预览域，需以
+  > `-DBRIDGE_EXTRA_ALLOWED_ORIGIN_HOSTS` 注入该域**重新构建插件**，见 [build-windows.md](build-windows.md)。
 - 进入目标项目的 **Creative Space** 房间；确认账号是该项目的**可编辑成员**。
 
 ### 5. 房间左栏「DAW 音频桥」卡开启推流

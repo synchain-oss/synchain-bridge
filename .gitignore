@@ -1,6 +1,14 @@
 build/
 dist/
+out/
+.vs/
 node_modules/
+# Python 产物：scripts/fetch_fonts.py 跑一次就会生成，且 .pyc 内嵌构建机绝对路径（co_filename）
+__pycache__/
+*.py[cod]
+.venv/
+# 转 public 前的泄漏扫描模式（BEFORE_PUBLIC_CHECKLIST.md §5.3）——真值绝不入库
+.leakscan-patterns
 *.xcodeproj/
 *.sln
 *.vcxproj*
