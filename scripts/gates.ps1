@@ -138,7 +138,10 @@ function Test-Prettier {
     return $ok
 }
 
-# ---- gate 3b:gitleaks(与 compliance.yml 同参) ----
+# ---- gate 3b:gitleaks 树扫描 + 历史扫描(与 compliance.yml 的两个 Secret scan 步骤同参) ----
+# 注意本地与 CI 的口径差:历史扫描走 `git log` 全部 ref,**含本地未推送的分支**,而 CI 只看
+# checkout 出来的那份。所以「本地红 / CI 绿」是可能的,方向是 fail-closed(本地先拦住),
+# 出现时按 BEFORE_PUBLIC_CHECKLIST.md §5 处置本地分支,不要靠 CI 绿灯放行。
 function Test-Gitleaks {
     $ok = $true
     $detail = ''
@@ -156,7 +159,7 @@ function Test-Gitleaks {
             }
         } finally { Pop-Location }
     }
-    Add-Result 'gitleaks (--no-git --redact)' ($(if ($ok) { 'PASS' } else { 'FAIL' })) $detail
+    Add-Result 'gitleaks (树扫描 + 历史扫描)' ($(if ($ok) { 'PASS' } else { 'FAIL' })) $detail
     return $ok
 }
 

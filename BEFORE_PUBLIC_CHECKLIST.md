@@ -73,6 +73,13 @@ grep -rn -f .leakscan-patterns --exclude-dir=.git .
 后续由 **`compliance` workflow 的 `Secret scan (git history)` 步骤持续看守**（`fetch-depth: 0` 全历史，
 规则见 `.gitleaks.toml` 的非密钥型自定义规则），不再依赖人工记得复扫。
 
+> ⚠️ **两者不等价，别把 CI 绿灯当成 §5.3 的替代品。** CI 历史扫描的绿灯只说明「`.gitleaks.toml` 的三条
+> 类别规则所覆盖的**形态**零命中」；§5.3 是拿**真值**逐串比对的一次性本地验收，覆盖面更窄但更确切
+> （结果已留档于此）。类别规则写不出的变体（例如换了写法的 slug、别的路径前缀）只有真值断言拦得住，
+> 反之真值断言也看不见未来新引入的其它形态——两者互补，缺一不可。
+> 另注：本地 `gates.ps1` 的历史扫描走 `git log` 全部 ref，**含本地未推送分支**，CI 只看 checkout 的那份，
+> 因此「本地红 / CI 绿」是可能的，方向是 fail-closed。
+
 > 字体那条只对文本文件有意义：`web/fonts/*.woff2` 是 brotli 压缩的，grep 不命中**不等于**
 > 字体 `name` 表已改名。二进制侧的真实断言由 `scripts/check-font-names.py` 做，同样已接进
 > `compliance` workflow 与本地 gate。
