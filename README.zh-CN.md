@@ -143,7 +143,7 @@ cmake --build build --config Release
 
 CMake 会在配置期用 `nuget` 把 `Microsoft.Web.WebView2` 拉到 `build/packages` 并链接静态 loader,无需手动装 SDK。
 
-CI(`.github/workflows/build-vst3.yml`,`windows-2022`):clone JUCE 8.0.8 → vcpkg 装 ixwebsocket → 装 WebView2 Evergreen Runtime → CMake 配置(拉 WebView2 NuGet)→ 构建 → pluginval `--skip-gui-tests`(strictness 5)。含 Editor 的全量 strictness-5 在真实 Windows 11 本地验证 —— 无桌面的 Server runner 无法托管 WebView2 编辑器。
+CI(`.github/workflows/ci.yml`,`windows-2022`):clone JUCE 8.0.8 → vcpkg 装 ixwebsocket → 装 WebView2 Evergreen Runtime → CMake 配置(拉 WebView2 NuGet)→ 构建 → pluginval `--skip-gui-tests`(strictness 5)。含 Editor 的全量 strictness-5 在真实 Windows 11 本地验证 —— 无桌面的 Server runner 无法托管 WebView2 编辑器。
 
 ### macOS
 

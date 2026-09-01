@@ -88,6 +88,9 @@
   并把四款字体的引用钉到 `google/fonts` 的固定 commit、zlib 由官网当前版许可页改为 `madler/zlib` 的 `v1.3.2`
   tag(消除 `main` / 官网页的漂移引用)。
 - `docs/DAW_TEST_GUIDE.md`:测试主步骤改为直接用 dev 部署 —— 默认构建不放行预览域,照旧写法会先撞 4403 才看到排障条。
+- `BRIDGE_CONTRACT.md` §三登记表同步(**patch 级:纯文档澄清,wire 零变化**):`VERSION` 行由 `1.4.0` 补到
+  当前真源 `1.5.0`、「产物」行登记 macOS 的 `Synchain Bridge.component`(AU)。为防这行再漂,`scripts/gates.ps1`
+  的 gate 3e 把该行一并纳入版本一致性断言(此前只比 CMake ↔ web-preview 三处镜像)。
 - README(双语)与 `docs/build-windows.md` 由「v1 只发布 Windows」更新为双平台:系统要求、安装、从源码构建各
   拆出 Windows / macOS 小节,并新增「macOS 已知限制」章节(两份 README 的标题层级保持对等)。
   **预编译分发仍只有 Windows**:Releases 目前只有 `*-win64.zip`(`release.yml` 只跑 `windows-2022`),

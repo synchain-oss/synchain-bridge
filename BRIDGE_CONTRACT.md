@@ -83,14 +83,14 @@
 |---|---|
 | PRODUCT_NAME | `Synchain Bridge` |
 | COMPANY_NAME | `Synchain` |
-| VERSION | `1.4.0`（单一真源：`CMakeLists.txt` `project(VERSION)` → `JucePlugin_VersionString`；status 上报与插件 WebView UI 统一取此宏，`BridgeApi.h` 不再手写版本常量） |
+| VERSION | `1.5.0`（单一真源：`CMakeLists.txt` `project(VERSION)` → `JucePlugin_VersionString`；status 上报与插件 WebView UI 统一取此宏，`BridgeApi.h` 不再手写版本常量） |
 | BRIDGE_CONTRACT_VERSION | `2.0`（单一真源：`BridgeApi.h` `synchain::contract::ContractVersion`；独立于插件 VERSION，semver；status 帧可选字段 `contract` 上报；变更分级见 §五） |
 | BUNDLE_ID | `com.synchain.bridge` |
 | PLUGIN_MANUFACTURER_CODE | `Snch` |
 | PLUGIN_CODE | `Snb1` |
 | 默认端口 | `9420`（可配置 1024..65535） |
 | C++ namespace | `synchain` |
-| 产物 | `Synchain Bridge.vst3` |
+| 产物 | Windows：`Synchain Bridge.vst3`；macOS：`Synchain Bridge.vst3` + `Synchain Bridge.component`（AU） |
 
 > ⚠️ 改厂商码/插件码 → 新 VST3 唯一 ID，DAW 视为**全新插件**（旧工程不自动映射）。README 需注明。
 

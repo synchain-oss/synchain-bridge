@@ -4,7 +4,7 @@
   结构同 06 §5.1,但只有一个 bundle;额外含 vcpkg ixwebsocket 预检(gate 1)、
   端口 9420 一致性检查(gate 3d:src/BridgeApi.h ↔ web/bridge.js ↔ web-preview/mock-server.mjs)与
   版本一致性检查(gate 3e:CMakeLists.txt project(VERSION) ↔ web-preview 的 mock-server.mjs /
-  package.json / package-lock.json)。
+  package.json / package-lock.json ↔ BRIDGE_CONTRACT.md §三 VERSION 行)。
   任一 gate FAIL 即以非零码退出,最后打印一张可直接粘进 PR 描述的表格。
 .EXAMPLE   pwsh scripts/gates.ps1                         # 全量(含 GUI pluginval)
 .EXAMPLE   pwsh scripts/gates.ps1 -PluginOnly             # 跳过 GUI pluginval(与 CI 等价)
@@ -211,10 +211,11 @@ function Test-Port {
     return $ok
 }
 
-# ---- gate 3e:版本一致性(CMake 真源 ↔ web-preview 的三处镜像) ----
+# ---- gate 3e:版本一致性(CMake 真源 ↔ web-preview 三处镜像 ↔ BRIDGE_CONTRACT.md §三) ----
 # CLAUDE.md §9:版本号真源 = CMakeLists.txt 的 project(... VERSION)。web-preview 的 mock server 会把
-# PLUGIN_VERSION 当作插件版本上报给网页,漂了就等于向网页谎报一个不存在的插件版本。CI 的版本门禁只在
-# 打 tag 时比 tag ↔ CMake,不覆盖这三处镜像,故在本地 gate 里断死。
+# PLUGIN_VERSION 当作插件版本上报给网页,漂了就等于向网页谎报一个不存在的插件版本。BRIDGE_CONTRACT.md
+# §三的 VERSION 行是给两端实现看的登记快照,漂了等于协议文档写错版本(实际漂过一次,见 PR #19 审查)。
+# CI 的版本门禁只在打 tag 时比 tag ↔ CMake,不覆盖这四处镜像,故在本地 gate 里断死。
 function Test-Version {
     $ok = $true
     $detail = ''
@@ -253,6 +254,9 @@ function Test-Version {
                 $j = $t | ConvertFrom-Json -AsHashtable
                 @($j['version'], $j['packages']['']['version'])
             }
+            # §三是一张 markdown 表:锚定行首竖线 + 单元格恰为 VERSION,避开同表的 BRIDGE_CONTRACT_VERSION 行
+            # (那是协议版本,独立于插件版本,不参与本 gate)。
+            'BRIDGE_CONTRACT.md'            = { param($t) if ($t -match '(?m)^\|\s*VERSION\s*\|\s*`([0-9]+\.[0-9]+\.[0-9]+)`') { $Matches[1] } }
         }
         foreach ($rel in $readers.Keys) {
             $r = Get-Mirror $rel $readers[$rel]
@@ -268,7 +272,7 @@ function Test-Version {
             $detail = '与 CMake ' + $src + ' 不一致: ' + ($bad -join ' / ')
         }
     }
-    Add-Result '版本一致性 (CMake ↔ web-preview)' ($(if ($ok) { 'PASS' } else { 'FAIL' })) $detail
+    Add-Result '版本一致性 (CMake ↔ web-preview ↔ BRIDGE_CONTRACT)' ($(if ($ok) { 'PASS' } else { 'FAIL' })) $detail
     return $ok
 }
 

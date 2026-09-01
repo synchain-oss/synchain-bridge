@@ -74,6 +74,8 @@ juce_add_plugin(SynchainBridgeVST
   PLUGIN_MANUFACTURER_CODE Snch
   PLUGIN_CODE         Snb1
   # AU 在非 Apple 平台被 JUCE 静默过滤掉（机制上是 no-op），故无需按平台分支。
+  # 该静默过滤行为按 JUCE 8.0.8（`.juce-version` 当前钉的版本）实证，并非 JUCE 的书面约定；
+  # 升 JUCE 版本时需在 Windows 侧重验一次「带 AU 也不影响 VST3 产物」（见 PR #19 审查）。
   FORMATS             VST3 AU
   PRODUCT_NAME        "Synchain Bridge"
 
@@ -119,9 +121,10 @@ juce_add_binary_data(SynchainBridgeWebAssets SOURCES
 # Windows: vcpkg x64-windows-static（全静态）。macOS: FetchContent，tag 钉死，不引入包管理器。
 
 if(APPLE)
-  # 与 Windows 侧 vcpkg x64-windows-static 实际安装的 ixwebsocket 版本对齐（同为 12.0.1）：
-  # 两平台跑同一个 WebSocket 实现的同一个版本，permessage-deflate 协商 / close code /
-  # handshake header 解析这些 wire 层行为才是单一契约（CLAUDE.md §5 §7）。
+  # 版本号对齐 Windows 侧 vcpkg port 实际安装的 ixwebsocket 12.0.1：permessage-deflate 协商 /
+  # close code / handshake header 解析这些 wire 层行为跨平台不漂移，才谈得上单一契约（CLAUDE.md §5 §7）。
+  # 注意口径是「版本号对齐」而非字节级同源：vcpkg port 可能带 vcpkg 侧补丁，这里 FetchContent 拉的是
+  # 上游裸 tag。两侧真出现行为差异时以本注释为排查起点（见 PR #19 审查）。
   set(IXWEBSOCKET_TAG "v12.0.1" CACHE STRING "IXWebSocket pinned git tag")
   # 桥 #2 只在 127.0.0.1 上服务明文 ws://（见 VstBridgeServer::start），无 TLS 需求；
   # 关 TLS 即不需要 mbedtls/Security.framework。CMP0077=NEW 下 set 可压过 option，CACHE FORCE 双保险。

@@ -143,7 +143,7 @@ cmake --build build --config Release
 
 At configure time CMake uses `nuget` to fetch `Microsoft.Web.WebView2` into `build/packages` and links the static loader — no manual SDK install needed.
 
-CI (`.github/workflows/build-vst3.yml`, `windows-2022`) clones JUCE 8.0.8, installs ixwebsocket via vcpkg, installs the WebView2 Evergreen runtime, configures, builds, and runs pluginval `--skip-gui-tests` (strictness 5). The full strictness-5 run including the WebView2 editor is validated locally on real Windows 11 — a headless server runner cannot host the editor.
+CI (`.github/workflows/ci.yml`, `windows-2022`) clones JUCE 8.0.8, installs ixwebsocket via vcpkg, installs the WebView2 Evergreen runtime, configures, builds, and runs pluginval `--skip-gui-tests` (strictness 5). The full strictness-5 run including the WebView2 editor is validated locally on real Windows 11 — a headless server runner cannot host the editor.
 
 ### macOS
 
