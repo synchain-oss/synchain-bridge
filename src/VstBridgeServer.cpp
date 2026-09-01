@@ -4,9 +4,9 @@
 
 #include "BridgeApi.h"
 #include "BridgeOriginConfig.h" // CMake 生成：仅在配置期注入了额外来源时定义 BRIDGE_EXTRA_ALLOWED_ORIGIN_HOSTS
+#include "OriginAllowlist.h" // 归一化 / 模式可用性 / 模式匹配（纯 std，自测覆盖见 tests/）
 #include "VstBridgeServer.h"
 #include "WebSocketProtocol.h"
-#include <cctype> // std::tolower / std::isspace / std::isalpha
 #include <cstring> // std::memcpy
 #include <vector>
 
@@ -15,43 +15,7 @@ namespace synchain
 
 namespace
 {
-// scheme / host 归一化：两者大小写不敏感，统一转小写防 SYNCHAIN.CN 之类绕过。
-std::string toLowerAscii(std::string v)
-{
-    for (auto& c : v)
-        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-    return v;
-}
-
 #ifdef BRIDGE_EXTRA_ALLOWED_ORIGIN_HOSTS
-// 注入模式的可用性检查（fail-closed）。仅「非空 + 至多一个 `*`」不够：字面量全是标点的模式
-// 会等效于开门 —— 例如 `*.` 的前缀空、后缀 `.`，任何以 `.` 结尾的 host 都命中；`-*` / `*-`
-// 只需 host 以 `-` 开头/结尾。故要求模式带**真实域名锚点**：去掉 `*` 后剩下的字面量必须含
-// `.`，且最后一个 `.` 之后是一段纯字母、长度 ≥2 的 TLD（`*` 落在 TLD 位也因此被拒）。
-// 另外拒绝以 `.` 结尾的模式：host 归一化会剥掉 FQDN 尾点，带尾点的模式永远匹配不上。
-bool isUsableHostPattern(const std::string& pattern)
-{
-    if (pattern.empty() || pattern.back() == '.')
-        return false;
-
-    std::string literal;
-    for (const char c : pattern)
-        if (c != '*')
-            literal.push_back(c);
-
-    const auto dot = literal.rfind('.');
-    if (dot == std::string::npos)
-        return false; // 没有点 = 没有域名锚点
-
-    const std::size_t tldLen = literal.size() - dot - 1;
-    if (tldLen < 2)
-        return false;
-    for (std::size_t i = dot + 1; i < literal.size(); ++i)
-        if (std::isalpha(static_cast<unsigned char>(literal[i])) == 0)
-            return false; // TLD 段必须是纯字母
-    return true;
-}
-
 // 构建期注入的额外 host 模式：编译期是一个逗号分隔的字符串常量，运行期拆一次。
 // 拆分结果放函数内 static（C++11 magic static，线程安全初始化）——握手每次都会调用，
 // 避免重复解析/分配。**本目标依赖 MSVC 默认开启的 /Zc:threadSafeInit，禁止为本目标关闭**：
@@ -60,63 +24,8 @@ bool isUsableHostPattern(const std::string& pattern)
 // 本函数只在 WebSocket 握手线程调用，不在音频线程。
 const std::vector<std::string>& extraAllowedHostPatterns()
 {
-    static const std::vector<std::string> patterns = [] {
-        const std::string raw = BRIDGE_EXTRA_ALLOWED_ORIGIN_HOSTS;
-        const auto trim = [](const std::string& v) {
-            const auto isSpace = [](char ch) { return std::isspace(static_cast<unsigned char>(ch)) != 0; };
-            std::size_t b = 0;
-            while (b < v.size() && isSpace(v[b]))
-                ++b;
-            std::size_t e = v.size();
-            while (e > b && isSpace(v[e - 1]))
-                --e;
-            return v.substr(b, e - b);
-        };
-
-        std::vector<std::string> out;
-        for (std::size_t start = 0; start <= raw.size();)
-        {
-            const auto comma = raw.find(',', start);
-            const auto end = (comma == std::string::npos) ? raw.size() : comma;
-            const std::string item = trim(raw.substr(start, end - start));
-            start = end + 1;
-
-            if (item.empty())
-                continue; // 空段（尾逗号 / 连续逗号）直接丢弃
-            if (item.find('*') != item.rfind('*'))
-                continue; // 多于一个通配段：不在约定内，fail-closed 丢弃
-            if (!isUsableHostPattern(item))
-                continue; // 无域名锚点的模式（`*` / `*.` / `-*` …）等于关掉防护，fail-closed 丢弃
-            out.push_back(toLowerAscii(item)); // host 侧已小写，模式一并归一
-        }
-        return out;
-    }();
+    static const std::vector<std::string> patterns = origin::parseHostPatterns(BRIDGE_EXTRA_ALLOWED_ORIGIN_HOSTS);
     return patterns;
-}
-
-// 单个模式与（已小写归一的）host 匹配：无 `*` 时精确相等；含一个 `*` 时拆成前缀 + 后缀，
-// 要求 host 长于「前缀+后缀」之和（即通配段非空、前后缀不重叠）后再分别夹逼。
-// `*` 只匹配**单个 DNS label**：通配区内不得含 `.`。否则 `a-*-b.example.app` 会把
-// `a-x.evil.example.com-b.example.app` 之类的三方子域一并放行，而文档写的是「通配段」。
-bool hostMatchesPattern(const std::string& host, const std::string& pattern)
-{
-    const auto star = pattern.find('*');
-    if (star == std::string::npos)
-        return host == pattern;
-
-    const std::string pre = pattern.substr(0, star);
-    const std::string suf = pattern.substr(star + 1);
-    const auto startsWith = [](const std::string& v, const std::string& p) {
-        return v.size() >= p.size() && v.compare(0, p.size(), p) == 0;
-    };
-    const auto endsWith = [](const std::string& v, const std::string& t) {
-        return v.size() >= t.size() && v.compare(v.size() - t.size(), t.size(), t) == 0;
-    };
-    if (host.size() <= pre.size() + suf.size() || !startsWith(host, pre) || !endsWith(host, suf))
-        return false;
-
-    const std::string wildcard = host.substr(pre.size(), host.size() - pre.size() - suf.size());
-    return wildcard.find('.') == std::string::npos; // 通配段不得跨 label
 }
 #endif // BRIDGE_EXTRA_ALLOWED_ORIGIN_HOSTS
 
@@ -128,8 +37,9 @@ bool hostMatchesPattern(const std::string& host, const std::string& pattern)
 //   -DBRIDGE_EXTRA_ALLOWED_ORIGIN_HOSTS="<host 模式列表>"
 // 才会定义同名字符串宏并参与匹配；**默认构建不含任何额外来源**，即只有上面的默认白名单。
 // 注入值是逗号分隔的 host 模式，每个至多一个 `*` 通配段（虚构示例：example-*-team.example.app），
-// 通配段须非空且**不跨 `.`**（只匹配单个 DNS label），模式本身须带真实域名锚点（见
-// isUsableHostPattern）；额外来源同样受下面「非 https 一律拒」的早退约束。
+// 通配段须非空、**不跨 `.`**（只匹配单个 DNS label）且落在最左 label 内，模式本身须带 ≥2 段的
+// 真实域名锚点（见 OriginAllowlist.h 的 isUsableHostPattern —— `*.com` / `*example.app` 一律拒）；
+// 额外来源同样受下面「非 https 一律拒」的早退约束。
 // 明确【拒绝】：非 https 远程、以及未经注入的一切其它来源（含任意第三方部署域）。
 // 原生/桌面客户端不带 Origin 头（空串）→ 放行；但【不放行字面量 "null"】——沙箱
 // iframe / opaque-origin 文档握手会带 Origin: null，放行它会重开 CSWSH（攻击页可用
@@ -160,14 +70,10 @@ bool isAllowedOrigin(const std::string& origin)
         host = (colon == std::string::npos) ? s : s.substr(0, colon);
     }
 
-    scheme = toLowerAscii(scheme); // scheme/host 大小写不敏感，归一化防 SYNCHAIN.CN 之类绕过
-    host = toLowerAscii(host);
-
-    // FQDN 尾点归一：浏览器对 `https://synchain.cn.` 会原样发出带尾点的 Origin。
-    // 剥掉尾点后与白名单同形比较——既让合法域的尾点写法不被误拒，也堵掉「尾点形式」
-    // 撞上某条宽模式（如 `*.`）的绕过面。
-    while (host.size() > 1 && host.back() == '.')
-        host.pop_back();
+    // scheme/host 大小写不敏感，归一化防 SYNCHAIN.CN 之类绕过；host 另剥掉 FQDN 尾点
+    // （浏览器对 `https://synchain.cn.` 会原样发出带尾点的 Origin），详见 normalizeHost。
+    scheme = origin::toLowerAscii(scheme);
+    host = origin::normalizeHost(host);
 
     // 本地开发/预览：任意 scheme/端口。
     if (host == "localhost" || host == "127.0.0.1" || host == "[::1]")
@@ -185,7 +91,7 @@ bool isAllowedOrigin(const std::string& origin)
 #ifdef BRIDGE_EXTRA_ALLOWED_ORIGIN_HOSTS
     // 构建期注入的额外来源（如部署平台预览域名）。默认构建里该宏未定义，本段不参与编译。
     for (const auto& pattern : extraAllowedHostPatterns())
-        if (hostMatchesPattern(host, pattern))
+        if (origin::hostMatchesPattern(host, pattern))
             return true;
 #endif
 
