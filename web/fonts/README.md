@@ -25,9 +25,11 @@
   - 外层：文件名 `BridgeSans.woff2` / `BridgeMono.woff2`，`@font-face` family `Bridge Sans` /
     `Bridge Mono`，`styles.css` 的字体栈同步改名；
   - 二进制内：`scripts/fetch_fonts.py` 的 `rename_font()` 下载后用 fontTools 重写 `name` 表的
-    nameID 1/3/4/6，改名后 `name` 表内不含 `Plex`（该函数带 fail-closed 断言，没改干净就不产出）。
+    nameID 1/3/4/6/16/17，改名后这些**呈现名**记录不含 `Plex`（该函数带 fail-closed 断言，
+    没改干净就不产出）。
 - **§2 署名**：`name` 表里的 nameID 0（上游版权）与 14（OFL 许可证 URL）**逐字保留**，并补齐上游
   子集缺失的 nameID 13（OFL 许可证声明）；OFL 全文另由 `scripts/package.ps1` 放进发布 zip。
+  这三条不参与上面的 RFN 断言——OFL 惯例的版权行本身就含 `with Reserved Font Name` 字样。
   上游家族、许可证与版权行见 [`THIRD-PARTY-NOTICES.md`](../../THIRD-PARTY-NOTICES.md)。
   （注：§4 是**禁止背书**条款，不是署名条款；此处早前编号写错，现更正为 §2。）
 - 另两款不受影响：**Space Grotesk 无保留字体名**；**Noto Sans SC 的保留字体名是 `Source`**，
@@ -46,11 +48,13 @@ python scripts/fetch_fonts.py <这个目录的绝对路径>
 ```
 
 改字符集：编辑脚本里的 `LATIN` / `CJK` 常量后重跑，再确认 `styles.css` 的 `@font-face` 文件名一致。
-改完复核 `name` 表已无保留字体名：
+改完复核 `name` 表已无保留字体名（同一断言已接进本地 gate 与 `compliance` workflow）：
 
 ```bash
-python -c "from fontTools.ttLib import TTFont; import glob; \
-print([(p, TTFont(p)['name'].getDebugName(1)) for p in sorted(glob.glob('web/fonts/*.woff2'))])"
+python scripts/check-font-names.py
 ```
+
+> 新增字体家族时，除了本表与 `THIRD-PARTY-NOTICES.md`，还要把它的 RFN 登记进
+> `scripts/check-font-names.py` 的 `RESERVED`——目录里出现未登记的 `.woff2` 会直接让门禁失败。
 > 注意：`Noto Sans SC` 只挂在 `--ff-sans/--ff-mono/--ff-grotesk` 三条栈的**拉丁字体之后**——
 > 拉丁字体无 CJK 字形，浏览器按栈逐字回退到 Noto，保证离线确定性渲染（不依赖宿主系统 CJK 字体）。

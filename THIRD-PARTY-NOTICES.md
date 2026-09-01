@@ -35,22 +35,25 @@
     - 外层:文件名 BridgeSans.woff2 / BridgeMono.woff2,`@font-face` family 'Bridge Sans' /
       'Bridge Mono',`web/styles.css` 字体栈与 `CMakeLists.txt` 的 BinaryData 源列表同步改名;
     - 二进制内:`scripts/fetch_fonts.py` 的 `rename_font()` 在下载后用 fontTools 重写 `name` 表的
-      nameID 1 / 3 / 4 / 6(家族名、唯一 ID、全名、PostScript 名),改名后 name 表内**不含 "Plex"**。
+      nameID 1 / 3 / 4 / 6 / 16 / 17(家族名、唯一 ID、全名、PostScript 名、排版家族与子族),
+      改名后这些**呈现名**记录内不含 "Plex"(大小写不敏感)。
     §2 要求的署名不动:nameID 0(版权行 "Copyright 2019 IBM Corp. All rights reserved." /
     "Copyright 2017 IBM Corp. All rights reserved.")与 nameID 14(OFL 许可证 URL)逐字保留,
     并补齐上游子集里缺失的 nameID 13(OFL 许可证声明);改名函数对这三条有前后比对断言。
-    上表「来源家族」列保留 IBM Plex 原名正是为此署名可追溯。
+    这三条**不参与** RFN 断言 —— OFL 惯例的版权行本身就含 "with Reserved Font Name" 字样,
+    那是署名而非违规残留。上表「来源家族」列保留 IBM Plex 原名正是为此署名可追溯。
   - **Noto Sans SC**:RFN = "Source"。分发名 NotoSansSC.woff2 / family 'Noto Sans SC' 与其 name 表
     内的家族名均不含 "Source",不触发 §3 限制,无需改名,二进制原样分发
     (注:"Noto" 为 Google 商标,非 RFN;其 nameID 0 里的 "Reserved Font Name 'Source'" 是上游版权
     声明原文,属 §2 署名,不是分发名)。
-  - **§3 结论**:四款字体**呈现给用户的主字体名**(name 表 nameID 1/4/6 + 文件名 + CSS family)
-    均不含各自上游的 RFN,OFL 1.1 §3 已满足。机器复核(勿只 grep 二进制 —— woff2 是 brotli 压缩的,
-    grep 不命中并不等于名字已清除):
+  - **§3 结论**:四款字体**呈现给用户的主字体名**(name 表 nameID 1/3/4/6/16/17 + 文件名 +
+    CSS family)均不含各自上游的 RFN,OFL 1.1 §3 已满足。机器复核(勿只 grep 二进制 —— woff2 是
+    brotli 压缩的,grep 不命中并不等于名字已清除)由 `scripts/check-font-names.py` 逐条断言,
+    并接进本地 gate 与 `compliance` workflow,不靠人工记得跑:
 
     ```bash
-    python -c "from fontTools.ttLib import TTFont; import glob; \
-    print([(p, TTFont(p)['name'].getDebugName(1)) for p in sorted(glob.glob('web/fonts/*.woff2'))])"
+    pip install fonttools brotli
+    python scripts/check-font-names.py
     ```
 
   - **§2 署名随分发**:「每份拷贝都包含上述版权声明与本许可证」的要求经三条路径满足 ——
@@ -58,5 +61,6 @@
     `scripts/package.ps1` 复制进发布 zip 根目录的 `LICENSES/` 并在打包后逐个断言存在(缺一即 throw)。
   - **条款编号更正**:OFL-1.1 的 **§4 是禁止背书条款**(不得用版权人 / 作者的名义为 Modified Version
     背书或做广告),要求随拷贝附版权声明与许可证的是 **§2**。本文件与 `web/fonts/README.md` 早前把
-    这两条编号写反(commit 838bc8c 的 message 同),现已更正。
+    这两条编号写反(本仓字体改名的 `chore(fonts)` 提交 message 同,见 CHANGELOG「[未发布] → 文档 /
+    合规」的字体条目),现已更正。
 - 字体 OFL 全文见 LICENSES/OFL-1.1.txt;各家族版权行以上表末列固定 commit 下的上游 OFL.txt 为准。

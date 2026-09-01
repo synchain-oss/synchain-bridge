@@ -113,8 +113,13 @@ def rename_font(path, family, ps_name, reserved):
         if name.getName(13, *slot) is None:
             name.setName(OFL_LICENSE_DESC, 13, *slot)
 
-    stray = sorted({r.toUnicode() for r in name.names if reserved in r.toUnicode()})
-    if stray:  # fail-closed：改名没改干净就不要产出一个仍带 RFN 的分发物
+    # fail-closed 复核：呈现名里不得残留 RFN。KEEP 三条(0/13/14)不参与——OFL 惯例的版权行
+    # 本身就写着 "with Reserved Font Name 'Plex'"，那是 §2 要求逐字保留的署名，不是违规。
+    # 大小写双侧 casefold：上游若写成 "plex"/"PLEX" 同样要命中。
+    needle = reserved.casefold()
+    stray = sorted({r.toUnicode() for r in name.names
+                    if r.nameID not in NAME_IDS_KEEP and needle in r.toUnicode().casefold()})
+    if stray:  # 改名没改干净就不要产出一个仍带 RFN 的分发物
         raise SystemExit("!! %s 的 name 表仍含保留字体名 %r: %s" % (path, reserved, stray))
     keep_after = {(r.nameID, r.platformID, r.platEncID, r.langID): r.toUnicode()
                   for r in name.names if r.nameID in NAME_IDS_KEEP}
