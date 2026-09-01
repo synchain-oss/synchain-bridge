@@ -36,6 +36,22 @@ cmake --build build --config Release
 
 产物：`build/SynchainBridgeVST_artefacts/Release/VST3/Synchain Bridge.vst3`
 
+## 可选：额外 Origin 白名单（构建期注入）
+
+WebSocket 桥的 Origin 白名单（CSWSH 防护）在源码里只含 `synchain.cn` / `synchain.ca` 系默认域与本地回环；
+**预览部署等额外来源不写进仓库**，需要时在配置期注入：
+
+```powershell
+cmake -S . -B build -G "Visual Studio 17 2022" -A x64 `
+  -DJUCE_PATH="C:/dev/JUCE" `
+  -DBRIDGE_EXTRA_ALLOWED_ORIGIN_HOSTS="example-git-*-example-team.example.app;preview.example.com"
+```
+
+- 值为 `;` 或 `,` 分隔的 **host 模式**列表；每个模式**至多一个 `*`** 通配段，通配段必须匹配到非空内容
+  （前后缀夹逼），无 `*` 时按精确 host 匹配；匹配前统一小写归一。
+- 额外来源同样**只在 https 下生效**（非 https 的远程来源一律拒），且 `*` 单独作为模式、含多个 `*` 的模式会被丢弃。
+- **不传即不定义该宏**：默认构建不放行任何额外来源。实现见 `src/VstBridgeServer.cpp` 的 `isAllowedOrigin()`。
+
 ## 关键坑（必读）
 
 ### 1. 静态 CRT 必须在 `project()` **之前**设置

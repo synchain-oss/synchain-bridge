@@ -10,7 +10,8 @@ useDefault = true
 #   paths.LICENSES/  —— 许可证全文(GPL-3.0/AGPL-3.0/OFL-1.1)的连续高熵文本段会被 high-entropy 规则误判;
 #                      这些是 GNU/SIL 官方原文,非凭据(08 §4.1 工具链约定)。
 #   regexes.synchain  —— 08 §4.3 U4 决定公开保留的 Origin 白名单常量(仅 synchain.cn/.ca 默认值;
-#                       Vercel slug 按 U4 不入库)。白名单是客户端二进制内的安全设计,非凭据。
+#                       部署平台预览域名等额外来源按 U4 经构建期注入,不入库)。
+#                       白名单是客户端二进制内的安全设计,非凭据。
 #   (文档占位凭据串:B01 扫描已核验 Bridge 源文件零命中,故本仓无需登记;如未来新增示例凭据串,在此逐条登记。)
 description = "误报逐条登记(理由见文件头注释)"
 paths = [

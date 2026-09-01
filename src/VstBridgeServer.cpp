@@ -5,21 +5,93 @@
 #include "BridgeApi.h"
 #include "VstBridgeServer.h"
 #include "WebSocketProtocol.h"
-#include <cctype> // std::tolower
+#include <cctype> // std::tolower / std::isspace
 #include <cstring> // std::memcpy
+#include <vector>
 
 namespace synchain
 {
 
 namespace
 {
+// scheme / host 归一化：两者大小写不敏感，统一转小写防 SYNCHAIN.CN 之类绕过。
+std::string toLowerAscii(std::string v)
+{
+    for (auto& c : v)
+        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return v;
+}
+
+#ifdef BRIDGE_EXTRA_ALLOWED_ORIGIN_HOSTS
+// 构建期注入的额外 host 模式：编译期是一个逗号分隔的字符串常量，运行期拆一次。
+// 拆分结果放函数内 static（C++11 起线程安全初始化）——握手每次都会调用，避免重复解析/分配。
+// 本函数只在 WebSocket 握手线程调用，不在音频线程，首次调用的一次性分配是允许的。
+const std::vector<std::string>& extraAllowedHostPatterns()
+{
+    static const std::vector<std::string> patterns = [] {
+        const std::string raw = BRIDGE_EXTRA_ALLOWED_ORIGIN_HOSTS;
+        const auto trim = [](const std::string& v) {
+            const auto isSpace = [](char ch) { return std::isspace(static_cast<unsigned char>(ch)) != 0; };
+            std::size_t b = 0;
+            while (b < v.size() && isSpace(v[b]))
+                ++b;
+            std::size_t e = v.size();
+            while (e > b && isSpace(v[e - 1]))
+                --e;
+            return v.substr(b, e - b);
+        };
+
+        std::vector<std::string> out;
+        for (std::size_t start = 0; start <= raw.size();)
+        {
+            const auto comma = raw.find(',', start);
+            const auto end = (comma == std::string::npos) ? raw.size() : comma;
+            const std::string item = trim(raw.substr(start, end - start));
+            start = end + 1;
+
+            if (item.empty())
+                continue; // 空段（尾逗号 / 连续逗号）直接丢弃
+            if (item.find('*') != item.rfind('*'))
+                continue; // 多于一个通配段：不在约定内，fail-closed 丢弃
+            if (item == "*")
+                continue; // 无任何字面量的全通配：等于关掉防护，fail-closed 丢弃
+            out.push_back(toLowerAscii(item)); // host 侧已小写，模式一并归一
+        }
+        return out;
+    }();
+    return patterns;
+}
+
+// 单个模式与（已小写归一的）host 匹配：无 `*` 时精确相等；含一个 `*` 时拆成前缀 + 后缀，
+// 要求 host 长于「前缀+后缀」之和（即通配段非空、前后缀不重叠）后再分别夹逼。
+bool hostMatchesPattern(const std::string& host, const std::string& pattern)
+{
+    const auto star = pattern.find('*');
+    if (star == std::string::npos)
+        return host == pattern;
+
+    const std::string pre = pattern.substr(0, star);
+    const std::string suf = pattern.substr(star + 1);
+    const auto startsWith = [](const std::string& v, const std::string& p) {
+        return v.size() >= p.size() && v.compare(0, p.size(), p) == 0;
+    };
+    const auto endsWith = [](const std::string& v, const std::string& t) {
+        return v.size() >= t.size() && v.compare(v.size() - t.size(), t.size(), t) == 0;
+    };
+    return host.size() > pre.size() + suf.size() && startsWith(host, pre) && endsWith(host, suf);
+}
+#endif // BRIDGE_EXTRA_ALLOWED_ORIGIN_HOSTS
+
 // CSWSH 防护：只放行 Synchain 自己确切的来源，阻止用户浏览器里的任意第三方站点
-// 静默连上本地端口偷 DAW 母线实时 PCM。白名单（Synchain issue 167）：
+// 静默连上本地端口偷 DAW 母线实时 PCM。仓库内的默认白名单（Synchain issue 167）：
 //   - localhost / 127.0.0.1 / [::1]（本地开发/预览，任意 scheme/端口）
 //   - https://synchain.cn|.ca 、https://www.synchain.cn|.ca 、https://dev.synchain.cn|.ca（精确 host）
-//   - https://synchain-git-<branch>-[REDACTED-TEAM].vercel.app（Vercel 预览，
-//     团队 slug 固定，攻击者无法在该 slug 下部署 → 前后缀夹逼安全）
-// 明确【拒绝】：apex vercel.app 与任意其它 *.vercel.app、非 https 远程、以及一切其它。
+// 部署平台的预览域名等**额外来源**不写进源码，改为构建期注入（决策 U4）：只有配置时传了
+//   -DBRIDGE_EXTRA_ALLOWED_ORIGIN_HOSTS="<host 模式列表>"
+// 才会定义同名字符串宏并参与匹配；**默认构建不含任何额外来源**，即只有上面的默认白名单。
+// 注入值是逗号分隔的 host 模式，每个至多一个 `*` 通配段（虚构示例：example-*-team.vercel.app），
+// 匹配要求通配段非空（前后缀夹逼）；额外来源同样受下面「非 https 一律拒」的早退约束。
+// 明确【拒绝】：非 https 远程、以及未经注入的一切其它来源（含任意第三方部署域）。
 // 原生/桌面客户端不带 Origin 头（空串）→ 放行；但【不放行字面量 "null"】——沙箱
 // iframe / opaque-origin 文档握手会带 Origin: null，放行它会重开 CSWSH（攻击页可用
 // sandbox=allow-scripts 的 iframe 驱动 ws 连本地端口）。
@@ -49,13 +121,8 @@ bool isAllowedOrigin(const std::string& origin)
         host = (colon == std::string::npos) ? s : s.substr(0, colon);
     }
 
-    const auto toLower = [](std::string v) {
-        for (auto& c : v)
-            c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-        return v;
-    };
-    scheme = toLower(scheme); // scheme/host 大小写不敏感，归一化防 SYNCHAIN.CN 之类绕过
-    host = toLower(host);
+    scheme = toLowerAscii(scheme); // scheme/host 大小写不敏感，归一化防 SYNCHAIN.CN 之类绕过
+    host = toLowerAscii(host);
 
     // 本地开发/预览：任意 scheme/端口。
     if (host == "localhost" || host == "127.0.0.1" || host == "[::1]")
@@ -70,20 +137,14 @@ bool isAllowedOrigin(const std::string& origin)
         host == "dev.synchain.cn" || host == "dev.synchain.ca")
         return true;
 
-    // Vercel 预览：synchain-git-<branch>-[REDACTED-TEAM].vercel.app。
-    // 要求 branch 段非空（host 长于前缀+后缀），排除前后缀重叠的边界串。
-    const std::string pre = "synchain-git-";
-    const std::string suf = "-[REDACTED-TEAM].vercel.app";
-    const auto startsWith = [](const std::string& v, const std::string& p) {
-        return v.size() >= p.size() && v.compare(0, p.size(), p) == 0;
-    };
-    const auto endsWith = [](const std::string& v, const std::string& t) {
-        return v.size() >= t.size() && v.compare(v.size() - t.size(), t.size(), t) == 0;
-    };
-    if (host.size() > pre.size() + suf.size() && startsWith(host, pre) && endsWith(host, suf))
-        return true;
+#ifdef BRIDGE_EXTRA_ALLOWED_ORIGIN_HOSTS
+    // 构建期注入的额外来源（如部署平台预览域名）。默认构建里该宏未定义，本段不参与编译。
+    for (const auto& pattern : extraAllowedHostPatterns())
+        if (hostMatchesPattern(host, pattern))
+            return true;
+#endif
 
-    return false; // 含 apex vercel.app 与任意其它 *.vercel.app
+    return false; // 其余一律拒（未注入时，任何第三方部署域都落到这里）
 }
 } // namespace
 

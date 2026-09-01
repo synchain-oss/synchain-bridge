@@ -64,8 +64,8 @@
 
 - **插件窗口显示英文兜底面板 / 报「无法打开此页 `https://juce.backend`」/ 看不到玻璃 UI**：v1.2.3 修复了根因——此前 Windows 未显式选 WebView2 后端，JUCE 回退到旧 IE 控件、无法加载前端；v1.2.3 起显式走 WebView2，并保留运行时探测 + 5s 加载看门狗。若面板提示缺 WebView2 运行时，点「Download WebView2 Runtime」一次性安装（本插件本就需联网使用），装好后**重新打开插件窗口**即恢复完整界面；绝大多数 Win10/11 已自带该运行时。
 - **端口占用**：插件默认 9420，被占用时自动在 **9420–9429** 逐个避让；以插件面板显示的端口为准，并在浏览器「DAW 音频桥」卡填相同端口。
-- **房间获取 token 返回 503**：多为**预览环境缺 LiveKit env**（LiveKit 密钥 / URL 未注入 Vercel 预览）。改用已配置 LiveKit 环境变量的 **dev 部署**重试。
-- **Origin 被拒 / 连不上**：WS 服务端只接受确切白名单来源（`localhost` / `127.0.0.1` / `[::1]`、`https://synchain.cn`|`.ca`、`https://dev.synchain.cn`|`.ca`、以及 `https://synchain-git-<branch>-[REDACTED-TEAM].vercel.app` 的 Vercel 预览、以及无 Origin 的原生客户端）。**不再放行任意 `*.vercel.app`**（安全收窄，见 Synchain issue 167）。不在白名单的域名打开会被 4403 拒——请用 `localhost`/`127.0.0.1` 或上述 Synchain 域访问。
+- **房间获取 token 返回 503**：多为**预览环境缺 LiveKit env**（LiveKit 密钥 / URL 未注入预览部署）。改用已配置 LiveKit 环境变量的 **dev 部署**重试。
+- **Origin 被拒 / 连不上**：WS 服务端只接受确切白名单来源（`localhost` / `127.0.0.1` / `[::1]`、`https://synchain.cn`|`.ca`、`https://www.synchain.cn`|`.ca`、`https://dev.synchain.cn`|`.ca`，以及无 Origin 的原生客户端）。**预览部署等额外来源不写进源码，由构建期注入**（配置时传 `-DBRIDGE_EXTRA_ALLOWED_ORIGIN_HOSTS`，见 [build-windows.md](build-windows.md)）——**公开仓的默认构建不放行任何额外来源**，装的若是默认构建，预览域名一律连不上（安全收窄，见 Synchain issue 167）。不在白名单的域名打开会被 4403 拒——请用 `localhost`/`127.0.0.1` 或上述 Synchain 域访问。
 - **电平不跳 / 无信号**：确认插件插在**有音频经过**的轨 / 母线上，且 DAW 正在播放；主音量滑块只影响推流副本，若为 0% 则推流静音。
 - **听不到声音但轨道已出现**：确认协作者已加入同一房间、未静音该轨；第二会话建议用不同账号 / 设备，避免同机回声抑制影响判断。
 

@@ -4,6 +4,31 @@
 >
 > 首个公开版本 = **v1.4.0**(U6)。协议类改动记录在对应版本的「契约变更」小节。
 
+## [未发布]
+
+> 以下为转 public 前的合规/安全整备,**不涉及契约变更**(wire 协议零改动),也不改版本号。
+
+### 安全
+
+- **Origin 白名单改「构建期注入」(决策 U4)**:`isAllowedOrigin()` 的默认白名单在仓库源码里只保留
+  `synchain.cn` / `synchain.ca` 系精确域与本地回环(`localhost` / `127.0.0.1` / `[::1]`);部署平台的预览域名等
+  额外来源不再硬编码进源码,改由配置期 `-DBRIDGE_EXTRA_ALLOWED_ORIGIN_HOSTS` 注入(见 `docs/build-windows.md`)。
+  **默认构建不放行任何额外来源**,CSWSH 防护的其余语义(空 Origin 放行、拒 `null` 字面量、非 https 远程一律拒、
+  大小写归一)完全不变。
+
+### 构建
+
+- 新增 CMake cache 变量 `BRIDGE_EXTRA_ALLOWED_ORIGIN_HOSTS`(`;` 或 `,` 分隔的 host 模式,每个至多一个 `*`
+  通配段,通配段须非空)。为空(默认)时不定义同名编译宏,Windows 构建行为与既有版本一致。
+
+### 文档 / 合规
+
+- 内嵌 IBM Plex 子集字体按 OFL-1.1 §3(Reserved Font Name "Plex")改名分发:`BridgeSans.woff2` /
+  `BridgeMono.woff2`,`@font-face` family 改为 `Bridge Sans` / `Bridge Mono`(woff2 二进制与其 name 表署名不动)。
+  Space Grotesk(无 RFN)与 Noto Sans SC(RFN "Source")命名不受影响。
+- `THIRD-PARTY-NOTICES.md`:补四款字体的 RFN 逐家族核验附注;许可证「核验来源」列由本机绝对路径改为上游权威公开引用
+  (核验结论不变,仍为「已核验、无待验证」)。
+
 ## [1.4.0] — 首个公开版本
 
 **首个在 `synchain-oss/synchain-bridge` 公开发布的版本。** 插件二进制与 v1.3.1 完全兼容:厂商码/插件码(`Snch` / `Snb1`)、`BUNDLE_ID`(`com.synchain.bridge`)与 wire 协议均未变,现有 DAW 工程无需重建。

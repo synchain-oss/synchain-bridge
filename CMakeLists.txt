@@ -152,6 +152,28 @@ if(WIN32)
   )
 endif()
 
+# --- Origin allow-list: extra hosts injected at build time (decision U4) ---
+# The repository source only carries the synchain.ca/.cn defaults (see isAllowedOrigin()
+# in src/VstBridgeServer.cpp). Deployment-platform preview domains and any other extra
+# origins are NOT stored in the repo: pass them at configure time instead.
+#
+#   cmake -S . -B build -DBRIDGE_EXTRA_ALLOWED_ORIGIN_HOSTS="example-git-*-example-team.vercel.app;preview.example.com"
+#
+# ';' or ',' separated host patterns, at most ONE '*' wildcard segment per pattern
+# (the wildcard must expand to a non-empty segment; https is still required). Empty by
+# default -> the macro is NOT defined -> a default build allows no extra origin at all.
+set(BRIDGE_EXTRA_ALLOWED_ORIGIN_HOSTS "" CACHE STRING
+  "Extra Origin host patterns to allow (';' or ',' separated; at most one '*' per pattern)")
+if(BRIDGE_EXTRA_ALLOWED_ORIGIN_HOSTS)
+  # CMake lists are ';' separated and the ';' does not survive a command line / generator
+  # round-trip inside a string define — normalise to ',' first, which is what the C++ side splits on.
+  string(REPLACE ";" "," _bridge_extra_origin_hosts "${BRIDGE_EXTRA_ALLOWED_ORIGIN_HOSTS}")
+  target_compile_definitions(SynchainBridgeVST PRIVATE
+    BRIDGE_EXTRA_ALLOWED_ORIGIN_HOSTS="${_bridge_extra_origin_hosts}")
+  # Deliberately not echoing the values: build logs of a public CI should not carry them.
+  message(STATUS "Origin allow-list: extra host patterns injected at build time")
+endif()
+
 # --- Platform-Specific ---
 if(WIN32)
   message(STATUS "Building Synchain VST3 for Windows (static, WebView2)")
