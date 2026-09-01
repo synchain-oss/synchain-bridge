@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# SPDX-FileCopyrightText: 2026 Synchain <contact@synchain.ca>
+# Copyright (c) 2026 Synchain
+#
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 # scripts/package-macos.sh —— macOS 打包唯一真源(本地发版与 CI 共用同一脚本)。
@@ -38,13 +39,14 @@ USAGE
 }
 
 VERSION=""
+VERSION_GIVEN=0
 BUILD_DIR="build"
 OUT_DIR="dist"
 DRY_RUN=0
 
 while [ $# -gt 0 ]; do
     case "$1" in
-        --version)   [ $# -ge 2 ] || die "--version 缺少取值";   VERSION="$2";   shift 2 ;;
+        --version)   [ $# -ge 2 ] || die "--version 缺少取值";   VERSION="$2"; VERSION_GIVEN=1; shift 2 ;;
         --build-dir) [ $# -ge 2 ] || die "--build-dir 缺少取值"; BUILD_DIR="$2"; shift 2 ;;
         --out-dir)   [ $# -ge 2 ] || die "--out-dir 缺少取值";   OUT_DIR="$2";   shift 2 ;;
         --dry-run)   DRY_RUN=1; shift ;;
@@ -66,8 +68,15 @@ resolve_repo_path() {
 BUILD_DIR="$(resolve_repo_path "$BUILD_DIR")"
 OUT_DIR="$(resolve_repo_path "$OUT_DIR")"
 
-# 1) Version:参数优先;留空则从 CMakeLists.txt(版本唯一真源)读。
+# 1) Version:参数优先;**没传** --version 才从 CMakeLists.txt(版本唯一真源)回落。
+#    传了 --version "" 属于调用方算版本失败(例如 CI 的 gate 没写出 outputs.version),
+#    此时静默回落会产出版本号对不上的 zip —— 冒烟 tag v0.0.0-test 会产出名为
+#    v1.5.0 的资产,而 sha256 复验照样过,错误一路带到 draft Release 才可能被人眼发现。
+#    故「未传」与「传了空串」必须区分:后者直接 die。
 #    容忍调用方直接把 tag 传进来,顺手去掉 v 前缀,免得 zip 名与源码 URL 出现 vv1.2.3。
+if [ "$VERSION_GIVEN" -eq 1 ] && [ -z "$VERSION" ]; then
+    die "--version 传入空串:调用方未算出版本号(不回落到 CMakeLists.txt,避免产出版本对不上的资产)"
+fi
 if [ -z "$VERSION" ]; then
     VERSION="$(sed -nE 's/.*project[[:space:]]*\([[:space:]]*[^[:space:]]+[[:space:]]+VERSION[[:space:]]+([0-9]+\.[0-9]+\.[0-9]+).*/\1/p' \
         "$REPO_ROOT/CMakeLists.txt" | head -n 1)"
@@ -170,23 +179,32 @@ Synchain Bridge for macOS —— 安装说明
 
 安装路径
 --------
-把压缩包内的两个 bundle 整体复制到(全局安装,推荐):
+把压缩包内的两个 bundle 整体复制到(全局安装,所有用户可见):
 
   VST3:  /Library/Audio/Plug-Ins/VST3/$VST3_NAME
   AU:    /Library/Audio/Plug-Ins/Components/$AU_NAME
 
-只给当前用户安装则换成家目录下的同名位置:~/Library/Audio/Plug-Ins/VST3/
-与 ~/Library/Audio/Plug-Ins/Components/。
+/Library 下这两个目录属 root:admin,复制进去需要管理员授权(访达会弹密码框;
+命令行则要 sudo)。只装给当前用户就换成家目录下的同名位置:
+
+  VST3:  ~/Library/Audio/Plug-Ins/VST3/$VST3_NAME
+  AU:    ~/Library/Audio/Plug-Ins/Components/$AU_NAME
+
+家目录这条路径归你自己所有,复制与下面的 xattr 都不需要 sudo,宿主同样能扫到。
 
 首次加载:去掉隔离属性(U13:v1 不签名、不公证)
 --------------------------------------------
 本插件未签名也未公证。浏览器下载的压缩包会被打上 com.apple.quarantine,
-宿主会以「无法验证开发者」为由拒绝加载。安装到全局路径后,在「终端」各执行一条:
+宿主会以「无法验证开发者」为由拒绝加载。安装到**全局**路径后,在「终端」各执行一条
+(路径属 root,不加 sudo 会得到 Operation not permitted):
 
-  xattr -dr com.apple.quarantine "/Library/Audio/Plug-Ins/VST3/$VST3_NAME"
-  xattr -dr com.apple.quarantine "/Library/Audio/Plug-Ins/Components/$AU_NAME"
+  sudo xattr -dr com.apple.quarantine "/Library/Audio/Plug-Ins/VST3/$VST3_NAME"
+  sudo xattr -dr com.apple.quarantine "/Library/Audio/Plug-Ins/Components/$AU_NAME"
 
-装在家目录则把上面两条路径换成 ~/Library/... 下的对应位置。
+装在**家目录**则去掉 sudo、把路径换成 ~/Library/... 下的对应位置:
+
+  xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/VST3/"$VST3_NAME"
+  xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/Components/"$AU_NAME"
 
 AU 没出现在宿主的插件列表里
 ---------------------------
@@ -206,9 +224,15 @@ Complete corresponding source for this exact build: https://github.com/synchain-
 EOF
 
 # 8) 压缩:ditto -c -k(不加 --keepParent,staging 内容平铺到 zip 根,
-#    与 package.ps1 的 includeBaseDirectory=false 一致);--sequesterRsrc 收拢资源分叉。
+#    与 package.ps1 的 includeBaseDirectory=false 一致)。
+#    --norsrc --noextattr:插件 bundle 不需要资源叉。曾用的 --sequesterRsrc 的定义就是
+#    把资源叉/扩展属性收进 zip 的 __MACOSX/ 目录 —— 只要产物带任何 xattr
+#    (com.apple.provenance / FinderInfo 等;CI 里 pluginval / auval 已 dlopen 过 bundle,
+#    必然带),zip 里就会多出 __MACOSX/<bundle>/Contents/MacOS/._<exe> 这类条目,
+#    权限恒为 -rw-r--r-- 且同样匹配下面第 9 步的可执行位筛选,断言必然假失败;
+#    发给用户的 zip 也会平白塞一堆 __MACOSX 垃圾。
 rm -f "$ZIP_PATH"
-ditto -c -k --sequesterRsrc "$STAGING" "$ZIP_PATH"
+ditto -c -k --norsrc --noextattr "$STAGING" "$ZIP_PATH"
 
 # 9) 打包后断言(硬要求 #6):层级 + 四个合规文件 + 可执行位;缺一即退出 1。
 #    前缀/全名比对用 awk 做字面匹配,避免 bundle 名里的 '.' 被当成正则通配。
@@ -223,7 +247,9 @@ for r in 'LICENSE.txt' 'THIRD-PARTY-NOTICES.md' 'LICENSES/OFL-1.1.txt' 'INSTALL.
 done
 
 # 可执行位:只挑 Contents/MacOS/ 下的**文件**条目 —— 目录条目本身是 d 开头,拿它比会误报。
-MACHO="$(unzip -Z "$ZIP_PATH" | grep -E '/Contents/MacOS/[^[:space:]]' || true)"
+# 显式排除 __MACOSX/:上面已改用 --norsrc --noextattr 从源头不产生这些条目,这里再挡一道,
+# 免得将来有人把 ditto 参数改回 --sequesterRsrc 就静默退化成必然假失败。
+MACHO="$(unzip -Z "$ZIP_PATH" | grep -v '__MACOSX/' | grep -E '/Contents/MacOS/[^[:space:]]' || true)"
 [ -n "$MACHO" ] || die "zip assertion failed: no Contents/MacOS/ file entries"
 NOT_EXEC="$(printf '%s\n' "$MACHO" | grep -v '^-rwx' || true)"
 [ -z "$NOT_EXEC" ] || die "zip assertion failed: exec bit lost on:

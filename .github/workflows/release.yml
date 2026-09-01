@@ -34,11 +34,23 @@ jobs:
       # ---- 版本一致性门禁(06 §3.8 / 08 §5.2):tag 与 CMake VERSION 不一致时 job 必须 fail ----
       # 逻辑与拆 job 前逐字相同,只是多导出一个 outputs.version 给下游两个构建 job 用;
       # pwsh 在 ubuntu-latest 上预装,不需要额外安装步骤。
+      # tag 名经 step env 间接读入,不直接插值进脚本:tag 允许 '$'、反引号、'"',
+      # 直插 pwsh 可闭合引号执行任意命令(与 ci.yml 对 ref_name 的加固同口径)。
+      # 只有有 push 权限者能打 tag,但这正是 ci.yml 里已被判为注入面的同一类风险,不能只加固一处。
       - name: Verify tag matches CMake VERSION
         id: version
         shell: pwsh
+        env:
+          REF_NAME: ${{ github.ref_name }}
         run: |
-          $tag  = "${{ github.ref_name }}"
+          $tag  = $env:REF_NAME
+          # tag 形态断言(CLAUDE.md §9 的 vX.Y.Z,可带 SemVer 预发布后缀如 -test)。
+          # env 间接读入已经堵死了「tag 被当代码求值」,这一条再把奇怪字符挡在链路入口外:
+          # 这个值会流进 outputs.version → 两个平台的打包脚本 → zip / .sha256 / INSTALL.txt 的文件名与正文,
+          # 与其让 'v1.5.0$(...)' 变成一个畸形资产名,不如在 gate 就红。
+          if ($tag -notmatch '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z.-]*)?$') {
+            Write-Error "tag '$tag' is not vX.Y.Z[-prerelease]"; exit 1
+          }
           $want = $tag -replace '^v',''
           $line = Select-String -Path CMakeLists.txt -Pattern 'project\s*\(\s*\S+\s+VERSION\s+([0-9]+\.[0-9]+\.[0-9]+)'
           if (-not $line) { Write-Error "cannot parse VERSION from CMakeLists.txt"; exit 1 }
@@ -141,9 +153,19 @@ jobs:
           Write-Host "Non-GUI strictness-5 passed; full GUI validation is a LOCAL gate."
 
       # ---- 打包:唯一真源 = scripts/package.ps1(06 §3.8 / 08 §5.2);绝不在 YAML 内联 7z 通配 ----
+      # 版本号取 gate 算好的 outputs.version(已去 v 前缀),两平台同一个值;
+      # 经 step env 间接读入而不是直插 pwsh —— tag 允许 '$'、反引号、'"'。
+      # gate 没写出 output 时(步骤改名 / Out-File 失败 / 将来有人加 continue-on-error)
+      # 这里直接 fail,不让打包脚本静默回落到 CMake 版本、产出版本号对不上的 zip。
       - name: Package
         shell: pwsh
-        run: ./scripts/package.ps1 -Version "${{ github.ref_name }}".TrimStart('v') -BuildDir build -OutDir dist
+        env:
+          PKG_VERSION: ${{ needs.gate.outputs.version }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:PKG_VERSION)) {
+            Write-Error "::error::gate did not export version"; exit 1
+          }
+          ./scripts/package.ps1 -Version $env:PKG_VERSION -BuildDir build -OutDir dist
 
       - name: Publish job summary
         shell: pwsh
@@ -164,12 +186,17 @@ jobs:
   # ============================================================================
   # release-macos —— macOS(Apple Silicon):VST3 + AU,arm64-only,不签名不公证(U13)
   # 与 ci.yml 的 build-and-validate-macos 同构,末尾多一步 scripts/package-macos.sh。
+  #
+  # ⚠️ 已知权衡(见 docs/release.md §6):publish `needs: [release, release-macos]`,
+  #    本 job 挂掉 = 整个 tag 一个产物都发不出去(包括已构建成功的 Windows zip)。
+  #    timeout 与 windows job 对齐到 60 分钟 —— 两边都要从零 clone JUCE 并编译两个
+  #    format wrapper,mac 侧还多一次 ixwebsocket 的 FetchContent 编译,30 分钟偏紧。
   # ============================================================================
   release-macos:
     name: release-macos
     runs-on: macos-15                   # arm64 原生;macos-14 已进弃用窗口
     needs: gate
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
@@ -217,29 +244,54 @@ jobs:
           set -euo pipefail
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DJUCE_PATH="${{ github.workspace }}/JUCE"
 
-      # clang 零警告门:只统计路径含 /src/ 的告警行,排除 _deps / JUCE 的第三方噪音
-      - name: Build (fail on any clang warning in src/)
+      # clang 零警告门 —— 与 windows 的 /W4 门同构的黑名单,与 ci.yml 的 mac job 逐字相同:
+      # 只排除第三方(_deps / JUCE / vcpkg),其余一律算;排除模式写 (^|/) 同时覆盖 Ninja 的
+      # 相对路径 `_deps/...` 与绝对路径;只认编译器诊断行,不把 `ld: warning:` 计进门禁。
+      - name: Build (fail on any first-party clang warning)
         shell: bash
         run: |
           set -euo pipefail
           cmake --build build --parallel 2>&1 | tee build.log
-          warns=$(grep -E 'warning:' build.log | grep '/src/' | grep -v '/_deps/' | grep -v '/JUCE/' || true)
+          warns=$(grep -E ':[0-9]+:[0-9]+: warning:' build.log | grep -vE '(^|/)(_deps|JUCE|vcpkg)/' || true)
           if [ -n "$warns" ]; then
             printf '%s\n' "$warns" | while IFS= read -r line; do echo "::error::$line"; done
-            echo "::error::clang warnings in src/: $(printf '%s\n' "$warns" | wc -l | tr -d ' '); zero-warning gate"
+            echo "::error::first-party clang warnings: $(printf '%s\n' "$warns" | wc -l | tr -d ' '); zero-warning gate"
             exit 1
           fi
 
+      # 发版链路最需要事后取证:构建失败时把 build.log 留成可下载产物(与 ci.yml / windows job 同待遇)
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: failure()
+        with:
+          name: SynchainBridge-macos-release-build-log-${{ github.sha }}
+          path: build.log
+          retention-days: 7
+          if-no-files-found: ignore
+
+      # 数量断言与 scripts/package-macos.sh 的 require_single_bundle 同口径;
+      # 定位用 `-print -quit`:`find | head -n 1` 在 pipefail 下会因 SIGPIPE(141)杀掉步骤。
       - name: Locate artefacts & assert arm64-only
         shell: bash
         run: |
           set -euo pipefail
-          vst3=$(find build -type d -name '*.vst3' -print | head -n 1)
-          au=$(find build -type d -name '*.component' -print | head -n 1)
-          if [ -z "$vst3" ]; then echo "::error::no .vst3 bundle found under build"; exit 1; fi
-          if [ -z "$au" ];   then echo "::error::no .component bundle found under build"; exit 1; fi
-          echo "VST3_PATH=$vst3" >> "$GITHUB_ENV"
-          echo "AU_PATH=$au"     >> "$GITHUB_ENV"
+          for spec in 'vst3:.vst3' 'component:.component'; do
+            ext="${spec%%:*}"; label="${spec##*:}"
+            n=$(find build -type d -name "*.$ext" | wc -l | tr -d '[:space:]')
+            if [ "$n" != "1" ]; then
+              echo "::error::expected exactly 1 $label bundle under build, found $n"; exit 1
+            fi
+          done
+          vst3=$(find build -type d -name '*.vst3' -print -quit)
+          au=$(find build -type d -name '*.component' -print -quit)
+          # 路径含空格('Synchain Bridge.vst3');GITHUB_ENV 一律用带随机分隔符的 heredoc 形式
+          {
+            echo "VST3_PATH<<GHENV_${GITHUB_RUN_ID}"
+            echo "$vst3"
+            echo "GHENV_${GITHUB_RUN_ID}"
+            echo "AU_PATH<<GHENV_${GITHUB_RUN_ID}"
+            echo "$au"
+            echo "GHENV_${GITHUB_RUN_ID}"
+          } >> "$GITHUB_ENV"
           archs=$(file "$vst3"/Contents/MacOS/* "$au"/Contents/MacOS/*)
           printf '%s\n' "$archs"
           printf '%s\n' "$archs" | grep -q 'arm64' || { echo "::error::mach-o is not arm64"; exit 1; }
@@ -268,19 +320,31 @@ jobs:
           echo "Non-GUI strictness-5 passed; full GUI validation is a LOCAL gate."
 
       # AU 只能用 auval 验:必须 ditto(cp -r 会丢符号链接与扩展属性,bundle 会散架),
-      # 装完踢一次 AudioComponentRegistrar 强制重扫。auval 的退出码历史上不可靠,
-      # 一律以输出里的 'AU VALIDATION SUCCEEDED' 为准 —— 所以这一步关掉 -e,
-      # 否则 killall / grep 的中间态非零退出会先把步骤杀掉。
+      # 装完踢一次 AudioComponentRegistrar 强制重扫。与 ci.yml 的 mac job 逐字相同:
+      # 四字码从 CMakeLists.txt 现读(单一真源),set +e 只作用在 auval 那一条 ——
+      # 否则 ditto 失败会被误诊成「插件没通过校验」。
       - name: Validate AU (auval)
         shell: bash
         run: |
-          set +e
-          set -uo pipefail
+          set -euo pipefail
+          code=$(awk '$1 == "PLUGIN_CODE" { print $2; exit }' CMakeLists.txt)
+          mfr=$(awk '$1 == "PLUGIN_MANUFACTURER_CODE" { print $2; exit }' CMakeLists.txt)
+          au_main=$(awk '$1 == "AU_MAIN_TYPE" { print $2; exit }' CMakeLists.txt)
+          if [ -z "$code" ] || [ -z "$mfr" ]; then
+            echo "::error::cannot parse PLUGIN_CODE / PLUGIN_MANUFACTURER_CODE from CMakeLists.txt"; exit 1
+          fi
+          case "$au_main" in
+            kAudioUnitType_Effect)        au_type=aufx ;;
+            kAudioUnitType_MusicEffect)   au_type=aumf ;;
+            kAudioUnitType_MusicDevice)   au_type=aumu ;;
+            kAudioUnitType_MIDIProcessor) au_type=aumi ;;
+            *) echo "::error::cannot map AU_MAIN_TYPE '$au_main' from CMakeLists.txt to an auval type"; exit 1 ;;
+          esac
           mkdir -p "$HOME/Library/Audio/Plug-Ins/Components"
           ditto "$AU_PATH" "$HOME/Library/Audio/Plug-Ins/Components/$(basename "$AU_PATH")"
           killall -9 AudioComponentRegistrar 2>/dev/null || true
-          echo "::group::auval -v aufx Snb1 Snch"
-          auval -v aufx Snb1 Snch 2>&1 | tee auval.log
+          echo "::group::auval -v $au_type $code $mfr"
+          auval -v "$au_type" "$code" "$mfr" 2>&1 | tee auval.log || true
           echo "::endgroup::"
           if ! grep -q 'AU VALIDATION SUCCEEDED' auval.log; then
             echo "::error::auval did not report 'AU VALIDATION SUCCEEDED'"
@@ -289,11 +353,17 @@ jobs:
           echo "auval OK"
 
       # ---- 打包:唯一真源 = scripts/package-macos.sh;绝不在 YAML 内联 ditto/zip ----
+      # 版本号经 step env 间接读入(tag 允许 '$'、反引号、'"',直插 bash 双引号串会真做命令替换);
+      # 空值直接 fail —— 否则脚本会静默回落到 CMake 版本,冒烟 tag v0.0.0-test 会产出
+      # 名为 v1.5.0 的 zip,publish 的 sha256 复验照样过,错误一路带到 draft Release。
       - name: Package
         shell: bash
+        env:
+          PKG_VERSION: ${{ needs.gate.outputs.version }}
         run: |
           set -euo pipefail
-          bash scripts/package-macos.sh --version "${{ needs.gate.outputs.version }}" --build-dir build --out-dir dist
+          [ -n "$PKG_VERSION" ] || { echo "::error::gate did not export version"; exit 1; }
+          bash scripts/package-macos.sh --version "$PKG_VERSION" --build-dir build --out-dir dist
 
       - name: Publish job summary
         shell: bash
@@ -312,14 +382,24 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+      # 失败日志先归拢到工作区同一目录再上传:同时给 $RUNNER_TEMP/... 与工作区路径时,
+      # upload-artifact 会以两者的最近公共祖先(/Users/runner/work)展开成别扭结构。
+      - name: Collect validation logs (on failure)
+        if: failure()
+        shell: bash
+        run: |
+          set -uo pipefail
+          mkdir -p validation-logs
+          cp -R "$RUNNER_TEMP/pluginval-logs" validation-logs/ 2>/dev/null || true
+          cp auval.log validation-logs/ 2>/dev/null || true
+          ls -lR validation-logs || true
+
       - name: Upload pluginval / auval logs (on failure)
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: SynchainBridge-macos-validation-logs-${{ github.sha }}
-          path: |
-            ${{ runner.temp }}/pluginval-logs
-            auval.log
+          path: validation-logs
           retention-days: 7
           if-no-files-found: ignore
 
@@ -359,12 +439,15 @@ jobs:
           sha256sum -c ./*.sha256
           ls -l
 
+      # tag 名同样经 step env 间接读入:直插 bash 双引号串时 v1.4.0$(...) 形态的 tag 会真做命令替换
       - name: Publish job summary
         shell: bash
+        env:
+          REF_NAME: ${{ github.ref_name }}
         run: |
           set -euo pipefail
           {
-            echo "## Release assets — ${{ github.ref_name }}"
+            echo "## Release assets — $REF_NAME"
             echo
             echo '```'
             cat dist/*.sha256
