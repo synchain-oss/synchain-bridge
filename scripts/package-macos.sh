@@ -128,7 +128,9 @@ require_single_bundle() {
     local n base
     n="$(find "$BUILD_DIR" -type d -name "*.$ext" | wc -l | tr -d '[:space:]')"
     [ "$n" = "1" ] || die "expected exactly 1 .$ext bundle under '$BUILD_DIR', found $n"
-    BUNDLE_PATH="$(find "$BUILD_DIR" -type d -name "*.$ext" | head -n 1)"
+    # 与 ci.yml 同口径用 `-print -quit`:`find | head -n 1` 在 pipefail 下会因 SIGPIPE(141)
+    # 被 set -e 杀掉脚本(上面 n=1 的断言已保证只有一个匹配,但口径不该两处不一致)。
+    BUNDLE_PATH="$(find "$BUILD_DIR" -type d -name "*.$ext" -print -quit)"
     base="$(basename "$BUNDLE_PATH")"
     [ "$base" = "$want" ] || die "unexpected bundle name '$base' (expected '$want')"
     [ -d "$BUNDLE_PATH/Contents" ] || die "bundle '$BUNDLE_PATH' missing Contents/ hierarchy"
@@ -251,7 +253,9 @@ done
 # 免得将来有人把 ditto 参数改回 --sequesterRsrc 就静默退化成必然假失败。
 MACHO="$(unzip -Z "$ZIP_PATH" | grep -v '__MACOSX/' | grep -E '/Contents/MacOS/[^[:space:]]' || true)"
 [ -n "$MACHO" ] || die "zip assertion failed: no Contents/MacOS/ file entries"
-NOT_EXEC="$(printf '%s\n' "$MACHO" | grep -v '^-rwx' || true)"
+# 首字符放行 `-`(普通文件)与 `l`(符号链接):bundle 里出现指向可执行体的 symlink 时
+# unzip -Z 打的是 `lrwxrwxrwx`,只认 `^-rwx` 会把它当成丢了可执行位而假失败(与 ci.yml 同口径)。
+NOT_EXEC="$(printf '%s\n' "$MACHO" | grep -vE '^[-l]rwx' || true)"
 [ -z "$NOT_EXEC" ] || die "zip assertion failed: exec bit lost on:
 $NOT_EXEC"
 
@@ -265,10 +269,24 @@ printf '%s  %s\n' "$HASH" "$ZIP_NAME" > "$SHA_PATH"
 SIZE_BYTES="$(wc -c < "$ZIP_PATH" | tr -d '[:space:]')"
 RELEASE_DATE="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 
-# summary 以空行分段追加:同一个 OutDir 下可能已有别的平台/上一次运行写的段落。
-# 同名 zip 的旧段落先删掉,避免重复跑脚本时越堆越长。
+# summary 以空行分段追加:同一个 OutDir 下可能已有别的平台(package.ps1)或本脚本上一次运行写的段落。
+# 同名 zip 的旧段落先删掉,避免重复跑脚本时越堆越长 —— 但**只删同名的那一条**。
+#
+# 切段一律按记录首行 `version:` 切,**不能按空行切**:package.ps1 用 Set-Content 写的是紧贴的 5 行、
+# 段间没有空行,本脚本首次追加时也不会补空行。若用 awk 的段落模式(RS=''),整个文件会被当成**一条**
+# 记录,只要里面含本次的 zipFileName 就连 Windows 的段落、历史版本的段落一起删光(实测:文件被清空)。
+# 同时匹配改为 `zipFileName:` 整行逐字相等,不再用子串包含。首条记录之前的内容(将来若加表头)原样保留。
 if [ -f "$SUMMARY_PATH" ]; then
-    awk -v RS='' -v ORS='\n\n' -v z="zipFileName: $ZIP_NAME" 'index($0, z) == 0' "$SUMMARY_PATH" > "$SUMMARY_PATH.tmp"
+    awk -v z="zipFileName: $ZIP_NAME" '
+        NF == 0 { next }                                    # 空行只是分隔符,重排时统一重新生成
+        /^version:[[:space:]]/ {                            # 记录首行:先结算上一条
+            if (started && !drop) printf "%s\n", rec
+            rec = ""; drop = 0; started = 1
+        }
+        !started { print; next }                            # 首条记录之前的内容原样透传
+        { rec = rec $0 "\n"; if ($0 == z) drop = 1 }
+        END { if (started && !drop) printf "%s\n", rec }
+    ' "$SUMMARY_PATH" > "$SUMMARY_PATH.tmp"
     mv "$SUMMARY_PATH.tmp" "$SUMMARY_PATH"
 fi
 cat >> "$SUMMARY_PATH" <<EOF

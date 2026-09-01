@@ -48,8 +48,38 @@ grep -rnE 'uses:[[:space:]]*[^@]+@(v[0-9]|main|master)' .github/workflows
 > 现有功能分支以「不改现有 job 任何一行」为施工纪律不动它们，是合理的；但这条不能停在
 > 疑点清单里 —— 公开后可变 ref 意味着上游被劫持即可在本仓 CI 里执行任意代码。
 
+### 3.2 `ci.yml` windows job 的 `${{ github.ref_name }}` 直插改 env 间接（来源：PR #21 审查）
+
+`.github/workflows/ci.yml` 的 windows job 把 `${{ github.ref_name }}` 直接插进 `run:` 的
+PowerShell 字面量里算 artifact slug：
+
+```powershell
+$slug = "${{ github.ref_name }}" -replace '[/\\]','-'
+```
+
+`${{ }}` 是在脚本落盘**之前**做的文本替换，含引号/反引号的 ref 名可以就地闭合字符串、在 runner 上
+执行任意 PowerShell。**注入面目前很窄**（`push` 事件的 ref 来自有推送权限的人；`pull_request` 事件下
+`github.ref_name` 是 `<PR 号>/merge`，不是 fork 的 head 分支名），所以这不是当前可被外部触发的漏洞，
+但它是同一类问题里唯一没跟上的一处 —— 同文件的 macOS job 已经走 `env: REF_NAME` 间接、脚本里读
+`$env:REF_NAME`。**这一处早于本批 macOS 工作（dev 上已如此），不是本栈引入的。**
+
+处理方式：windows job 照 macOS job 的写法加 `env: REF_NAME: ${{ github.ref_name }}`，脚本内改读
+`$env:REF_NAME`。与 §3.1 的 pin 一样，宜并进那个「只改 workflow、不掺功能」的 PR。
+
 ## 4. 依赖安全
 - Dependabot alerts + security updates 保持开启（现已配置）
+
+### 4.1 ixwebsocket 的 `FetchContent` 由 tag 改 40 位 SHA pin（来源：PR #21 审查）
+
+`CMakeLists.txt` 的 `APPLE` 分支用 `GIT_TAG ${IXWEBSOCKET_TAG}`（`v12.0.1`）拉 ixwebsocket。
+**git tag 是可变 ref**：上游把 tag 重新指向别处，mac 构建就会静默换掉一个链进产物的依赖 ——
+与 §3.1 对 action 的要求同源（CLAUDE.md §0 铁律 3），只是对象换成了源码依赖。
+
+处理方式：把 `GIT_TAG` 换成该 tag 当前指向的 40 位 commit SHA（注释里保留 `# v12.0.1` 便于人读与升级）。
+**必须同时去掉 `GIT_SHALLOW TRUE`**：浅克隆是 `git fetch --depth 1 <ref>`，只对分支名/tag 名成立，
+给裸 commit SHA 会 fetch 失败，配置期直接炸。代价是 mac 侧配置期多克隆一份完整历史。
+
+Windows 侧不受影响（走 vcpkg port，版本由 vcpkg 的 baseline 钉住，不经 `FetchContent`）。
 
 ## 5. 历史清扫（⛔ 转 public 的硬门禁，**尚未完成**）
 
