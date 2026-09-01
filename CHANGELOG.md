@@ -65,6 +65,29 @@
   `if(APPLE)` 分支内定义。**对 Windows 构建为 no-op**:VS2019 生成器下 configure 的 cache 差异只有前两个
   变量,生成的 `.sln` / `.vcxproj` 目标列表与改动前逐项相同、无任何 `*_AU*` 目标。
 
+### 持续集成
+
+- `ci.yml` 新增与 `build-and-validate` 同级的 **`build-and-validate-macos`**(`macos-15`,arm64 原生):
+  Ninja 配置 → 构建 → **clang 零警告门** → arm64-only 架构断言 → pluginval 验 VST3 + `auval` 验 AU →
+  三档 artifact(pr / dev 快照 / preview),条件与保留天数与 windows job 逐一对齐。现有 windows job 与
+  `on:` 触发面**一行未改**。
+  - clang 零警告门与 windows 的 `/W4` 门**同构**:黑名单式(只排除 `_deps` / `JUCE` / `vcpkg`,其余一律算),
+    且只认编译器诊断行 `file:line:col: warning:`(与 windows 只匹配 `warning Cxxxx`、不匹配 `LNK4xxx` 同口径);
+    排除模式写成 `(^|/)`,同时覆盖 Ninja 写出的相对路径 `_deps/...` 与绝对路径。
+  - AU 的四字码不写死:`auval` 的 type / subtype / manufacturer 由 `CMakeLists.txt` 的
+    `AU_MAIN_TYPE` / `PLUGIN_CODE` / `PLUGIN_MANUFACTURER_CODE` 现读,改码时 CI 报确切解析错误,
+    而不是退化成语义无关的「auval 没报 SUCCEEDED」。
+  - artifact 里的 zip 用 `ditto -c -k --norsrc --noextattr` 压(`upload-artifact` 不保留 POSIX 权限位,
+    直接传 bundle 目录 = 下载方拿到不可执行的死壳);内层 zip 名带 ref slug 与短 sha,不同 PR 的产物
+    解压到同一目录不再互相覆盖。
+- **成本**:macOS runner 按 10 倍分钟数计费,该 job 当前继承整个 workflow 的触发面(每次 PR synchronize +
+  push 到 `dev` / `feature/**`)全开,与 `CLAUDE.md` §4「runner 就低不就高」存在张力 —— 已在 §4 记为
+  **待用户拍板的例外**,未擅自加 label 闸门。
+- `CLAUDE.md` §1(fork 可跑 job 清单)、§4(触发范围与成本纪律)、§6(环境与依赖的 macOS 侧)随之更新;
+  §0 安全铁律(三仓逐字相同)一字未动。
+- `BEFORE_PUBLIC_CHECKLIST.md` 新增 §3.1:第三方 action pin 到 40 位 SHA 升为**转 public 硬门禁**并列出
+  当前未 pin 的文件清单与验收断言(现状是只有 `release.yml` 与 mac job 做到了)。
+
 ### 兼容性
 
 - **无契约变更**:桥 #1 / 桥 #2 的 wire 协议与 `BRIDGE_CONTRACT_VERSION = "2.0"` 均零改动。
@@ -110,10 +133,10 @@
 - `web-preview/` 的版本镜像(`mock-server.mjs` 的 `PLUGIN_VERSION`、`package.json`、`package-lock.json`)
   随真源升到 1.5.0,并在 `scripts/gates.ps1` 新增 **gate 3e「版本一致性(CMake ↔ web-preview)」**断言这三处 ——
   此前没有任何门禁覆盖(CI 的版本门禁只在打 tag 时比 tag ↔ CMake)。
-- **遗留(待后续任务或 A2 一并处理,本批不改)**:仓库已是双平台,但 `scripts/gates.ps1` 仍是纯 Windows 实现
-  (依赖 vswhere / VS 生成器 / nuget / `pluginval.exe`),mac 贡献者跑不了;`CLAUDE.md` §2(本地 gates)与 §6
-  (环境与依赖)、`docs/DAW_TEST_GUIDE.md`(仍写 win64.zip)、README 文档清单里 DAW_TEST_GUIDE 的
-  「(Windows)」注记同样待更新。`CLAUDE.md` 是三仓共用法条,不在本批授权范围内改动。
+- **遗留(待后续任务或 A2 一并处理)**:仓库已是双平台,但 `scripts/gates.ps1` 仍是纯 Windows 实现
+  (依赖 vswhere / VS 生成器 / nuget / `pluginval.exe`),mac 贡献者跑不了;`CLAUDE.md` §2(本地 gates)、
+  `docs/DAW_TEST_GUIDE.md`(仍写 win64.zip)、README 文档清单里 DAW_TEST_GUIDE 的「(Windows)」注记
+  同样待更新。(`CLAUDE.md` §1 / §4 / §6 已随 CI 与发版链路改动更新;三仓逐字相同的 §0 安全铁律不动。)
 - 兜底面板(`FallbackPanel`)的**加载超时**文案改为平台中立(不再提 WebView);「缺 WebView2 运行时」分支的
   文案保留 WebView2 表述 —— 该分支只可能在 Windows 出现。
 
