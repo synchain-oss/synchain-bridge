@@ -160,6 +160,8 @@ jobs:
   build-and-validate-macos:
     name: build-and-validate-macos
     runs-on: macos-15                   # arm64 原生;macos-14 已进弃用窗口
+    permissions:
+      contents: read                    # 本 job 只读源码;上传 artifact 不需要 contents 写权限
     timeout-minutes: 60                 # 与 windows job 对称:两边都要从零 clone JUCE 并编译两个
                                         # format wrapper,mac 侧还多一次 ixwebsocket 的 FetchContent
     steps:
@@ -296,11 +298,16 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # --validate 显式给出:两种 CLI 语义解释下都成立(是开关则路径仍作位置参数,
+          # 取值则吃掉路径),且与 docs/build-macos.md 口径一致(采纳 #20 review)。
+          # 本地 Windows 实证:位置参数与 --validate 两种写法均真实跑完全部测试项。
           echo "::group::pluginval $(basename "$VST3_PATH")"
+          rc=0
           ./pluginval/pluginval.app/Contents/MacOS/pluginval \
             --strictness-level 5 --timeout-ms 60000 --skip-gui-tests \
-            --output-dir "$RUNNER_TEMP/pluginval-logs" "$VST3_PATH"
-          echo "::endgroup::"
+            --output-dir "$RUNNER_TEMP/pluginval-logs" --validate "$VST3_PATH" || rc=$?
+          echo "::endgroup::"   # 失败也闭合分组,后续日志不被吞进折叠区
+          [ "$rc" -eq 0 ] || exit "$rc"
           echo "Non-GUI strictness-5 passed; full GUI validation is a LOCAL gate."
 
       # 8) AU 只能用 auval 验:必须 ditto(cp -r 会丢符号链接与扩展属性,bundle 会散架),
@@ -346,8 +353,12 @@ jobs:
             sleep 1
           done
           if [ "$registered" != "1" ]; then
-            echo "::error::AU component $au_type/$code/$mfr not registered after 30s; auval would fail with an unrelated 'component not found'"
-            exit 1
+            # 只警告不失败:真正的判定在下游 AU VALIDATION SUCCEEDED 断言;此处正则依赖
+            # auval -a 的未文档化排版,猜错时应退化为「直接验」而不是硬红(采纳 #21 review)。
+            echo "::warning::component $au_type/$code/$mfr not seen in auval -a within polling window; proceeding to auval -v anyway"
+            echo "::group::auval -a head (diagnostics)"
+            auval -a 2>/dev/null | head -40 || true
+            echo "::endgroup::"
           fi
           echo "::group::auval -v $au_type $code $mfr"
           auval -v "$au_type" "$code" "$mfr" 2>&1 | tee auval.log || true
