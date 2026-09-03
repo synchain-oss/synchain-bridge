@@ -127,7 +127,8 @@ jobs:
           }
           $summary = Get-Content (Join-Path $out 'package-summary.md') -Raw
           foreach ($k in 'version', 'zipFileName', 'sizeBytes', 'sha256', 'releaseDate') {
-            if ($summary -notmatch "(?m)^$k`:") { Write-Error "package-summary.md is missing the '$k:' line"; exit 1 }
+            # `${k}:` 而不是 `$k:`——pwsh 会把 `$k:` 解析成作用域限定符,直接 ParserError
+            if ($summary -notmatch "(?m)^${k}:") { Write-Error "package-summary.md is missing the '${k}:' line"; exit 1 }
           }
 
       # 7) artifact(命名/保留策略见 06 §6.3;一律用 REF_SLUG,不用 github.ref_name)
