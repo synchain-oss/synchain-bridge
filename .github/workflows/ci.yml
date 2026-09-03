@@ -110,21 +110,27 @@ jobs:
           if ($code -ne 0) { Write-Error "pluginval failed for $($vst3.Name) (exit $code)"; exit 1 }
           Write-Host "Non-GUI strictness-5 passed; full GUI validation is a LOCAL gate."
 
-      # 7) artifact(命名/保留策略见 06 §6.3;一律用 REF_SLUG,不用 github.ref_name)
       # 6b) 发行打包脚本冒烟(与 mac job 的 Package smoke 同构,采纳 #24 review):scripts/package.ps1 只挂在
       #     release.yml 的 tag 触发上;publish 是 needs 两个平台,Windows 打包一回归 = 整个 tag 零资产。
-      #     产物丢弃只看退出码;跑两次断言重复运行幂等(package.ps1 的 summary 目前是整文件覆盖而非
-      #     按段去重,见 issue #23;两平台口径对齐后本断言不必改)。
+      #     产物丢弃,断言只看形态:zip + .sha256 都产出、summary 五个字段行齐整。这里**不**测 summary 去重:
+      #     package.ps1 的 summary 是整文件覆盖(Set-Content)而非 mac 侧的追加 + 按段去重,两个「打包唯一
+      #     真源」在这点上行为分叉(release.yml 按 artifact 名分目录下载,summary 只喂 step summary,
+      #     故暂不出事),口径对齐记在 issue #23;对齐后再把 mac 侧的三次运行断言搬过来。
       - name: Package smoke (scripts/package.ps1, artefacts discarded)
         shell: pwsh
         run: |
           $out = Join-Path $env:RUNNER_TEMP 'package-smoke'
           ./scripts/package.ps1 -Version 0.0.0-ci -BuildDir build -OutDir $out
-          ./scripts/package.ps1 -Version 0.0.0-ci -BuildDir build -OutDir $out
           Get-ChildItem $out | Out-Host
-          $n = @(Select-String -Path (Join-Path $out 'package-summary.md') -Pattern '^zipFileName:').Count
-          if ($n -ne 1) { Write-Error "package-summary.md should hold exactly 1 segment after re-run, got $n"; exit 1 }
+          foreach ($f in 'SynchainBridge-VST3-v0.0.0-ci-win64.zip', 'SynchainBridge-VST3-v0.0.0-ci-win64.zip.sha256', 'package-summary.md') {
+            if (-not (Test-Path (Join-Path $out $f))) { Write-Error "package smoke did not produce $f"; exit 1 }
+          }
+          $summary = Get-Content (Join-Path $out 'package-summary.md') -Raw
+          foreach ($k in 'version', 'zipFileName', 'sizeBytes', 'sha256', 'releaseDate') {
+            if ($summary -notmatch "(?m)^$k`:") { Write-Error "package-summary.md is missing the '$k:' line"; exit 1 }
+          }
 
+      # 7) artifact(命名/保留策略见 06 §6.3;一律用 REF_SLUG,不用 github.ref_name)
       - name: Upload VST3 (PR)
         if: github.event_name == 'pull_request'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -396,13 +402,21 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bash scripts/package-macos.sh --version 0.0.0-ci --build-dir build --out-dir "$RUNNER_TEMP/package-smoke"
-          # 同一 out-dir 再跑一次:第一次 out-dir 为空,package-summary.md 的「去重旧段落」awk 分支永远走不到,
-          # 而那正是全仓唯一真出过 bug 的打包逻辑(14626ec);第二次才覆盖到它,并验证同名段落只删一条。
-          bash scripts/package-macos.sh --version 0.0.0-ci --build-dir build --out-dir "$RUNNER_TEMP/package-smoke"
-          ls -l "$RUNNER_TEMP/package-smoke"
-          n=$(grep -c '^zipFileName:' "$RUNNER_TEMP/package-smoke/package-summary.md" || true)
-          if [ "$n" != "1" ]; then echo "::error::package-summary.md should hold exactly 1 segment after re-run, got $n"; exit 1; fi
+          smoke="$RUNNER_TEMP/package-smoke"
+          bash scripts/package-macos.sh --version 0.0.0-ci  --build-dir build --out-dir "$smoke"
+          # 三次运行才覆盖到 package-summary.md 的「去重旧段落」awk 分支(全仓唯一真出过 bug 的打包逻辑,
+          # 14626ec 修的是「删过头,把别的版本/平台的段落一起删光」):先再写一条**不同名**的记录,
+          # 再重跑第一条 —— 它必须只删掉自己那条,0.0.0-ci2 的段落要原样留着。只跑两次同名会让
+          # buggy 实现(整文件当一条记录、子串命中就删光)与正确实现输出逐字节相同,断言分辨不出。
+          bash scripts/package-macos.sh --version 0.0.0-ci2 --build-dir build --out-dir "$smoke"
+          bash scripts/package-macos.sh --version 0.0.0-ci  --build-dir build --out-dir "$smoke"
+          ls -l "$smoke"
+          n=$(grep -c '^zipFileName:' "$smoke/package-summary.md" || true)
+          if [ "$n" != "2" ]; then echo "::error::package-summary.md should hold exactly 2 segments (ci + ci2), got $n"; exit 1; fi
+          grep -qx 'zipFileName: SynchainBridge-VST3-AU-v0.0.0-ci2-macos-arm64.zip' "$smoke/package-summary.md" \
+            || { echo "::error::re-running 0.0.0-ci wiped the unrelated 0.0.0-ci2 segment (over-deletion regression)"; exit 1; }
+          [ "$(grep -c '^zipFileName: SynchainBridge-VST3-AU-v0.0.0-ci-macos-arm64.zip$' "$smoke/package-summary.md")" = "1" ] \
+            || { echo "::error::0.0.0-ci segment should appear exactly once after re-run"; exit 1; }
 
       # 9) artifact 传输封装(**不是发行打包**):这里只解决 upload-artifact 不保留 POSIX
       #    权限位的问题 —— 直接传 bundle 目录 = 下载方拿到不可执行的死壳。合规文件 /
