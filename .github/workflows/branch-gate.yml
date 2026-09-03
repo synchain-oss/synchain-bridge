@@ -73,8 +73,13 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}   # fork PR 下也可用(只读足够)
         run: |
-          # 用 jq 直接筛出"消息里没有 Signed-off-by 行"的 commit,避免在 shell 里切多行 message
-          gh api --paginate "/repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/commits"             --jq '.[] | select((.commit.message | test("(?im)^Signed-off-by: .+ <.+@.+>$")) | not) | .sha' > dco-bad.txt
+          # 用 jq 直接筛出"消息里没有 Signed-off-by 行"的 commit,避免在 shell 里切多行 message。
+          # merge commit(parents > 1)豁免:GitHub 网页「Merge pull request」生成的 merge commit 无法带
+          # sign-off,而主支线(feature/*)按子 PR 逐个合并后再晋升 dev 时,这些 merge 必然出现在 PR 的
+          # commit 列表里(首次触发:#24,feature/macos 含 #19-#21 的三个网页 merge)。merge commit 本身
+          # 不引入新贡献内容(冲突解决除外,维护者手工 merge 时仍应 `git merge -s` / `--amend -s`),
+          # 每个非 merge commit 仍逐个受检 —— 与 DCO GitHub App 的默认行为一致。
+          gh api --paginate "/repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/commits"             --jq '.[] | select((.parents | length) < 2) | select((.commit.message | test("(?im)^Signed-off-by: .+ <.+@.+>$")) | not) | .sha' > dco-bad.txt
           if [ -s dco-bad.txt ]; then
             while read -r sha; do
               echo "::error::commit $sha 缺少 Signed-off-by(提交时用 git commit -s;补救:git commit -s --amend 或 git rebase --signoff)"
