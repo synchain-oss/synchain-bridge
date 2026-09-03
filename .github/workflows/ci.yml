@@ -111,6 +111,20 @@ jobs:
           Write-Host "Non-GUI strictness-5 passed; full GUI validation is a LOCAL gate."
 
       # 7) artifact(命名/保留策略见 06 §6.3;一律用 REF_SLUG,不用 github.ref_name)
+      # 6b) 发行打包脚本冒烟(与 mac job 的 Package smoke 同构,采纳 #24 review):scripts/package.ps1 只挂在
+      #     release.yml 的 tag 触发上;publish 是 needs 两个平台,Windows 打包一回归 = 整个 tag 零资产。
+      #     产物丢弃只看退出码;跑两次断言重复运行幂等(package.ps1 的 summary 目前是整文件覆盖而非
+      #     按段去重,见 issue #23;两平台口径对齐后本断言不必改)。
+      - name: Package smoke (scripts/package.ps1, artefacts discarded)
+        shell: pwsh
+        run: |
+          $out = Join-Path $env:RUNNER_TEMP 'package-smoke'
+          ./scripts/package.ps1 -Version 0.0.0-ci -BuildDir build -OutDir $out
+          ./scripts/package.ps1 -Version 0.0.0-ci -BuildDir build -OutDir $out
+          Get-ChildItem $out | Out-Host
+          $n = @(Select-String -Path (Join-Path $out 'package-summary.md') -Pattern '^zipFileName:').Count
+          if ($n -ne 1) { Write-Error "package-summary.md should hold exactly 1 segment after re-run, got $n"; exit 1 }
+
       - name: Upload VST3 (PR)
         if: github.event_name == 'pull_request'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -383,7 +397,12 @@ jobs:
         run: |
           set -euo pipefail
           bash scripts/package-macos.sh --version 0.0.0-ci --build-dir build --out-dir "$RUNNER_TEMP/package-smoke"
+          # 同一 out-dir 再跑一次:第一次 out-dir 为空,package-summary.md 的「去重旧段落」awk 分支永远走不到,
+          # 而那正是全仓唯一真出过 bug 的打包逻辑(14626ec);第二次才覆盖到它,并验证同名段落只删一条。
+          bash scripts/package-macos.sh --version 0.0.0-ci --build-dir build --out-dir "$RUNNER_TEMP/package-smoke"
           ls -l "$RUNNER_TEMP/package-smoke"
+          n=$(grep -c '^zipFileName:' "$RUNNER_TEMP/package-smoke/package-summary.md" || true)
+          if [ "$n" != "1" ]; then echo "::error::package-summary.md should hold exactly 1 segment after re-run, got $n"; exit 1; fi
 
       # 9) artifact 传输封装(**不是发行打包**):这里只解决 upload-artifact 不保留 POSIX
       #    权限位的问题 —— 直接传 bundle 目录 = 下载方拿到不可执行的死壳。合规文件 /

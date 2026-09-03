@@ -18,6 +18,7 @@
 | vcpkg / NuGet CLI / WebView2 Runtime | **不需要** | 三者都是 Windows 侧依赖；macOS 用系统 WKWebView |
 
 配置期会 `git clone` ixwebsocket，因此**首次配置需要网络**（钉的是裸 commit SHA，不能浅克隆，会拉完整历史；上游仓很小）。
+`IXWEBSOCKET_TAG` 是 CMake cache 变量：仓库里改了它，**已有的 build 目录不会自动跟上**，请删掉 build 目录（或至少 `CMakeCache.txt` 与 `_deps/`）重新配置。
 
 ## 一次性准备
 

@@ -63,7 +63,7 @@ macOS:
 
 - **macOS 11.0+(Big Sur)、Apple Silicon —— 仅 arm64**,需 **Xcode Command Line Tools**(`xcode-select --install`)。
 - **Ninja**(可选;`brew install ninja` —— 文档里的命令以 Ninja 为例,用 Xcode 或 Makefile 生成器同样能出产物)。
-- 无需 vcpkg / NuGet / WebView2:ixwebsocket 由 CMake 在配置期按钉死的 tag 自动拉取,UI 用系统 WKWebView。
+- 无需 vcpkg / NuGet / WebView2:ixwebsocket 由 CMake 在配置期按钉死的 40 位 commit SHA(= 上游 tag v12.0.1)自动拉取,UI 用系统 WKWebView。
 
 ## 安装
 
@@ -161,7 +161,7 @@ cmake --build build --parallel
 # 产物: build/SynchainBridgeVST_artefacts/Release/{VST3,AU}/
 ```
 
-无需 vcpkg / NuGet / WebView2 —— ixwebsocket 由 CMake 在配置期按钉死的 tag 拉取,UI 用系统 WKWebView;目标架构 arm64,部署目标 macOS 11.0。完整指南(含 `auval` / pluginval 验收)见 [`docs/build-macos.md`](docs/build-macos.md)。
+无需 vcpkg / NuGet / WebView2 —— ixwebsocket 由 CMake 在配置期按钉死的 commit SHA(= 上游 tag v12.0.1)拉取,UI 用系统 WKWebView;目标架构 arm64,部署目标 macOS 11.0。完整指南(含 `auval` / pluginval 验收)见 [`docs/build-macos.md`](docs/build-macos.md)。
 
 CI(`.github/workflows/ci.yml`,job `build-and-validate-macos`,`macos-15`):构建两种格式 → 断言产物为 arm64 单架构 → 对 VST3 跑 pluginval `--skip-gui-tests`(strictness 5)、对 AU 跑 `auval` → `ditto` 打 zip 传 artifact。含 GUI 的 pluginval、以及对 AU 的 pluginval 仍是本地门禁。
 

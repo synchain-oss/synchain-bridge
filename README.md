@@ -63,7 +63,7 @@ macOS:
 
 - **macOS 11.0+ (Big Sur) on Apple Silicon — arm64 only**, with **Xcode Command Line Tools** (`xcode-select --install`).
 - **Ninja** (optional; `brew install ninja` — the documented commands use it, but the Xcode and Makefile generators work too).
-- No vcpkg / NuGet / WebView2: ixwebsocket is fetched by CMake at configure time (pinned tag) and the UI runs on the system WKWebView.
+- No vcpkg / NuGet / WebView2: ixwebsocket is fetched by CMake at configure time (pinned to a 40-char commit SHA = upstream tag v12.0.1) and the UI runs on the system WKWebView.
 
 ## Install
 
@@ -161,7 +161,7 @@ cmake --build build --parallel
 # Artifacts: build/SynchainBridgeVST_artefacts/Release/{VST3,AU}/
 ```
 
-No vcpkg, NuGet or WebView2 needed — CMake fetches ixwebsocket at configure time from a pinned tag, and the UI runs on the system WKWebView. The build targets arm64 with a macOS 11.0 deployment target. Full guide, including `auval` / pluginval acceptance: [`docs/build-macos.md`](docs/build-macos.md).
+No vcpkg, NuGet or WebView2 needed — CMake fetches ixwebsocket at configure time from a pinned commit SHA (= upstream tag v12.0.1), and the UI runs on the system WKWebView. The build targets arm64 with a macOS 11.0 deployment target. Full guide, including `auval` / pluginval acceptance: [`docs/build-macos.md`](docs/build-macos.md).
 
 CI (`.github/workflows/ci.yml`, job `build-and-validate-macos`, `macos-15`) builds both formats, asserts the binaries are arm64-only, runs pluginval `--skip-gui-tests` (strictness 5) against the VST3 and `auval` against the AU, and uploads a `ditto` zip of both bundles. The GUI pluginval run — and pluginval against the AU — remain local gates.
 
