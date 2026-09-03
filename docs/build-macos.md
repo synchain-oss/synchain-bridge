@@ -13,11 +13,11 @@
 | CMake | ≥ 3.22 | 见 `CMakeLists.txt` 的 `cmake_minimum_required`；`brew install cmake` |
 | Ninja | 任意版本，**可选** | `brew install ninja`；本文命令以 Ninja 为例（Xcode / Makefile 生成器亦可，README 的依赖表同此口径） |
 | JUCE | 版本真源 `.juce-version` | clone 命令见下，不要手写版本号 |
-| ixwebsocket | **无需手工安装** | macOS 走 CMake `FetchContent`，tag 由 `IXWEBSOCKET_TAG`（默认 `v12.0.1`，与 Windows 侧 vcpkg 装的同一版本）钉死，配置期自动拉取 |
+| ixwebsocket | **无需手工安装** | macOS 走 CMake `FetchContent`，由 `IXWEBSOCKET_TAG` 钉死到 40 位 commit SHA（= 上游 tag `v12.0.1`，与 Windows 侧 vcpkg 装的同一版本），配置期自动拉取 |
 | pluginval | 版本真源 `.pluginval-version` | `pluginval_macOS.zip` 解压出来是 **`pluginval.app`**（没有裸可执行文件）；下载后同样要 `xattr -dr com.apple.quarantine pluginval.app`，调用路径见「验证」一节 |
 | vcpkg / NuGet CLI / WebView2 Runtime | **不需要** | 三者都是 Windows 侧依赖；macOS 用系统 WKWebView |
 
-配置期会 `git clone` ixwebsocket，因此**首次配置需要网络**（`GIT_SHALLOW TRUE`，只拉一个 tag）。
+配置期会 `git clone` ixwebsocket，因此**首次配置需要网络**（钉的是裸 commit SHA，不能浅克隆，会拉完整历史；上游仓很小）。
 
 ## 一次性准备
 

@@ -82,9 +82,12 @@ $slug = "${{ github.ref_name }}" -replace '[/\\]','-'
 ## 4. 依赖安全
 - Dependabot alerts + security updates 保持开启（现已配置）
 
-### 4.1 ixwebsocket 的 `FetchContent` 由 tag 改 40 位 SHA pin（来源：PR #21 审查）
+### 4.1 ixwebsocket 的 `FetchContent` 由 tag 改 40 位 SHA pin（来源：PR #21 审查）—— **✅ 已完成（PR #24，2026-09-03）**
 
-`CMakeLists.txt` 的 `APPLE` 分支用 `GIT_TAG ${IXWEBSOCKET_TAG}`（`v12.0.1`）拉 ixwebsocket。
+已落地：`IXWEBSOCKET_TAG` 现为 tag v12.0.1 当时指向的 40 位 commit SHA（`git ls-remote --tags` 核对），
+`GIT_SHALLOW` 已删除。以下为原分析，留作升级 ixwebsocket 时的操作依据。
+
+`CMakeLists.txt` 的 `APPLE` 分支原用 `GIT_TAG ${IXWEBSOCKET_TAG}`（`v12.0.1`）拉 ixwebsocket。
 **git tag 是可变 ref**：上游把 tag 重新指向别处，mac 构建就会静默换掉一个链进产物的依赖 ——
 与 §3.1 对 action 的要求同源（CLAUDE.md §0 铁律 3），只是对象换成了源码依赖。
 

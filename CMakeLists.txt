@@ -125,7 +125,10 @@ if(APPLE)
   # close code / handshake header 解析这些 wire 层行为跨平台不漂移，才谈得上单一契约（CLAUDE.md §5 §7）。
   # 注意口径是「版本号对齐」而非字节级同源：vcpkg port 可能带 vcpkg 侧补丁，这里 FetchContent 拉的是
   # 上游裸 tag。两侧真出现行为差异时以本注释为排查起点（见 PR #19 审查）。
-  set(IXWEBSOCKET_TAG "v12.0.1" CACHE STRING "IXWebSocket pinned git tag")
+  # 钉 40 位 commit SHA 而不是 tag 名(CLAUDE.md §0 铁律 3 的同源要求:tag 是可变 ref,上游重指后
+  # 静态链进 .vst3/.component 的依赖会静默换掉,且没有任何机器检查能发现;采纳 PR #24 review)。
+  # 该 SHA = 上游 tag v12.0.1 当时指向的 commit(git ls-remote --tags 核对),注释保留 tag 名便于升级。
+  set(IXWEBSOCKET_TAG "64fae7676bd8fe31f7cb4bcde7a6841892dad65e" CACHE STRING "IXWebSocket pinned commit SHA (= tag v12.0.1)")
   # 桥 #2 只在 127.0.0.1 上服务明文 ws://（见 VstBridgeServer::start），无 TLS 需求；
   # 关 TLS 即不需要 mbedtls/Security.framework。CMP0077=NEW 下 set 可压过 option，CACHE FORCE 双保险。
   set(USE_TLS             OFF CACHE BOOL "" FORCE)
@@ -142,10 +145,11 @@ if(APPLE)
   set(IXWEBSOCKET_INSTALL OFF CACHE BOOL "" FORCE)
   # USE_ZLIB 保持上游默认 ON（与 vcpkg port 一致，permessage-deflate 行为跨平台不漂移）；macOS SDK 自带 libz。
   include(FetchContent)
+  # 不能再 GIT_SHALLOW:浅克隆是 `git fetch --depth 1 <ref>`,只对分支名/tag 名成立,给裸 commit SHA
+  # 会 fetch 失败、配置期直接炸。代价是 mac 侧配置期多克隆一份完整历史(上游仓很小)。
   FetchContent_Declare(ixwebsocket
     GIT_REPOSITORY https://github.com/machinezone/IXWebSocket.git
-    GIT_TAG        ${IXWEBSOCKET_TAG}
-    GIT_SHALLOW    TRUE)
+    GIT_TAG        ${IXWEBSOCKET_TAG})   # v12.0.1
   FetchContent_MakeAvailable(ixwebsocket)
   # 上游自带 ALIAS ixwebsocket::ixwebsocket 且 include 目录 PUBLIC，link 行无需分支。
 else()

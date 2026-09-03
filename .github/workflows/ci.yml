@@ -172,10 +172,14 @@ jobs:
       #    ref_name 经 env 间接读入,不直接插值进脚本:分支名允许 '$'、';' 等字符,直接插值即注入面。
       #    MAC_ZIP 也在这里算:定值 zip 名会让不同 PR 的 artifact 解压到同一目录时互相覆盖
       #    且看不出区别,故把 slug 与短 sha 编进内层 zip 名(外层 artifact 名同样带)。
+      #    PR 事件下 github.ref_name 是 "<n>/merge"、GITHUB_SHA 是合并提交:与外层 artifact 名用的
+      #    head.sha 对不上,排障时会误以为拿错产物(采纳 #24 review)。故两者在 PR 下统一取 head 侧
+      #    (分支名 + head sha),push 事件下回落到 ref_name / sha —— 内外层永远同一对值。
       - name: Resolve pinned versions & ref slug
         shell: bash
         env:
-          REF_NAME: ${{ github.ref_name }}
+          REF_NAME: ${{ github.event.pull_request.head.ref || github.ref_name }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           set -euo pipefail
           juce=$(tr -d '[:space:]' < .juce-version)
@@ -187,7 +191,7 @@ jobs:
           echo "JUCE_TAG=$juce"      >> "$GITHUB_ENV"
           echo "PLUGINVAL_TAG=$pv"   >> "$GITHUB_ENV"
           echo "REF_SLUG=$slug"      >> "$GITHUB_ENV"
-          echo "MAC_ZIP=SynchainBridge-macos-arm64-${slug}-${GITHUB_SHA:0:7}.zip" >> "$GITHUB_ENV"
+          echo "MAC_ZIP=SynchainBridge-macos-arm64-${slug}-${HEAD_SHA:0:7}.zip" >> "$GITHUB_ENV"
 
       # 1) 工具链留痕:runner 镜像每月轮换,Xcode/SDK/CMake 一动构建行为就可能变,
       #    出问题时这段日志是判断「代码回归 or 镜像漂移」的第一手材料。
@@ -368,6 +372,18 @@ jobs:
             exit 1
           fi
           echo "auval OK"
+
+      # 8b) 发行打包脚本冒烟(采纳 #24 review):scripts/package-macos.sh 只挂在 release.yml 的 tag
+      #     触发上,不在这里真跑一次,它的六条硬断言与 ditto/awk 细节在任何 PR 上都得不到执行;而
+      #     publish 是 needs 两个平台,mac 打包一回归 = 整个 tag 零资产,发现时机是打 tag 那一刻。
+      #     build 产物此时就在手边,增量成本近零。产物丢弃,只看退出码;版本号用 0.0.0-ci 一眼可辨,
+      #     INSTALL.txt 里的源码 URL 因而指向不存在的 tag —— 这是冒烟件,不是分发件。
+      - name: Package smoke (scripts/package-macos.sh, artefacts discarded)
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash scripts/package-macos.sh --version 0.0.0-ci --build-dir build --out-dir "$RUNNER_TEMP/package-smoke"
+          ls -l "$RUNNER_TEMP/package-smoke"
 
       # 9) artifact 传输封装(**不是发行打包**):这里只解决 upload-artifact 不保留 POSIX
       #    权限位的问题 —— 直接传 bundle 目录 = 下载方拿到不可执行的死壳。合规文件 /
