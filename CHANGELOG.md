@@ -258,3 +258,5 @@
 
 - 本地:VS2019 + JUCE 8.0.8 构建,`pluginval --strictness-level 5`(含 WebView2 编辑器)**全量通过**。
 - CI(windows-2022):构建 + `pluginval --skip-gui-tests` strictness-5 通过(无头 Server 无法托管 WebView2 编辑器,编辑器在本地 Win11 验证)。
+
+<!-- dco negative-path probe: 本行由 test/dco-negative 分支临时添加，验证后随分支删除 -->
