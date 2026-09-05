@@ -14,9 +14,13 @@
 - 给默认分支 `dev` 与未来的生产分支加保护（Settings → Branches）：
   - 强制 PR 合并（单人开发时 required approvals = 0，否则自己无法批准自己的 PR，永久卡死）
   - enforce_admins = true（禁强推、禁删分支，对管理员同样生效）
-  - required status checks 先确认该 CI 在目标分支真的会触发再加，否则 PR 会卡住
+  - required status checks 先确认该 CI 在目标分支真的会触发再加，否则 PR 会卡住。**反例已发生**：`contract-impact`
+    （`contract-guard.yml`）带 `paths:` 过滤，不碰契约文件的 PR 不会产生该 check run，配成 required 后会一直
+    「Expected — waiting for status」卡死合并；PR #24 review 指出后从 required 里移除（契约面的兜底由无 paths
+    过滤的 `branch-gate` Frozen-contract change guard 承担）
   - ⚠️ macOS job 合入后，required checks 需**手工**补 `build-and-validate-macos`（新 job 不会自动成为必需检查；
-    不加的话 mac 侧回归红了照样能合——发版侧「任一平台失败 = 整个 tag 无产物」的口径在 CI 侧就靠这一条）
+    不加的话 mac 侧回归红了照样能合——发版侧「任一平台失败 = 整个 tag 无产物」的口径在 CI 侧就靠这一条）。
+    目标集合：`branch-gate` / `compliance` / `clang-format` / `build-and-validate` / `build-and-validate-macos`（均无 paths 过滤）
 
 ## 3. GitHub Actions
 - `allowed_actions` 保持 `selected`（现已配置）

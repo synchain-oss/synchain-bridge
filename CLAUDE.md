@@ -62,10 +62,12 @@
 
 任何协议改动必须:① 写兼容性说明(旧客户端遇到新插件、新客户端遇到旧插件各自的行为);② 在本仓 CHANGELOG 的「契约变更」小节记录;③ 在 PR 描述里 @ 主仓维护者同步。
 
-机器强制(两道,均为 dev 的 required check):`contract-guard` 要求触碰契约相关文件的 PR body 含 `contract-impact: none|minor|major`;
-`branch-gate` 的 Frozen-contract change guard 在触碰冻结面(`BRIDGE_CONTRACT.md`、`src/WebSocketProtocol.{h,cpp}`)且级别为
-minor / major 时,要求同一 PR 新增 `docs/contract-changes/<YYYYMMDD>-<slug>.md`(模板 `docs/contract-changes/TEMPLATE.md`,
-兼容性说明①落在这里);`none`(纯文档澄清 / 登记快照)只登记不拦。
+机器强制两道,分级对齐、覆盖面不同:`contract-guard`(带 `paths:` 过滤,只在触碰六个契约相关文件时才触发,因此**不能**配成
+required check,否则不碰契约的 PR 会一直 pending)要求 PR body 含 `contract-impact: none|minor|major`;`branch-gate`(dev 的
+required check,无 paths 过滤)的 Frozen-contract change guard 在触碰冻结面(`BRIDGE_CONTRACT.md`、`src/WebSocketProtocol.{h,cpp}`、
+`src/BridgeApi.h`)时读 body 的最严 `contract-impact` 值:只碰 `BRIDGE_CONTRACT.md` 且为 `none`(纯文档澄清 / 登记快照)只登记不拦;
+其余情况(minor / major、未申报、或碰到 wire 源码 / 常量面)一律要求同一 PR 新增 `docs/contract-changes/<YYYYMMDD>-<slug>.md`
+(模板 `docs/contract-changes/TEMPLATE.md`,兼容性说明①落在这里)。
 
 ## 6. 环境与依赖
 

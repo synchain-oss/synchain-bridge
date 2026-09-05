@@ -165,20 +165,28 @@ jobs:
           # 不需要变更文档就过 —— 比就地改一行更危险。status=="renamed" 的条目带 previous_filename,一并纳入。
           files=$(jq -r '.[] | (.filename, (.previous_filename // empty))' "$RUNNER_TEMP/files.json")
           # 【本段判据为 Bridge 仓专属,不与 SCVB/CLI 逐字同源】冻结面 = CLAUDE.md §5 定为唯一协议真源的
-          # BRIDGE_CONTRACT.md + wire 层定义 src/WebSocketProtocol.{h,cpp}。此前这里照抄的是 SCVB 的四个路径
-          # (docs/PARAMETERS.md 等),在本仓一个都不存在,守卫恒不命中(PR #24 review 连提四轮)。
-          touched=$(printf '%s\n' "$files" | grep -E '^(BRIDGE_CONTRACT\.md|src/WebSocketProtocol\.(h|cpp))$' || true)
+          # BRIDGE_CONTRACT.md + wire 层定义 src/WebSocketProtocol.{h,cpp} + 常量声明面 src/BridgeApi.h
+          # (DefaultPort / ContractVersion,§7 逐字冻结)。与 contract-guard.yml 的 paths 相比刻意不含
+          # src/VstBridgeServer.{h,cpp}:那是实现文件,任何重构都会碰,要求变更说明的误伤面太大 ——
+          # 两道门是「分级对齐、覆盖面不同」。此前这里照抄的是 SCVB 的四个路径(docs/PARAMETERS.md 等),
+          # 在本仓一个都不存在,守卫恒不命中(PR #24 review 连提四轮)。
+          touched=$(printf '%s\n' "$files" | grep -E '^(BRIDGE_CONTRACT\.md|src/WebSocketProtocol\.(h|cpp)|src/BridgeApi\.h)$' || true)
           if [ -n "$touched" ]; then
-            # 与 contract-guard.yml 的分级对齐(CLAUDE.md §5):PR body 的 contract-impact 为 none(纯文档澄清 /
-            # 登记快照,wire 零变化)时只登记不拦;minor / major 必须在同一个 PR 里新增一份变更说明
-            # docs/contract-changes/<YYYYMMDD>-<slug>.md(兼容性说明:旧客户端遇新插件、新客户端遇旧插件),
-            # 模板见 docs/contract-changes/TEMPLATE.md。body 缺 contract-impact 行时 contract-guard 已经会红,
-            # 这里按「未申报 = 需要说明」处理,不放行。
-            impact=$(gh api "/repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}" --jq '.body // ""' \
-              | grep -oE 'contract-impact:[[:space:]]*(none|minor|major)\b' | head -n 1 | grep -oE '(none|minor|major)$' || true)
-            echo "frozen-contract guard: touched contract surface (impact=${impact:-unset}):"
+            # 与 contract-guard.yml 的分级对齐(CLAUDE.md §5)。impact 从 PR body 读:同一套 fail-closed
+            # (端点失败 = step 失败,不吞成 unset);body 里可能同时出现多个 contract-impact 字面串(例如把
+            # 上轮 review 的「contract-impact: none 属实」粘进 body),故收集全部匹配后取**最严**值,不依赖行序。
+            gh api "/repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}" --jq '.body // ""' > "$RUNNER_TEMP/pr-body.txt"
+            impacts=$(grep -oE 'contract-impact:[[:space:]]*(none|minor|major)\b' "$RUNNER_TEMP/pr-body.txt" | grep -oE '(none|minor|major)$' | sort -u || true)
+            impact=unset
+            for level in none minor major; do
+              if printf '%s\n' "$impacts" | grep -qx "$level"; then impact=$level; fi
+            done
+            echo "frozen-contract guard: touched contract surface (impact=$impact):"
             printf '%s\n' "$touched" | sed 's/^/  /'
-            if [ "$impact" != "none" ]; then
+            # `none` 免检只对「只碰了 BRIDGE_CONTRACT.md」(登记快照 / 纯文档澄清)生效:碰到 wire 源码或常量面时
+            # 「wire 零变化」是作者自申报、无人复核,一律要求变更说明(采纳 #24 review【重要】)。
+            src_touched=$(printf '%s\n' "$touched" | grep -E '^src/' || true)
+            if [ "$impact" != "none" ] || [ -n "$src_touched" ]; then
               # 凭据面与触碰面分开取:触碰面尽量宽(含 renamed 旧路径),凭据面尽量严 —— 只认 status 为 added
               # 且落在 docs/contract-changes/ 下的新文档。若共用上面的 $files,把一份旧变更文档 `git mv` 走
               # (previous_filename 命中)或 `git rm` 掉(filename 仍在列表)都会被当成「已交变更文档」放行
@@ -187,7 +195,7 @@ jobs:
               doc=$(jq -r '.[] | select(.status == "added") | .filename' "$RUNNER_TEMP/files.json" \
                 | grep -E '^docs/contract-changes/[0-9]{8}-.+\.md$' || true)
               if [ -z "$doc" ]; then
-                echo "::error::本 PR 触碰了冻结契约面且 contract-impact=${impact:-unset}(非 none):必须在同一个 PR 里新增 docs/contract-changes/<YYYYMMDD>-<slug>.md(模板见 docs/contract-changes/TEMPLATE.md),写清兼容性说明,并挂 status/frozen-contract 标签由维护者批准。"
+                echo "::error::本 PR 触碰了冻结契约面(contract-impact=$impact;wire 源码/常量面被触碰时 none 不免检):必须在同一个 PR 里新增 docs/contract-changes/<YYYYMMDD>-<slug>.md(模板见 docs/contract-changes/TEMPLATE.md),写清兼容性说明,并挂 status/frozen-contract 标签由维护者批准。"
                 exit 1
               fi
               echo "frozen-contract guard: change doc present:"; printf '%s\n' "$doc" | sed 's/^/  /'
