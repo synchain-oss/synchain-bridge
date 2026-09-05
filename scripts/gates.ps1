@@ -3,6 +3,8 @@
 .DESCRIPTION
   结构同 06 §5.1,但只有一个 bundle;额外含 vcpkg ixwebsocket 预检(gate 1)、
   端口 9420 一致性检查(gate 3d:src/BridgeApi.h ↔ web/bridge.js ↔ web-preview/mock-server.mjs)、
+  版本一致性检查(gate 3e:CMakeLists.txt project(VERSION) ↔ web-preview 的 mock-server.mjs /
+  package.json / package-lock.json ↔ BRIDGE_CONTRACT.md §三 VERSION 行)、
   字体 name 表 RFN 断言(gate 3b2,与 compliance.yml 同参)与 Origin 白名单纯函数自测(gate 5b)。
   任一 gate FAIL 即以非零码退出,最后打印一张可直接粘进 PR 描述的表格。
 .EXAMPLE   pwsh scripts/gates.ps1                         # 全量(含 GUI pluginval)
@@ -242,6 +244,78 @@ function Test-Port {
     return $ok
 }
 
+# ---- gate 3e:版本一致性(CMake 真源 ↔ web-preview 三处镜像 ↔ BRIDGE_CONTRACT.md §三) ----
+# CLAUDE.md §9:版本号真源 = CMakeLists.txt 的 project(... VERSION)。web-preview 的 mock server 会把
+# PLUGIN_VERSION 当作插件版本上报给网页,漂了就等于向网页谎报一个不存在的插件版本。BRIDGE_CONTRACT.md
+# §三的 VERSION 行是给两端实现看的登记快照,漂了等于协议文档写错版本(实际漂过一次,见 PR #19 审查)。
+# CI 的版本门禁只在打 tag 时比 tag ↔ CMake,不覆盖这四处镜像,故在本地 gate 里断死。
+function Test-Version {
+    $ok = $true
+    $detail = ''
+    $cmakePath = Join-Path $RepoRoot 'CMakeLists.txt'
+    $src = $null
+    if (-not (Test-Path $cmakePath)) {
+        $ok = $false; $detail = 'CMakeLists.txt 不存在'
+    } else {
+        $cmakeText = Get-Content -LiteralPath $cmakePath -Raw
+        # 真源取值先剔 CMake 行注释:注释里留着旧版本的 `project(... VERSION x.y.z)`(说明、示例、被注掉的
+        # 旧行)会被 -match 先命中,于是拿一个陈旧版本当真源,再拿它去比镜像 —— 本 gate 会全绿地比错。
+        # 剔完再断言「恰好一处」:多于一处说明真源本身有歧义,报错比静默取第一处安全。
+        $cmakeCode = (($cmakeText -split "`r?`n") -replace '#.*$', '') -join "`n"
+        $vm = [regex]::Matches($cmakeCode, 'project\s*\(\s*\S+\s+VERSION\s+([0-9]+\.[0-9]+\.[0-9]+)')
+        if ($vm.Count -eq 1) {
+            $src = $vm[0].Groups[1].Value
+        } elseif ($vm.Count -eq 0) {
+            $ok = $false; $detail = 'CMakeLists.txt 未找到 project(... VERSION x.y.z)'
+        } else {
+            $ok = $false; $detail = 'CMakeLists.txt 有 ' + $vm.Count + ' 处 project(... VERSION),真源有歧义'
+        }
+    }
+    if ($ok) {
+        # 镜像取值一律走「定点读取」,不做全文件 grep:package-lock.json 里 ws 依赖自己也有 "version",
+        # 宽正则会把它一起比进来。JSON 走 ConvertFrom-Json 取指定字段,.mjs 走常量名锚定的正则。
+        $bad = @()
+        $seen = @()
+        function Get-Mirror([string]$rel, [scriptblock]$reader) {
+            $path = Join-Path $RepoRoot $rel
+            if (-not (Test-Path $path)) { return @{ Err = ($rel + '(不存在)') } }
+            $text = Get-Content -LiteralPath $path -Raw
+            $vals = & $reader $text
+            $vals = @($vals | Where-Object { $_ })
+            if ($vals.Count -eq 0) { return @{ Err = ($rel + '(未找到版本号)') } }
+            return @{ Vals = $vals }
+        }
+        $readers = [ordered]@{
+            'web-preview/mock-server.mjs'   = { param($t) if ($t -match 'PLUGIN_VERSION\s*=\s*"([^"]+)"') { $Matches[1] } }
+            'web-preview/package.json'      = { param($t) ($t | ConvertFrom-Json).version }
+            'web-preview/package-lock.json' = { param($t)
+                # lockfile v3 的根包挂在 packages 的**空字符串键**下,ConvertFrom-Json 不带
+                # -AsHashtable 时会直接报错(PSCustomObject 不支持空属性名),故这里必须用哈希表。
+                $j = $t | ConvertFrom-Json -AsHashtable
+                @($j['version'], $j['packages']['']['version'])
+            }
+            # §三是一张 markdown 表:锚定行首竖线 + 单元格恰为 VERSION,避开同表的 BRIDGE_CONTRACT_VERSION 行
+            # (那是协议版本,独立于插件版本,不参与本 gate)。
+            'BRIDGE_CONTRACT.md'            = { param($t) if ($t -match '(?m)^\|\s*VERSION\s*\|\s*`([0-9]+\.[0-9]+\.[0-9]+)`') { $Matches[1] } }
+        }
+        foreach ($rel in $readers.Keys) {
+            $r = Get-Mirror $rel $readers[$rel]
+            if ($r.Err) { $ok = $false; $bad += $r.Err; continue }
+            foreach ($v in $r.Vals) {
+                $seen += ($rel + '=' + $v)
+                if ($v -ne $src) { $ok = $false; $bad += ($rel + '=' + $v) }
+            }
+        }
+        if ($ok) {
+            $detail = 'CMake=' + $src + ' == ' + ($seen -join ' / ')
+        } else {
+            $detail = '与 CMake ' + $src + ' 不一致: ' + ($bad -join ' / ')
+        }
+    }
+    Add-Result '版本一致性 (CMake ↔ web-preview ↔ BRIDGE_CONTRACT)' ($(if ($ok) { 'PASS' } else { 'FAIL' })) $detail
+    return $ok
+}
+
 # ---- gate 4:cmake 配置 ----
 function Test-Configure {
     $ok = $true
@@ -349,7 +423,7 @@ Write-Host ('  BuildDir: ' + $BuildDir)
 Write-Host ('  Mode    : ' + $(if ($Quick) { 'Quick(跳过 pluginval)' } elseif ($PluginOnly) { 'PluginOnly(跳过 GUI pluginval)' } else { '全量(含 GUI pluginval)' }))
 Write-Host ''
 
-# 只读 gate(1,2,3,3b,3b2,3c,3d)恒跑,互不依赖
+# 只读 gate(1,2,3,3b,3b2,3c,3d,3e)恒跑,互不依赖
 $roOk = $true
 $roOk = (Test-Deps) -and $roOk
 $roOk = (Test-ClangFormat) -and $roOk
@@ -358,6 +432,7 @@ $roOk = (Test-Gitleaks) -and $roOk
 $roOk = (Test-FontNames) -and $roOk
 $roOk = (Test-Reuse) -and $roOk
 $roOk = (Test-Port) -and $roOk
+$roOk = (Test-Version) -and $roOk
 
 if (-not $roOk) {
     Add-Result 'cmake 配置' 'SKIP' '只读 gate 失败,跳过'

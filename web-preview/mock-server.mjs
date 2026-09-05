@@ -24,7 +24,7 @@ const BLOCK_MS = (BLOCK_SIZE / SAMPLE_RATE) * 1000;
 const LATENCY_MS = BLOCK_MS;
 const OPUS_BITRATE = 128000;
 const PLUGIN_NAME = "Synchain Bridge (mock)";
-const PLUGIN_VERSION = "1.4.0";
+const PLUGIN_VERSION = "1.5.0";
 const CONTRACT_VERSION = "2.0";
 
 const HEARTBEAT_MS = 5000;

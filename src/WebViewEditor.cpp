@@ -33,8 +33,10 @@ constexpr int kDesignW = 460;
 constexpr int kDesignH = 560;
 
 // -----------------------------------------------------------------------------
-// FallbackPanel — WebView2 运行时缺失时的最小原生兜底面板。
-// 仅提供 Start/Stop + 端口 + 状态，保证在锁定的 Windows 环境仍可控制桥 #2。
+// FallbackPanel — WebView 起不来时的最小原生兜底面板。
+// 仅提供 Start/Stop + 端口 + 状态，保证 UI 加载失败时仍可控制桥 #2。
+// missingRuntime 分支（缺 WebView2 运行时）只可能在 Windows 出现，故其文案保留 WebView2 表述；
+// LoadTimeout 分支两个平台都可达（mac 的 WKWebView 冷启动同样可能超时），文案保持平台中立。
 // -----------------------------------------------------------------------------
 class FallbackPanel final : public juce::Component, private juce::Timer
 {
@@ -53,7 +55,7 @@ public:
                              ? "Microsoft Edge WebView2 Runtime was not found, so the full UI cannot load.\n"
                                "This plugin needs an internet connection to work anyway - install the runtime "
                                "once, then reopen this plugin window."
-                             : "The WebView is taking too long to load (possibly a first-time cold start).\n"
+                             : "The plugin UI is taking too long to load (possibly a first-time cold start).\n"
                                "Click Retry, or close and reopen this plugin window.",
                          juce::dontSendNotification);
         mMessage.setJustificationType(juce::Justification::centredTop);

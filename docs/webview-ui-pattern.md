@@ -82,7 +82,7 @@
 
 ### 13. 本地字体 + 字体栈回落
 - **复制来源**：`web/styles.css:19-42`（`@font-face`）、`44-55`（`:root` 字体变量）、`60-73`（禁滚动，与 §14 同一段）
-- **坑**：DAW 离线，**无 Google Fonts / CDN**；子集 WOFF2 随插件打包（`CMakeLists.txt:90-93`）。CJK 走内嵌 `Noto Sans SC`（排在拉丁字体之后、系统字体之前），`font-display:swap` + `font-synthesis:none` 保证离线确定性渲染、不阻塞、不发糊。子集脚本见 `web/fonts/README.md`。
+- **坑**：DAW 离线，**无 Google Fonts / CDN**；子集 WOFF2 随插件打包（`CMakeLists.txt` 的 `juce_add_binary_data(SynchainBridgeWebAssets ...)` 里的四项 `web/fonts/*.woff2`）。CJK 走内嵌 `Noto Sans SC`（排在拉丁字体之后、系统字体之前），`font-display:swap` + `font-synthesis:none` 保证离线确定性渲染、不阻塞、不发糊。子集脚本见 `web/fonts/README.md`。
 - **命名**：拉丁正文/等宽两族以 `Bridge Sans` / `Bridge Mono` 分发——子集 = OFL 意义上的 Modified Version，§3 的保留字体名不许沿用，故分发名与上游家族名不同（来源家族与核验见 `THIRD-PARTY-NOTICES.md`）。SCVB 复制时若子集同一上游家族，需自取一个不含保留字体名的分发名。
 
 ### 14. 视口锁死 + 玻璃拟态卡片
@@ -105,21 +105,24 @@
 
 ## §C CMake 构建骨架（`CMakeLists.txt`）
 
+> 本节一律按 **CMake 构造名**定位，不写行号：`CMakeLists.txt` 每加一个平台就整体移位（macOS 支持一次就把
+> `project()` 之后的内容推下 12～48 行），而失准的行号引用不会自证失效——读者照着跳过去只会落在别的段落上。
+
 ### 18. 静态 CRT 在 `project()` 之前
-- **复制来源**：`CMakeLists.txt:3-9`
+- **复制来源**：`CMakeLists.txt` 开头、`project()` **之前**的那一段（`CMAKE_MSVC_RUNTIME_LIBRARY` + `CMAKE_CXX_STANDARD`）
 - **坑**：`/MT` 必须写在 `project()` 之前，与 `x64-windows-static` triplet 和 WebView2 静态 loader 对齐；顺序颠倒 → LNK2038。
 
 ### 19. WebView2 NuGet 配置期自动拉取
-- **复制来源**：`CMakeLists.txt:24-57`
+- **复制来源**：`CMakeLists.txt` 的 `if(WIN32)` WebView2 块（`WEBVIEW2_VERSION` → `nuget install` → `JUCE_WEBVIEW2_PACKAGE_LOCATION`）
 - **坑**：JUCE `NEEDS_WEBVIEW2` 只查找+链接、不下载；拉取到确定性目录 `build/packages` + `JUCE_WEBVIEW2_PACKAGE_LOCATION`，不依赖 `%USERPROFILE%`（CI 可复现）。
 
 ### 20. `juce_add_binary_data` 资源嵌入
-- **复制来源**：`CMakeLists.txt:81-93`
+- **复制来源**：`CMakeLists.txt` 的 `juce_add_binary_data(SynchainBridgeWebAssets SOURCES ...)` 整块
 - **坑**：生成 `BinaryData::*` 静态库，resource provider 按 `originalFilenames` 反查原始文件名（见 §A 条目 5）。SCVB 只换 `SOURCES` 列表为自己的 web 资源文件名，并相应换 BinaryData 命名空间。
 
 ### 21. 编译宏组合
-- **复制来源**：`CMakeLists.txt:144-153`
-- **坑**：`JUCE_WEB_BROWSER=1` + `JUCE_USE_WIN_WEBVIEW2=1` + `JUCE_USE_WIN_WEBVIEW2_WITH_STATIC_LINKING=1` 三者必要且易漏；`juce_add_plugin` 还要 `NEEDS_WEBVIEW2 TRUE`（`CMakeLists.txt:75`）。
+- **复制来源**：`CMakeLists.txt` 的 `# --- Compile Definitions ---` 段（`target_compile_definitions(... PUBLIC ...)` 加其后的 `if(WIN32)` 分支）
+- **坑**：`JUCE_WEB_BROWSER=1` + `JUCE_USE_WIN_WEBVIEW2=1` + `JUCE_USE_WIN_WEBVIEW2_WITH_STATIC_LINKING=1` 三者必要且易漏；`juce_add_plugin` 还要 `NEEDS_WEBVIEW2 TRUE` 参数。
 
 ---
 

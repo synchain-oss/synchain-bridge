@@ -26,7 +26,7 @@
 - **fork PR 门禁政策(J31/J41,唯一政策)**：
   - fork → **任意分支名**(不要用 `dev`/`stage`/`prod`/`feature/v1`/`feature/extraction`)→ PR 到 `dev`;
   - `branch-gate` 对 fork **不 exit 1**,只校验 head 分支名不在上述长期分支名集合(防同名伪装晋升),不强制 `feat/*` 命名;
-  - fork PR 只跑无 secrets 的构建/测试(`build-and-validate` / `clang-format` / `branch-gate` / `compliance`);三个 review bot 因 `head.repo.full_name == base.repo.full_name` 条件一律不自动跑;
+  - fork PR 只跑无 secrets 的构建/测试(`build-and-validate` / `build-and-validate-macos` / `clang-format` / `branch-gate` / `compliance`);三个 review bot 因 `head.repo.full_name == base.repo.full_name` 条件一律不自动跑;
   - `external` label 由**维护者手工添加**(fork PR 的 `GITHUB_TOKEN` 只读,workflow 内加不了标签,不要用 `pull_request_target` 绕);
   - fork PR 唯一的 AI 审查通道 = 维护者评论 `/review` 显式触发(方案 D,`.github/workflows/review-dispatch.yml`)。
 - commit 规范:`type(scope): 中文描述`,全部 `git commit -s`(Signed-off-by)。
@@ -43,12 +43,12 @@
 
 ## 4. 各 Workflow 触发范围一览
 
-- `build-vst3`(job `build-and-validate`)/ `format`(job `clang-format`)/ `branch-gate`:`pull_request → dev` + `push → dev, 'feature/**'`。
+- `ci`(job `build-and-validate` = windows-2022;job `build-and-validate-macos` = macos-15,VST3 + AU,arm64-only)/ `format`(job `clang-format`)/ `branch-gate`:`pull_request → dev` + `push → dev, 'feature/**'`。
 - `compliance`(gitleaks + reuse lint):同触发面,无 secrets,fork PR 同样跑。
 - `claude-review`:所有 base 分支、仅 same-repo(J31);`deepseek-review` / `pr-agent` 默认 disable。
-- `release`:push tags `v*` 触发草稿 Release(版本一致性门禁 + pluginval + zip/sha256)。
+- `release`:push tags `v*` 触发草稿 Release,四段式 `gate`(版本一致性门禁,ubuntu-latest)→ `release`(windows-2022)∥ `release-macos`(macos-15)→ `publish`(ubuntu-latest,复验 sha256 后建 draft)。workflow 级 `contents: read`,`contents: write` 只授给 `publish` 一个 job。**任一平台失败 = 整个 tag 无产物**(处理办法见 `docs/release.md` §6.1)。
 - `review-dispatch`:维护者评论 `/review` 显式触发(fork PR 唯一 AI 审查通道)。
-- 成本纪律:runner 就低不就高(V-4 确认前一律 `ubuntu-latest`)、按量计费 bot 克制使用。
+- 成本纪律:runner 就低不就高(V-4 确认前一律 `ubuntu-latest`)、按量计费 bot 克制使用。**例外(待用户拍板)**:`build-and-validate-macos` 必须跑 GitHub 托管 macOS runner(按 **10 倍分钟数**计费),且当前继承整个 `ci` 工作流的触发面、全开;若要收敛,给 job 加 label/事件闸门是最小改动。
 
 ## 5. 协议变更规范
 
@@ -62,9 +62,18 @@
 
 任何协议改动必须:① 写兼容性说明(旧客户端遇到新插件、新客户端遇到旧插件各自的行为);② 在本仓 CHANGELOG 的「契约变更」小节记录;③ 在 PR 描述里 @ 主仓维护者同步。
 
+机器强制两道,分级对齐、覆盖面不同:`contract-guard`(带 `paths:` 过滤,只在触碰六个契约相关文件时才触发,因此**不能**配成
+required check,否则不碰契约的 PR 会一直 pending)要求 PR body 含 `contract-impact: none|minor|major`;`branch-gate`(dev 的
+required check,无 paths 过滤)的 Frozen-contract change guard 守同一组六个文件、分两档,并读 body 的最严 `contract-impact` 值:
+**strict**(`src/WebSocketProtocol.{h,cpp}`、`src/BridgeApi.h`)碰到即要求同一 PR 新增 `docs/contract-changes/<YYYYMMDD>-<slug>.md`
+(模板 `docs/contract-changes/TEMPLATE.md`,兼容性说明①落在这里),自申报 `none` 不免检;**loose**(`BRIDGE_CONTRACT.md`、
+`src/VstBridgeServer.{h,cpp}`)申报 `none`(纯文档澄清 / 登记快照 / 不动 wire 的重构)只登记不拦,minor / major 或未申报同样要求变更说明。
+
 ## 6. 环境与依赖
 
-- JUCE(版本见 `.juce-version`)、CMake ≥3.22、MSVC 2022(静态 CRT `/MT`)、WebView2 SDK(NuGet,版本常量单一真源)+ WebView2 Evergreen Runtime、pluginval v1.0.4(见 `.pluginval-version`)、ixwebsocket(vcpkg `x64-windows-static`)。
+- Windows:JUCE(版本见 `.juce-version`)、CMake ≥3.22、MSVC 2022(静态 CRT `/MT`)、WebView2 SDK(NuGet,版本常量单一真源)+ WebView2 Evergreen Runtime、pluginval(版本见 `.pluginval-version`)、ixwebsocket(vcpkg `x64-windows-static`)。
+- macOS(Apple Silicon):JUCE 同一真源、CMake ≥3.22 + **Ninja**、Xcode command line tools(clang,`-Wall -Wextra -Wpedantic`)、pluginval 同一真源 + **`auval`**(AU 唯一验收工具,以输出里的 `AU VALIDATION SUCCEEDED` 判定,退出码不可靠)、ixwebsocket 走 CMake `FetchContent`(tag 钉死,与 Windows 侧 vcpkg 同版本)。产物为 **VST3 + AU**、**arm64-only**(v1 不出 universal / x86_64),不签名不公证;CI runner = `macos-15`。构建细节见 `docs/build-macos.md`。
+- 本地 gates(`scripts/gates.ps1`)目前仍是纯 Windows 实现(vswhere / VS 生成器 / nuget / `pluginval.exe`),mac 侧本地验收按 `docs/build-macos.md` 手工执行。
 - 构建流水线不需要任何 secret(06 §3.1);review bot 用 org secrets(`CLAUDE_CODE_OAUTH_TOKEN` / `DEEPSEEK_KEY`)。
 
 ## 7. 跨仓库协议规范
@@ -85,5 +94,6 @@ Bridge 特有:PCM 发送由后台发送线程经 SPSC ring 转投(移出音频�
 
 - 抽取为公开仓库后 **GitHub Releases 才是真正公开可下载的渠道**(private 仓的 Release 附件匿名下载走不通)。
 - 版本号真源 = 顶层 `CMakeLists.txt` 的 `project(... VERSION)`;网页侧(闭源仓库)存在一份下游版本镜像,发版后必须同步。
-- tag 格式 `vX.Y.Z`(去掉 `vst-` 前缀);首个公开 tag = `v1.4.0`(U6)。
+- tag 格式 `vX.Y.Z`(去掉 `vst-` 前缀);首个公开 tag = `v1.4.0`(U6,历史事实——实际打 tag 以 CMake 当前 VERSION 为准,gate 强制相等)。`*-test` 结尾的冒烟 tag 跳过严格版本相等、产物恒为 draft,改过发版链路后先用它端到端实跑(`docs/release.md` §5.1)。
+- Release 资产两个平台各一个,均附同名 `.sha256`:`SynchainBridge-VST3-v<版本>-win64.zip`(VST3)与 `SynchainBridge-VST3-AU-v<版本>-macos-arm64.zip`(VST3 + AU,arm64-only,不签名不公证)。打包唯一真源 = `scripts/package.ps1` / `scripts/package-macos.sh`,绝不在 workflow 里内联打包命令。
 - R2 固定 key 覆盖上传是否保留由 08 文档决策;本仓不默认启用。

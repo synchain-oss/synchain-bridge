@@ -6,7 +6,19 @@ set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-project(SynchainBridgeVST VERSION 1.4.0)
+# --- macOS 目标设定（必须在 project() 之前：参与编译器探测）---
+# 非 Apple 平台完全忽略这两个变量 -> Windows 零影响。project() 前 if(APPLE) 未定义，故用 NOT DEFINED 守卫（命令行可覆盖）。
+if(NOT DEFINED CMAKE_OSX_ARCHITECTURES)
+  # v1 仅 Apple Silicon。Universal 不做：双架构让 juceaide 与全部 JUCE 模块编译量翻倍。
+  set(CMAKE_OSX_ARCHITECTURES "arm64" CACHE STRING "macOS target architecture")
+endif()
+if(NOT DEFINED CMAKE_OSX_DEPLOYMENT_TARGET)
+  # 11.0 = arm64 Mac 物理下限（Big Sur 是首个支持 Apple Silicon 的系统）。
+  # 不显式设则取构建机 SDK 版本，产物会在老系统上拒绝加载——mac 移植最常见的静默事故。
+  set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0" CACHE STRING "Minimum macOS version")
+endif()
+
+project(SynchainBridgeVST VERSION 1.5.0)
 
 # Export compile_commands.json for clangd / clang-tidy (08 §3.2)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
@@ -61,12 +73,23 @@ juce_add_plugin(SynchainBridgeVST
   COMPANY_NAME        "Synchain"
   PLUGIN_MANUFACTURER_CODE Snch
   PLUGIN_CODE         Snb1
-  FORMATS             VST3
+  # AU 在非 Apple 平台被 JUCE 静默过滤掉（机制上是 no-op），故无需按平台分支。
+  # 该静默过滤行为按 JUCE 8.0.8（`.juce-version` 当前钉的版本）实证，并非 JUCE 的书面约定；
+  # 升 JUCE 版本时需在 Windows 侧重验一次「带 AU 也不影响 VST3 产物」（见 PR #19 审查）。
+  FORMATS             VST3 AU
   PRODUCT_NAME        "Synchain Bridge"
 
   # "Fx" is added automatically by JUCE for VST3 audio effects.
   # Only specify sub-categories here to avoid duplicate "Fx" in moduleinfo.json.
   VST3_CATEGORIES     "Analyzer"
+
+  # --- AU 专属 ---
+  # 显式写死 AU 类型（当前默认推导也是 Effect；写死是防将来加 NEEDS_MIDI_INPUT 时
+  # componentType 从 aufx 漂成 aumf——那等于换插件身份，用户工程里的 AU 实例全部丢失）。
+  AU_MAIN_TYPE        kAudioUnitType_Effect
+  # AU_SANDBOX_SAFE 保持 JUCE 默认 FALSE，绝对不要设 TRUE：本插件 bind 127.0.0.1 监听
+  # socket + 起 WKWebView，两者在 AU sandbox 里都会被拒。代价：GarageBand（只收
+  # sandboxSafe AU）可能拒载，Logic 以非沙箱方式加载。v1 接受，已写入 README 已知限制。
 
   # Bundle identifier
   BUNDLE_ID           "com.synchain.bridge"
@@ -94,11 +117,46 @@ juce_add_binary_data(SynchainBridgeWebAssets SOURCES
   web/fonts/NotoSansSC.woff2
 )
 
-# --- Dependencies (all static via x64-windows-static triplet) ---
+# --- Dependencies ---
+# Windows: vcpkg x64-windows-static（全静态）。macOS: FetchContent，tag 钉死，不引入包管理器。
 
-# ixwebsocket (static, bundles mbedtls for TLS — no separate OpenSSL needed)
-find_package(ixwebsocket CONFIG REQUIRED)
-find_path(IXWEBSOCKET_INCLUDE_DIR ixwebsocket/IXWebSocketServer.h REQUIRED)
+if(APPLE)
+  # 版本号对齐 Windows 侧 vcpkg port 实际安装的 ixwebsocket 12.0.1：permessage-deflate 协商 /
+  # close code / handshake header 解析这些 wire 层行为跨平台不漂移，才谈得上单一契约（CLAUDE.md §5 §7）。
+  # 注意口径是「版本号对齐」而非字节级同源：vcpkg port 可能带 vcpkg 侧补丁，这里 FetchContent 拉的是
+  # 上游裸 tag。两侧真出现行为差异时以本注释为排查起点（见 PR #19 审查）。
+  # 钉 40 位 commit SHA 而不是 tag 名(CLAUDE.md §0 铁律 3 的同源要求:tag 是可变 ref,上游重指后
+  # 静态链进 .vst3/.component 的依赖会静默换掉,且没有任何机器检查能发现;采纳 PR #24 review)。
+  # 该 SHA = 上游 tag v12.0.1 当时指向的 commit(git ls-remote --tags 核对),注释保留 tag 名便于升级。
+  set(IXWEBSOCKET_TAG "64fae7676bd8fe31f7cb4bcde7a6841892dad65e" CACHE STRING "IXWebSocket pinned commit SHA (= tag v12.0.1)")
+  # 桥 #2 只在 127.0.0.1 上服务明文 ws://（见 VstBridgeServer::start），无 TLS 需求；
+  # 关 TLS 即不需要 mbedtls/Security.framework。CMP0077=NEW 下 set 可压过 option，CACHE FORCE 双保险。
+  set(USE_TLS             OFF CACHE BOOL "" FORCE)
+  # USE_WS / USE_TEST 在上游不是 option()，只是被 if() 读的普通变量：置 ON 会 add_subdirectory(ws|test)
+  # 并顺带 FetchContent 一个 spdlog。显式写死 OFF，免得父作用域里已有的同名变量把它们带进来。
+  set(USE_WS              OFF CACHE BOOL "" FORCE)
+  set(USE_TEST            OFF CACHE BOOL "" FORCE)
+  set(BUILD_DEMO          OFF CACHE BOOL "" FORCE)
+  # 上游 option 默认 OFF，但外层只要带 -DBUILD_SHARED_LIBS=ON（superbuild，或复用了别的 build 目录的
+  # cache），ixwebsocket 就会变成 dylib：它不会被拷进 .vst3/.component 的 Frameworks，也没有任何 rpath
+  # 处理，装到 ~/Library 后换台机器直接加载失败。mac 侧产物必须自包含，故与上面五个变量同样写死。
+  set(BUILD_SHARED_LIBS   OFF CACHE BOOL "" FORCE)
+  # 上游默认 TRUE：不关掉会把 ixwebsocket 的 install 规则挂进本工程的 INSTALL 目标。
+  set(IXWEBSOCKET_INSTALL OFF CACHE BOOL "" FORCE)
+  # USE_ZLIB 保持上游默认 ON（与 vcpkg port 一致，permessage-deflate 行为跨平台不漂移）；macOS SDK 自带 libz。
+  include(FetchContent)
+  # 不能再 GIT_SHALLOW:浅克隆是 `git fetch --depth 1 <ref>`,只对分支名/tag 名成立,给裸 commit SHA
+  # 会 fetch 失败、配置期直接炸。代价是 mac 侧配置期多克隆一份完整历史(上游仓很小)。
+  FetchContent_Declare(ixwebsocket
+    GIT_REPOSITORY https://github.com/machinezone/IXWebSocket.git
+    GIT_TAG        ${IXWEBSOCKET_TAG})   # v12.0.1
+  FetchContent_MakeAvailable(ixwebsocket)
+  # 上游自带 ALIAS ixwebsocket::ixwebsocket 且 include 目录 PUBLIC，link 行无需分支。
+else()
+  # ixwebsocket (static, bundles mbedtls for TLS — no separate OpenSSL needed)
+  find_package(ixwebsocket CONFIG REQUIRED)
+  find_path(IXWEBSOCKET_INCLUDE_DIR ixwebsocket/IXWebSocketServer.h REQUIRED)
+endif()
 
 # --- Source Files ---
 target_sources(SynchainBridgeVST PRIVATE
@@ -116,10 +174,11 @@ target_sources(SynchainBridgeVST PRIVATE
 )
 
 # --- Include Directories ---
-target_include_directories(SynchainBridgeVST PRIVATE
-  ${CMAKE_CURRENT_SOURCE_DIR}/src
-  ${IXWEBSOCKET_INCLUDE_DIR}
-)
+target_include_directories(SynchainBridgeVST PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+if(NOT APPLE)
+  # APPLE 下 include 目录由 FetchContent 的 ixwebsocket target 以 PUBLIC 传递，无此变量。
+  target_include_directories(SynchainBridgeVST PRIVATE ${IXWEBSOCKET_INCLUDE_DIR})
+endif()
 
 # --- Link Libraries ---
 target_link_libraries(SynchainBridgeVST PRIVATE
@@ -223,5 +282,6 @@ endif()
 if(WIN32)
   message(STATUS "Building Synchain VST3 for Windows (static, WebView2)")
 elseif(APPLE)
-  message(STATUS "Building Synchain VST3 for macOS (WKWebView)")
+  message(STATUS "Building Synchain Bridge for macOS: VST3 + AU, "
+                 "arch=${CMAKE_OSX_ARCHITECTURES}, min=${CMAKE_OSX_DEPLOYMENT_TARGET}, WKWebView")
 endif()

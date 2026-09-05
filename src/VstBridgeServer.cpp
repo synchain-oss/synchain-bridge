@@ -294,10 +294,10 @@ void VstBridgeServer::broadcast(const juce::String& message)
 void VstBridgeServer::sendStatus(bool connected, const juce::String& pluginName, const juce::String& version,
                                  int volumePct)
 {
-    Protocol::StatusMessage msg{connected, pluginName, version, volumePct};
     // status 帧新增可选字段 contract：上报协议版本（独立于插件 version），值取自唯一真源
     // synchain::contract::ContractVersion（BridgeApi.h）。旧客户端 `??` 兜底忽略，只增不改。
-    msg.contract = contract::ContractVersion;
+    // contract 直接进聚合初始化：分两步赋值会触发 clang -Wmissing-field-initializers（零警告门）。
+    Protocol::StatusMessage msg{connected, pluginName, version, volumePct, contract::ContractVersion};
     broadcast(Protocol::serialize(msg.toJson()));
 }
 
