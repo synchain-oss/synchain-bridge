@@ -164,13 +164,16 @@ jobs:
           # 重命名也算触碰:只看 .filename 会让 `git mv BRIDGE_CONTRACT.md docs/contract-v2.md` 不触发守卫、
           # 不需要变更文档就过 —— 比就地改一行更危险。status=="renamed" 的条目带 previous_filename,一并纳入。
           files=$(jq -r '.[] | (.filename, (.previous_filename // empty))' "$RUNNER_TEMP/files.json")
-          # 【本段判据为 Bridge 仓专属,不与 SCVB/CLI 逐字同源】冻结面 = CLAUDE.md §5 定为唯一协议真源的
-          # BRIDGE_CONTRACT.md + wire 层定义 src/WebSocketProtocol.{h,cpp} + 常量声明面 src/BridgeApi.h
-          # (DefaultPort / ContractVersion,§7 逐字冻结)。与 contract-guard.yml 的 paths 相比刻意不含
-          # src/VstBridgeServer.{h,cpp}:那是实现文件,任何重构都会碰,要求变更说明的误伤面太大 ——
-          # 两道门是「分级对齐、覆盖面不同」。此前这里照抄的是 SCVB 的四个路径(docs/PARAMETERS.md 等),
-          # 在本仓一个都不存在,守卫恒不命中(PR #24 review 连提四轮)。
-          touched=$(printf '%s\n' "$files" | grep -E '^(BRIDGE_CONTRACT\.md|src/WebSocketProtocol\.(h|cpp)|src/BridgeApi\.h)$' || true)
+          # 【本段判据为 Bridge 仓专属,不与 SCVB/CLI 逐字同源】冻结面与 contract-guard.yml 的 paths 同一组
+          # 六个文件,但分两档(采纳 #24 review):
+          #   strict —— src/WebSocketProtocol.{h,cpp}(wire 层定义)+ src/BridgeApi.h(DefaultPort / ContractVersion
+          #             常量面,§7 逐字冻结):碰到即要求变更说明,body 自申报 none 不免检(「wire 零变化」无人复核)。
+          #   loose  —— BRIDGE_CONTRACT.md(登记快照 / 纯文档澄清常见)+ src/VstBridgeServer.{h,cpp}(实现文件,
+          #             日常重构都会碰,但 PCM 帧的序列化也在这里):申报 none 免检;minor / major / 未申报仍拦。
+          # 此前这里照抄的是 SCVB 的四个路径(docs/PARAMETERS.md 等),在本仓一个都不存在,守卫恒不命中(review 连提四轮)。
+          strict_touched=$(printf '%s\n' "$files" | grep -E '^(src/WebSocketProtocol\.(h|cpp)|src/BridgeApi\.h)$' || true)
+          loose_touched=$(printf '%s\n' "$files" | grep -E '^(BRIDGE_CONTRACT\.md|src/VstBridgeServer\.(h|cpp))$' || true)
+          touched=$(printf '%s\n' "$strict_touched" "$loose_touched" | sed '/^$/d')
           if [ -n "$touched" ]; then
             # 与 contract-guard.yml 的分级对齐(CLAUDE.md §5)。impact 从 PR body 读:同一套 fail-closed
             # (端点失败 = step 失败,不吞成 unset);body 里可能同时出现多个 contract-impact 字面串(例如把
@@ -183,10 +186,8 @@ jobs:
             done
             echo "frozen-contract guard: touched contract surface (impact=$impact):"
             printf '%s\n' "$touched" | sed 's/^/  /'
-            # `none` 免检只对「只碰了 BRIDGE_CONTRACT.md」(登记快照 / 纯文档澄清)生效:碰到 wire 源码或常量面时
-            # 「wire 零变化」是作者自申报、无人复核,一律要求变更说明(采纳 #24 review【重要】)。
-            src_touched=$(printf '%s\n' "$touched" | grep -E '^src/' || true)
-            if [ "$impact" != "none" ] || [ -n "$src_touched" ]; then
+            # strict 档碰到即要求变更说明(none 不免检);loose 档只在 none 时免检。
+            if [ "$impact" != "none" ] || [ -n "$strict_touched" ]; then
               # 凭据面与触碰面分开取:触碰面尽量宽(含 renamed 旧路径),凭据面尽量严 —— 只认 status 为 added
               # 且落在 docs/contract-changes/ 下的新文档。若共用上面的 $files,把一份旧变更文档 `git mv` 走
               # (previous_filename 命中)或 `git rm` 掉(filename 仍在列表)都会被当成「已交变更文档」放行
@@ -195,7 +196,7 @@ jobs:
               doc=$(jq -r '.[] | select(.status == "added") | .filename' "$RUNNER_TEMP/files.json" \
                 | grep -E '^docs/contract-changes/[0-9]{8}-.+\.md$' || true)
               if [ -z "$doc" ]; then
-                echo "::error::本 PR 触碰了冻结契约面(contract-impact=$impact;wire 源码/常量面被触碰时 none 不免检):必须在同一个 PR 里新增 docs/contract-changes/<YYYYMMDD>-<slug>.md(模板见 docs/contract-changes/TEMPLATE.md),写清兼容性说明,并挂 status/frozen-contract 标签由维护者批准。"
+                echo "::error::本 PR 触碰了冻结契约面(contract-impact=$impact;strict 档 WebSocketProtocol.{h,cpp} / BridgeApi.h 被触碰时 none 不免检):必须在同一个 PR 里新增 docs/contract-changes/<YYYYMMDD>-<slug>.md(模板见 docs/contract-changes/TEMPLATE.md),写清兼容性说明,并挂 status/frozen-contract 标签由维护者批准。"
                 exit 1
               fi
               echo "frozen-contract guard: change doc present:"; printf '%s\n' "$doc" | sed 's/^/  /'

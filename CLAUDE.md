@@ -64,10 +64,10 @@
 
 机器强制两道,分级对齐、覆盖面不同:`contract-guard`(带 `paths:` 过滤,只在触碰六个契约相关文件时才触发,因此**不能**配成
 required check,否则不碰契约的 PR 会一直 pending)要求 PR body 含 `contract-impact: none|minor|major`;`branch-gate`(dev 的
-required check,无 paths 过滤)的 Frozen-contract change guard 在触碰冻结面(`BRIDGE_CONTRACT.md`、`src/WebSocketProtocol.{h,cpp}`、
-`src/BridgeApi.h`)时读 body 的最严 `contract-impact` 值:只碰 `BRIDGE_CONTRACT.md` 且为 `none`(纯文档澄清 / 登记快照)只登记不拦;
-其余情况(minor / major、未申报、或碰到 wire 源码 / 常量面)一律要求同一 PR 新增 `docs/contract-changes/<YYYYMMDD>-<slug>.md`
-(模板 `docs/contract-changes/TEMPLATE.md`,兼容性说明①落在这里)。
+required check,无 paths 过滤)的 Frozen-contract change guard 守同一组六个文件、分两档,并读 body 的最严 `contract-impact` 值:
+**strict**(`src/WebSocketProtocol.{h,cpp}`、`src/BridgeApi.h`)碰到即要求同一 PR 新增 `docs/contract-changes/<YYYYMMDD>-<slug>.md`
+(模板 `docs/contract-changes/TEMPLATE.md`,兼容性说明①落在这里),自申报 `none` 不免检;**loose**(`BRIDGE_CONTRACT.md`、
+`src/VstBridgeServer.{h,cpp}`)申报 `none`(纯文档澄清 / 登记快照 / 不动 wire 的重构)只登记不拦,minor / major 或未申报同样要求变更说明。
 
 ## 6. 环境与依赖
 
