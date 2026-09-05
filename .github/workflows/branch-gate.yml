@@ -9,7 +9,9 @@ name: Branch Gate
 on:
   pull_request:
     branches: [dev]                     # 发版后改为 [prod, stage, dev]
-    types: [opened, synchronize, reopened, ready_for_review]
+    # edited:冻结契约守卫读 PR body 的 contract-impact,它不改 head sha 就能改——「先写 none 拿绿、事后改 major」
+    # 会留一个与当前 body 不符的绿勾,故 body 编辑也要重跑本门禁。
+    types: [opened, synchronize, reopened, ready_for_review, edited]
 
 permissions:
   contents: read
@@ -196,7 +198,7 @@ jobs:
               doc=$(jq -r '.[] | select(.status == "added") | .filename' "$RUNNER_TEMP/files.json" \
                 | grep -E '^docs/contract-changes/[0-9]{8}-.+\.md$' || true)
               if [ -z "$doc" ]; then
-                echo "::error::本 PR 触碰了冻结契约面(contract-impact=$impact;strict 档 WebSocketProtocol.{h,cpp} / BridgeApi.h 被触碰时 none 不免检):必须在同一个 PR 里新增 docs/contract-changes/<YYYYMMDD>-<slug>.md(模板见 docs/contract-changes/TEMPLATE.md),写清兼容性说明,并挂 status/frozen-contract 标签由维护者批准。"
+                echo "::error::本 PR 触碰了冻结契约面(contract-impact=$impact;strict 档 WebSocketProtocol.{h,cpp} / BridgeApi.h 被触碰时 none 不免检):必须在同一个 PR 里新增 docs/contract-changes/<YYYYMMDD>-<slug>.md(模板见 docs/contract-changes/TEMPLATE.md),写清兼容性说明(变更说明是唯一凭据,本 workflow 不读标签)。"
                 exit 1
               fi
               echo "frozen-contract guard: change doc present:"; printf '%s\n' "$doc" | sed 's/^/  /'

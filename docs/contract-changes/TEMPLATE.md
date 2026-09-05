@@ -28,4 +28,4 @@
 - [ ] `BRIDGE_CONTRACT.md` 已更新（含 §五 变更记录）
 - [ ] `CHANGELOG.md` 「契约变更」小节已记录
 - [ ] PR 描述已 @ 主仓维护者同步
-- [ ] `status/frozen-contract` 标签已挂、维护者已批准
+- [ ] 维护者已在 PR 里批准（本文档是 branch-gate 认的唯一机器凭据，标签不参与判定）
