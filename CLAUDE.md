@@ -62,6 +62,11 @@
 
 任何协议改动必须:① 写兼容性说明(旧客户端遇到新插件、新客户端遇到旧插件各自的行为);② 在本仓 CHANGELOG 的「契约变更」小节记录;③ 在 PR 描述里 @ 主仓维护者同步。
 
+机器强制(两道,均为 dev 的 required check):`contract-guard` 要求触碰契约相关文件的 PR body 含 `contract-impact: none|minor|major`;
+`branch-gate` 的 Frozen-contract change guard 在触碰冻结面(`BRIDGE_CONTRACT.md`、`src/WebSocketProtocol.{h,cpp}`)且级别为
+minor / major 时,要求同一 PR 新增 `docs/contract-changes/<YYYYMMDD>-<slug>.md`(模板 `docs/contract-changes/TEMPLATE.md`,
+兼容性说明①落在这里);`none`(纯文档澄清 / 登记快照)只登记不拦。
+
 ## 6. 环境与依赖
 
 - Windows:JUCE(版本见 `.juce-version`)、CMake ≥3.22、MSVC 2022(静态 CRT `/MT`)、WebView2 SDK(NuGet,版本常量单一真源)+ WebView2 Evergreen Runtime、pluginval(版本见 `.pluginval-version`)、ixwebsocket(vcpkg `x64-windows-static`)。
