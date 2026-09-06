@@ -16,8 +16,8 @@
 
 export const HEADER_BYTES = 12;
 
-/** 计算一帧的总字节数。 */
-export function frameByteLength(channels, numSamples) {
+/** 计算一帧的总字节数。形参顺序与 C++ 侧 `pcm::frameSize(numSamples, channels)` 对齐,两份 golden 用例可互抄。 */
+export function frameByteLength(numSamples, channels) {
   return HEADER_BYTES + numSamples * channels * 4;
 }
 
@@ -38,7 +38,7 @@ export function buildPcmFrame({ sampleRate, channels, samples }) {
     throw new RangeError("samples.length must be a multiple of channels");
   }
   const numSamples = samples.length / channels;
-  const buf = Buffer.allocUnsafe(frameByteLength(channels, numSamples));
+  const buf = Buffer.allocUnsafe(frameByteLength(numSamples, channels));
   buf.writeUInt32LE(sampleRate >>> 0, 0);
   buf.writeUInt32LE(channels >>> 0, 4);
   buf.writeUInt32LE(numSamples >>> 0, 8);

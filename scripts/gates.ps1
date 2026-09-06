@@ -336,6 +336,10 @@ function Test-PcmFrameWiring {
         if ($text -notmatch '(?m)^\s*#include\s+"PcmFrame\.h"') { $bad += '缺少 #include "PcmFrame.h"' }
         if ($text -match 'writeU32\(') { $bad += '出现手写 writeU32( lambda' }
         if ($text -match 'headerSize\s*=\s*12\b') { $bad += '出现字面量 headerSize = 12' }
+        # 正向断言(黑名单只认「上次是怎么错的」,拦不住第三种手写法):两条组帧路径都必须经 pcm::writeHeader。
+        # 覆盖边界:本 gate 只盯 VstBridgeServer.cpp,别的 .cpp 里出现第四条组帧路径不在射程内。
+        $calls = [regex]::Matches($text, 'pcm::writeHeader\(').Count
+        if ($calls -lt 2) { $bad += ('pcm::writeHeader( 调用点 ' + $calls + ' 处,应 >= 2(两条组帧路径各一处)') }
         if ($bad.Count -gt 0) {
             $ok = $false
             $detail = ($rel + ': ' + ($bad -join '; ') + ';帧头必须经 src/PcmFrame.h 的 writeHeader/kHeaderSize 组帧')

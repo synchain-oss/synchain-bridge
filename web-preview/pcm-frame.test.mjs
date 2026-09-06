@@ -37,12 +37,29 @@ function zeros(numSamples, channels) {
 
 test("契约常量:帧头 12 字节,总长 = 12 + numSamples*channels*4", () => {
   assert.equal(HEADER_BYTES, 12);
-  assert.equal(frameByteLength(2, 0), 12);
+  assert.equal(frameByteLength(0, 2), 12);
   assert.equal(frameByteLength(1, 1), 16);
-  assert.equal(frameByteLength(2, 512), 12 + 512 * 2 * 4);
-  assert.equal(frameByteLength(2, 512), 4108);
-  assert.equal(frameByteLength(16, 16384), 1048588);
-  assert.equal(frameByteLength(2, 480), 3852); // 48 kHz 下 10 ms 立体声块
+  assert.equal(frameByteLength(512, 2), 12 + 512 * 2 * 4);
+  assert.equal(frameByteLength(512, 2), 4108);
+  assert.equal(frameByteLength(16384, 16), 1048588);
+  assert.equal(frameByteLength(480, 2), 3852); // 48 kHz 下 10 ms 立体声块
+});
+
+test("高位:sampleRate = 0xFFFFFFFF 写出 FF FF FF FF 且反解不被符号扩展污染(与 C++ 侧同组)", () => {
+  const frame = buildPcmFrame({
+    sampleRate: 0xffffffff,
+    channels: 1,
+    samples: zeros(1, 1),
+  });
+  assert.deepEqual(bytes(frame, 0, 4), [0xff, 0xff, 0xff, 0xff]);
+  assert.equal(decodeHeader(frame).sampleRate, 0xffffffff);
+  const f2 = buildPcmFrame({
+    sampleRate: 0x80000000,
+    channels: 1,
+    samples: zeros(1, 1),
+  });
+  assert.deepEqual(bytes(f2, 0, 4), [0x00, 0x00, 0x00, 0x80]);
+  assert.equal(decodeHeader(f2).sampleRate, 0x80000000);
 });
 
 test("golden:(48000, 2, 512) 的 12 字节帧头 = 80 BB 00 00 | 02 00 00 00 | 00 02 00 00", () => {
@@ -156,7 +173,7 @@ test("roundtrip:若干组常见参数经 decodeHeader 反解回原值", () => {
       [h.sampleRate, h.channels, h.numSamples],
       [sampleRate, channels, numSamples],
     );
-    assert.equal(h.byteLength, frameByteLength(channels, numSamples));
+    assert.equal(h.byteLength, frameByteLength(numSamples, channels));
   }
 });
 
