@@ -3,14 +3,17 @@
 本文件列出 Synchain Bridge 分发产物中随附的第三方依赖的许可证信息。
 每条许可证结论均以**实际安装/链接版本对应的上游许可证原文**逐条核实(核验出处见末列,均为可公开访问的上游权威来源:
 版本 tag 下的 LICENSE 文件、上游官网许可页或包分发页),无「待验证」项。
-静态链接闭包经机器枚举 vcpkg x64-windows-static 实际安装的全部包(ixwebsocket + 传递依赖),与 08 §3.1 表一致。
+静态链接闭包经机器枚举 vcpkg x64-windows-static 实际安装的全部包(ixwebsocket + 传递依赖),与 08 §3.1 表一致;
+ixwebsocket / mbedtls / zlib 三行的版本、以及**闭包集合本身**(本 triplet 下 `install ok installed` 的非 feature 段不得超出这三个包,
+多出即红并打印实际闭包)另由 `scripts/assert-vcpkg-installed.ps1`(本地 gate 4b 与 CI 同一份)在每次 configure 后对照实际装进
+`vcpkg_installed` 的内容断言 —— 「机器枚举全部包」自此有机器兜底;升 `vcpkg.json` 的 baseline 时,本表与该脚本里的期望版本表同步改。
 **闭包按平台不同**:标注「仅 Windows 构建」的条目不进 macOS 产物;macOS 侧的第三方闭包见下方「说明」的 macOS 一条。
 
 | 依赖 | 版本 | 许可证(SPDX) | URL | 核验来源(上游许可证原文) |
 |---|---|---|---|---|
 | JUCE Framework(静态链接) | 8.0.8 | AGPL-3.0-or-later(双授权:AGPLv3 / 商业;本项目取 AGPLv3) | https://github.com/juce-framework/JUCE | tag 8.0.8 的 LICENSE.md:https://github.com/juce-framework/JUCE/blob/8.0.8/LICENSE.md(原文:"The JUCE Framework modules are dual-licensed under the AGPLv3 and the commercial JUCE licence") |
 | JUCE JS helper(web/js/juce/*.js) | 随 JUCE 8.0.8 | AGPL-3.0-or-later(双授权) | https://github.com/juce-framework/JUCE | 文件头 "Copyright (c) Raw Material Software Limited"(web/js/juce/index.js、check_native_interop.js 第 4–5 行)+ 同上 LICENSE.md |
-| ixwebsocket(静态链接;Windows:vcpkg `x64-windows-static` / macOS:CMake `FetchContent`,由 `IXWEBSOCKET_TAG` 钉死到 tag v12.0.1 对应的 40 位 commit SHA) | 12.0.1(两平台同版本) | BSD-3-Clause | https://github.com/machinezone/IXWebSocket | tag v12.0.1 的 LICENSE.txt:https://github.com/machinezone/IXWebSocket/blob/v12.0.1/LICENSE.txt(首行 "Copyright (c) 2018 Machine Zone, Inc. All rights reserved.",正文为 BSD 三条款) |
+| ixwebsocket(静态链接;**两平台均钉到内容级**——Windows:vcpkg `x64-windows-static` manifest 模式,`vcpkg.json` 的 `builtin-baseline` 钉 microsoft/vcpkg 的 40 位 commit(该 baseline 下 port = 12.0.1)+ `overrides` 12.0.1 双保险 / macOS:CMake `FetchContent`,由 `IXWEBSOCKET_TAG` 钉死到 tag v12.0.1 对应的 40 位 commit SHA) | 12.0.1(两平台同版本) | BSD-3-Clause | https://github.com/machinezone/IXWebSocket | tag v12.0.1 的 LICENSE.txt:https://github.com/machinezone/IXWebSocket/blob/v12.0.1/LICENSE.txt(首行 "Copyright (c) 2018 Machine Zone, Inc. All rights reserved.",正文为 BSD 三条款) |
 | mbedtls(ixwebsocket 内置 TLS,静态链接;**仅 Windows 构建**) | 3.6.5 | Apache-2.0 OR GPL-2.0-or-later(双授权) | https://github.com/Mbed-TLS/mbedtls | tag mbedtls-3.6.5 的 LICENSE:https://github.com/Mbed-TLS/mbedtls/blob/mbedtls-3.6.5/LICENSE(双授权声明见文件首 2 行:"provided under a dual Apache-2.0 OR GPL-2.0-or-later license",两份全文附于其后,取哪一份由使用者选择) |
 | zlib(ixwebsocket 传递依赖,vcpkg 静态链接;**仅 Windows 构建**) | 1.3.2 | Zlib | https://zlib.net | tag v1.3.2 的 LICENSE:https://github.com/madler/zlib/blob/v1.3.2/LICENSE(版权行 "(C) 1995-2026 Jean-loup Gailly and Mark Adler")。zlib.net 的许可页永远反映官网**当前**版本,会随上游发版与本表锁定的 1.3.2 脱钩,故只列作项目 URL、不作核验出处 |
 | Microsoft WebView2 SDK(静态 loader;**仅 Windows 构建**) | 1.0.2957.106 | BSD-3-Clause(Microsoft) | https://www.nuget.org/packages/Microsoft.Web.WebView2 | 该版本 NuGet 包的 License 页(即包内 LICENSE.txt 原文):https://www.nuget.org/packages/Microsoft.Web.WebView2/1.0.2957.106/License(BSD 三条款,版权归 Microsoft) |

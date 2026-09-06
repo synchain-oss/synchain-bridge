@@ -10,7 +10,7 @@
 |---|---|---|
 | 桥 #1：插件内嵌 WebView UI | 本仓 `web/` | 编译进插件二进制，跑在插件进程里，走 JUCE 原生集成 |
 | 桥 #2：浏览器侧客户端 | Synchain 网页应用（闭源） | WebSocket 客户端 + 「DAW 音频桥」面板 + LiveKit 发布，不在本仓 |
-| 本地开发 / 演示替代品 | 本仓 [web-preview/](../web-preview/README.md) | `mock-server.mjs`（mock 桥 #2）+ `pcm-frame.mjs`（PCM 帧构造真源）+ http 托管，与真桥同契约 |
+| 本地开发 / 演示替代品 | 本仓 [web-preview/](../web-preview/README.md) | `mock-server.mjs`（mock 桥 #2）+ `pcm-frame.mjs`（mock 侧帧构造，golden 与 C++ 侧 `src/PcmFrame.h` 同源，见 `tests/pcm_frame_selftest.cpp` 与 `web-preview/pcm-frame.test.mjs`）+ http 托管，与真桥同契约 |
 
 ## 2. 与插件的耦合点
 
@@ -38,4 +38,4 @@
 ## 3. 契约治理与护栏
 
 - 协议改动必须：① 写兼容性说明（旧客户端遇新插件 / 新客户端遇旧插件各自行为）；② 记入 [CHANGELOG.md](../CHANGELOG.md)「契约变更」小节；③ 在 PR 描述里 @ 主仓维护者同步。
-- 机器护栏：PR 若改动 `BRIDGE_CONTRACT.md` / `src/WebSocketProtocol.*` / `src/VstBridgeServer.*` / `src/BridgeApi.h` 任一，`.github/workflows/contract-guard.yml` 要求 PR body 含一行 `contract-impact: none|minor|major`，缺则 fail。
+- 机器护栏：PR 若改动 `BRIDGE_CONTRACT.md` / `src/WebSocketProtocol.*` / `src/VstBridgeServer.*` / `src/BridgeApi.h` / `src/PcmFrame.h` 任一，`.github/workflows/contract-guard.yml` 要求 PR body 含一行 `contract-impact: none|minor|major`，缺则 fail。

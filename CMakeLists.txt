@@ -118,7 +118,9 @@ juce_add_binary_data(SynchainBridgeWebAssets SOURCES
 )
 
 # --- Dependencies ---
-# Windows: vcpkg x64-windows-static（全静态）。macOS: FetchContent，tag 钉死，不引入包管理器。
+# Windows: vcpkg x64-windows-static（全静态），manifest 模式——版本由仓库根 vcpkg.json 的 builtin-baseline
+#   （40 位 commit）+ overrides 钉死，configure 期经 vcpkg toolchain 自动装进 <build>/vcpkg_installed。
+# macOS: FetchContent，commit 钉死（下方 IXWEBSOCKET_TAG），不引入包管理器。两侧升版本必须同一 PR 一起动。
 
 if(APPLE)
   # 版本号对齐 Windows 侧 vcpkg port 实际安装的 ixwebsocket 12.0.1：permessage-deflate 协商 /
@@ -261,21 +263,31 @@ configure_file(cmake/BridgeOriginConfig.h.in
   "${CMAKE_CURRENT_BINARY_DIR}/generated/BridgeOriginConfig.h" @ONLY)
 target_include_directories(SynchainBridgeVST PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
 
-# --- Optional: Origin allow-list selftest ---
-# Asserts the pure string logic of src/OriginAllowlist.h (normalisation, injected-pattern
-# usability, pattern matching). Standard library only: no JUCE, no ixwebsocket, no link
-# against the plugin target — so it builds and runs in seconds. OFF by default; the local
-# gate script (scripts/gates.ps1) configures with -DBRIDGE_BUILD_SELFTESTS=ON and runs it.
-option(BRIDGE_BUILD_SELFTESTS "Build origin allowlist selftest" OFF)
+# --- Optional: pure-logic selftests ---
+# Two dependency-free executables, one per pure header under src/:
+#   origin_allowlist_selftest — src/OriginAllowlist.h (normalisation, injected-pattern
+#                               usability, pattern matching);
+#   pcm_frame_selftest        — src/PcmFrame.h (12-byte PCM frame header, golden bytes per
+#                               BRIDGE_CONTRACT.md §二 1; the legacy synchronous path and
+#                               the sender-thread path in src/VstBridgeServer.cpp both
+#                               encode through it).
+# Standard library only: no JUCE, no ixwebsocket, no link against the plugin target — so
+# they build and run in seconds. OFF by default; the local gate script (scripts/gates.ps1)
+# and both ci.yml build jobs configure with -DBRIDGE_BUILD_SELFTESTS=ON and run both, so
+# the /W4 and clang -Wall -Wextra -Wpedantic zero-warning gates cover the selftests too;
+# the compliance workflow compiles the same sources with plain g++ on ubuntu.
+option(BRIDGE_BUILD_SELFTESTS "Build pure-logic selftests (origin allowlist + PCM frame)" OFF)
 if(BRIDGE_BUILD_SELFTESTS)
-  add_executable(origin_allowlist_selftest tests/origin_allowlist_selftest.cpp)
-  target_compile_features(origin_allowlist_selftest PRIVATE cxx_std_17)
-  target_include_directories(origin_allowlist_selftest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-  if(MSVC)
-    target_compile_options(origin_allowlist_selftest PRIVATE /W4 /utf-8)
-  else()
-    target_compile_options(origin_allowlist_selftest PRIVATE -Wall -Wextra -Wpedantic)
-  endif()
+  foreach(_selftest IN ITEMS origin_allowlist_selftest pcm_frame_selftest)
+    add_executable(${_selftest} tests/${_selftest}.cpp)
+    target_compile_features(${_selftest} PRIVATE cxx_std_17)
+    target_include_directories(${_selftest} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    if(MSVC)
+      target_compile_options(${_selftest} PRIVATE /W4 /utf-8)
+    else()
+      target_compile_options(${_selftest} PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+  endforeach()
 endif()
 
 # --- Platform-Specific ---

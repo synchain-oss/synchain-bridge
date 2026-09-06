@@ -11,8 +11,8 @@ workflow 分四个 job：版本门禁独立前置，两个平台并行构建，�
 | job | runner | 动作 | 失败即 job fail？ |
 |---|---|---|---|
 | `gate` | ubuntu-latest | 校验 tag 与 `CMakeLists.txt` 的 VERSION 一致，把版本号导出给下游两个构建 job | 是（冒烟 tag `*-test` 除外，恒产 draft） |
-| `release` | windows-2022 | clone JUCE → vcpkg → WebView2 → CMake → 构建（/W4 零警告）→ pluginval → `scripts/package.ps1` → 上传 `dist-win64` | 是 |
-| `release-macos` | macos-15 | clone JUCE → Ninja → 构建（clang 零警告）→ pluginval 验 VST3 + auval 验 AU → `scripts/package-macos.sh` → 上传 `dist-macos-arm64` | 是 |
+| `release` | windows-2022 | clone JUCE（`actions/cache` 命中即跳过）→ WebView2 → CMake（vcpkg 按 `vcpkg.json` 装 ixwebsocket，二进制缓存走 `actions/cache`，随后断言版本 == manifest）→ 构建（/W4 零警告）→ pluginval → `scripts/package.ps1` → 上传 `dist-win64` | 是 |
+| `release-macos` | macos-15 | clone JUCE + 预取钉死的 ixwebsocket 源码（均 `actions/cache`，与 `ci.yml` 同 key）→ Ninja → 构建（clang 零警告）→ pluginval 验 VST3 + auval 验 AU → `scripts/package-macos.sh` → 上传 `dist-macos-arm64` | 是 |
 | `publish` | ubuntu-latest | 下载两平台产物 → `sha256sum -c` 跨 job 复验 → 创建 **draft** GitHub Release（挂两平台的 zip + `.sha256`） | 是 |
 
 两条与安全/成本有关的结构性约定：
@@ -143,4 +143,4 @@ git tag -d v1.5.0
 git tag v1.5.0 && git push origin v1.5.0
 ```
 
-两个构建 job 的 `timeout-minutes` 都是 60（对称；两边都要从零 clone JUCE 并编译两个 format wrapper，mac 侧还多一次 ixwebsocket 的 FetchContent 编译）。若将来希望「mac 挂了 Windows 仍能发」，改法是把 `publish` 换成 `if: always() && needs.release.result == 'success'` 并按存在的 artifact 动态挂载 —— 属于**需要用户拍板**的行为变更，未擅自实施。
+两个构建 job 的 `timeout-minutes` 都是 60（对称；两边都要编译两个 format wrapper，mac 侧还多一次 ixwebsocket 的编译；JUCE / ixwebsocket 源码 / vcpkg 二进制有 `actions/cache`，但 miss 时也得够用）。若将来希望「mac 挂了 Windows 仍能发」，改法是把 `publish` 换成 `if: always() && needs.release.result == 'success'` 并按存在的 artifact 动态挂载 —— 属于**需要用户拍板**的行为变更，未擅自实施。

@@ -16,6 +16,7 @@ on:
       - 'src/VstBridgeServer.h'
       - 'src/VstBridgeServer.cpp'
       - 'src/BridgeApi.h'
+      - 'src/PcmFrame.h'
 
 permissions:
   contents: read

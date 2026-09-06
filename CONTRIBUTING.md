@@ -39,7 +39,7 @@ git rebase --signoff      # a range of commits
 
 ## 5. Environment setup
 
-See `README.md` (Requirements + Build from source) and the table in `CLAUDE.md` §6. In short: JUCE 8.0.8 (see `.juce-version`), CMake ≥ 3.22, MSVC 2022 with static CRT `/MT`, WebView2 SDK (NuGet) + Evergreen Runtime, pluginval v1.0.4 (see `.pluginval-version`), and `ixwebsocket:x64-windows-static` via vcpkg.
+See `README.md` (Requirements + Build from source) and the table in `CLAUDE.md` §6. In short: JUCE 8.0.8 (see `.juce-version`), CMake ≥ 3.22, MSVC 2022 with static CRT `/MT`, WebView2 SDK (NuGet) + Evergreen Runtime, pluginval v1.0.4 (see `.pluginval-version`), and `ixwebsocket` (`x64-windows-static`) via vcpkg in manifest mode — pinned by the repo's `vcpkg.json`, installed automatically at configure time.
 
 ## 6. Local gates before a PR
 

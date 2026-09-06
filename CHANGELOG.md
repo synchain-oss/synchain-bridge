@@ -55,6 +55,28 @@
   `src/VstBridgeServer.cpp` 调用它 —— 行为零变化。新增 `tests/origin_allowlist_selftest.cpp`(51 条断言)
   与 CMake 选项 `BRIDGE_BUILD_SELFTESTS`(默认 OFF),由 `scripts/gates.ps1` 的 gate 5b 构建并运行。
 
+### 内部工程(无契约变更)
+
+- **PCM 帧头编码收敛到一处并加 golden 测试**(issue #23 第二批第 1 条):`src/VstBridgeServer.cpp` 里
+  同步遗留路径 `sendPcmPacket()`(无调用方,issue #168 后实时路径改走 `pushPcm`;保留仅为 API 兼容,
+  声明处已加注勿在音频线程调用)与后台发送线程路径 `buildPcmFrame()` 此前各自手写一份 12 字节帧头
+  (`u32 LE sampleRate | u32 LE channels | u32 LE numSamples`),彼此无机器约束。现抽成新头文件
+  `src/PcmFrame.h`(`synchain::pcm`,纯标准库,零 JUCE / ixwebsocket 依赖:`kHeaderSize` / `writeHeader` /
+  `readHeader` / `payloadSize` / `frameSize`,**C++ 侧唯一实现**),两条路径都改为调用它 —— **wire 逐字节相同,
+  行为零变化**。JS 侧(本地 mock)的 `web-preview/pcm-frame.mjs` 是同布局的另一份实现,新增
+  `web-preview/pcm-frame.test.mjs`(`node:test` + `node:assert`,零依赖,`npm test` / `node --test`)用
+  **同一组 golden 字节**钉死它,`compliance` workflow 加一步 `node --test`(ubuntu 自带 node,不装依赖)。
+  新增 `tests/pcm_frame_selftest.cpp`:固定输入 `(48000, 2, 512)` 的帧头逐字节钉死为
+  `80 BB 00 00 | 02 00 00 00 | 00 02 00 00`,另覆盖 `0` / `0xFFFFFFFF` 边界、端序、字段顺序、
+  `12 + numSamples*channels*4` 总长与 payload 偏移 —— 改任一字段顺序 / 端序 / 偏移即红。
+  并入 `BRIDGE_BUILD_SELFTESTS`(同 `/W4` 或 `-Wall -Wextra -Wpedantic`),`scripts/gates.ps1` 的 gate 5b
+  扩为跑两个 selftest,`compliance` workflow 新增同构的「PCM frame selftest」步骤(g++ 直接编译)。
+  `ci.yml` 的 windows / mac 两个构建 job 现也以 `-DBRIDGE_BUILD_SELFTESTS=ON` 配置并在构建后运行两个
+  selftest,MSVC `/W4` 与 clang `-Wall -Wextra -Wpedantic` 零警告门因此真覆盖 `tests/*.cpp`
+  (`release.yml` 不开)。golden 钉不住「`VstBridgeServer.cpp` 真的经 `PcmFrame.h` 组帧」(要链 JUCE),
+  由 `scripts/gates.ps1` 新增的 gate 3f 与 `compliance` 的同构 grep 步骤以文本断言补上:必须
+  `#include "PcmFrame.h"`,且不得再出现 `writeU32(` 手写 lambda 或字面量 `headerSize = 12`。
+
 ### 构建
 
 - 新增 CMake cache 变量 `BRIDGE_EXTRA_ALLOWED_ORIGIN_HOSTS`(`;` 或 `,` 分隔的 host 模式,每个至多一个 `*`
@@ -73,8 +95,55 @@
   均带 `NOT DEFINED` 守卫、置于 `project()` 之前(要参与编译器探测),命令行可覆盖;`IXWEBSOCKET_TAG` 只在
   `if(APPLE)` 分支内定义。**对 Windows 构建为 no-op**:VS2019 生成器下 configure 的 cache 差异只有前两个
   变量,生成的 `.sln` / `.vcxproj` 目标列表与改动前逐项相同、无任何 `*_AU*` 目标。
+- **Windows 侧 ixwebsocket 改 vcpkg manifest 模式钉死**(issue #23 第一批第 3 条):新增仓库根 `vcpkg.json`,
+  `builtin-baseline` 钉到 microsoft/vcpkg 的 40 位 commit(该 baseline 下 `ports/ixwebsocket` = 12.0.1),再加一条
+  `overrides`(12.0.1)双保险 —— 此前 CI 用 runner 镜像自带的 vcpkg 做经典模式 `vcpkg install`,版本随镜像每月轮换漂移,
+  仓库里没有任何文件记录它。依赖由 CMake configure 期的 vcpkg toolchain 按 manifest 自动装进 `<build>/vcpkg_installed`
+  (每个 `-BuildDir` 各自一份,并行 agent 互不干扰),本地与 CI 走同一条路径,不再手工 `vcpkg install ixwebsocket`。
+  至此**两平台的 ixwebsocket 都钉到内容级**(Windows = vcpkg 仓库 commit + 版本,macOS = 上游 commit),升级时
+  `vcpkg.json` 与 `CMakeLists.txt` 的 `IXWEBSOCKET_TAG` 须同一 PR 一起动。`scripts/gates.ps1` / `scripts/build.ps1` 的
+  依赖预检检测到 `vcpkg.json` 即按 manifest 模式校验(vcpkg 已 bootstrap、声明了 ixwebsocket、baseline 是 40 位 SHA),
+  无 manifest 的旧分支仍走经典模式检查;`scripts/gates.ps1` 另在 configure 之后加 **gate 4b**,调用
+  `scripts/assert-vcpkg-installed.ps1` 断言 `<BuildDir>/vcpkg_installed/vcpkg/status` 里的安装版本(ixwebsocket 含
+  port-version、传递依赖 mbedtls / zlib)与 `vcpkg.json` override / `THIRD-PARTY-NOTICES.md` 一致 —— 与 CI 同一份脚本、
+  同一口径,断言失败视同配置失败,后续构建 / pluginval 一律 SKIP;`/W4` 零告警门的第三方排除项补 `vcpkg_installed`
+  (manifest 模式下第三方头的路径里不再出现 `\vcpkg\`)。README(双语)、`docs/build-windows.md`、`CONTRIBUTING.md`、`CLAUDE.md` §6、
+  `THIRD-PARTY-NOTICES.md`、`BEFORE_PUBLIC_CHECKLIST.md` §4.1 同步。
 
 ### 持续集成
+
+- **依赖缓存**(issue #23 第一批第 4 条,`ci.yml` 与 `release.yml` 两平台 job 同 key,发版链路直接复用 CI 攒下的缓存;
+  `actions/cache` 沿用已 pin 的 v4.3.0 SHA):① JUCE 目录按 `runner.os` + `.juce-version` 内容哈希缓存,clone 步骤按
+  「目录里没有 `CMakeLists.txt`」判定而不是只看 cache-hit,miss 与残缺命中都照常 clone;无论来自缓存还是刚 clone,
+  随后都做**身份断言**:HEAD 上的 tag(`git tag --points-at HEAD`,剥 v 前缀)须含 `.juce-version`,缓存条目对不上就删掉重 clone,
+  重 clone 后仍对不上才红(两平台 × 两个 workflow 共四处,pwsh / bash 各一版逐条对应);② Windows 的 vcpkg
+  **二进制缓存**(`VCPKG_DEFAULT_BINARY_CACHE` 指到 `runner.temp` 下固定目录,key 含 `runner.os` + 镜像身份
+  `ImageOS-ImageVersion` + triplet + `vcpkg.json` 哈希,`restore-keys` 只回落一级到同镜像前缀 —— vcpkg 按包 ABI 哈希寻址,
+  跨镜像的条目必然全量重编、回落过去只会撑大新条目,故不设跨镜像回落;镜像身份进 key 是因为 `actions/cache` 对已存在的
+  exact key 不会重新保存,镜像月度轮换升一次 MSVC 就会让缓存退化成「永远重编、永远存不进去」),比缓存 installed 树稳;
+  configure 后经 **`scripts/assert-vcpkg-installed.ps1`**(与本地 gate 4b 同一份脚本)断言 `build/vcpkg_installed/vcpkg/status`:
+  ixwebsocket **核心段**(显式排掉无 `Version:` 行的 feature 段,且 `Status: install ok installed`)的 `Version` **与
+  `Port-Version`**(缺行视为 #0)== `vcpkg.json` override 的 `version-semver` / `port-version`,传递依赖 mbedtls / zlib 的
+  `Version` == `THIRD-PARTY-NOTICES.md` 登记版本(期望表手抄在脚本里,升 baseline 时同步);不符即红并打印实际值。
+  Setup 步骤不再写 `VCPKG_DEFAULT_TRIPLET`(manifest 模式下 toolchain 只认 `-DVCPKG_TARGET_TRIPLET`,那是死配置);
+  ③ macOS 把钉死的 ixwebsocket 源码预取到 `_deps/ixwebsocket-src`(key 含从 `CMakeLists.txt` 现读的
+  `IXWEBSOCKET_TAG`,升 pin 自动换 key),经 `FETCHCONTENT_SOURCE_DIR_IXWEBSOCKET` 交给 configure;因 FetchContent 走
+  该覆盖时不再核对 commit,workflow 自己断言 `HEAD == IXWEBSOCKET_TAG`,对不上先重拉、再对不上才红;只缓存源码,
+  不缓存 `_deps/ixwebsocket-build`;`GIT_REPOSITORY` 的读取绑定到 ixwebsocket 的 `FetchContent_Declare` 段内,不会误拿
+  将来别的 FetchContent 依赖的 URL。**缓存只是加速,miss 必须照常成功;不缓存 build 产物本身。**
+  **验证状态**(2026-09-06,主支线 `feature/eng-debt-23` 真跑):首跑 run 34017204091 双平台绿,manifest 装入
+  ixwebsocket=12.0.1#0 / mbedtls=3.6.5#0 / zlib=1.3.2#2、闭包恰三包、JUCE 身份断言通过、四个缓存条目保存;第二跑
+  run 34017563395 四类缓存全部命中(vcpkg 恢复 5 个包,Windows job 7 → 5 min);`v0.0.0-test` 冒烟 run 34017566444
+  四段绿、draft 四资产齐整。断言脚本另做**闭包完整性**:本 triplet 下 `install ok installed` 的非 feature 段集合不得超出
+  ixwebsocket + 期望表(升 baseline 冒出第四个包时 `THIRD-PARTY-NOTICES.md` 不再静默漏登记),并把实际闭包打进日志;
+  status 先把 CRLF 归一再分段与匹配。gate 3g 与 compliance 的 pin 一致性在无 `vcpkg.json` 时 SKIP(经典模式向后兼容,
+  与 gate 1 / 4b 同口径)。已知边界:被污染的 JUCE 缓存条目不会自愈(`actions/cache` 对已存在的 exact key 不重存),
+  之后每次都 warning + 全量重 clone,直到手工删缓存或 `.juce-version` 变动 —— 行为正确(缓存只加速),只是慢。
+- **ixwebsocket 两平台版本一致性机器强制**:`vcpkg.json` 的 override 显式写 `"port-version": 0`(与 baseline 下的
+  port 一致;version-semver 与 port-version 共同才唯一确定一份 port 内容),`compliance.yml` 新增
+  "ixwebsocket cross-platform pin consistency" 步骤、`scripts/gates.ps1` 新增同参的 **gate 3g**:读 override 的
+  `version-semver`,断言 override 显式带 `port-version`,且 `CMakeLists.txt` 恰有一处 `set(IXWEBSOCKET_TAG "<40 位 SHA>" ...)`
+  并在同一行标注 `(= tag v<该版本>)` —— macOS 侧钉的是 SHA、机器反推不出版本号,升级时忘了动任何一侧即红。
 
 - `ci.yml` 新增与 `build-and-validate` 同级的 **`build-and-validate-macos`**(`macos-15`,arm64 原生):
   Ninja 配置 → 构建 → **clang 零警告门** → arm64-only 架构断言 → pluginval 验 VST3 + `auval` 验 AU →
@@ -96,6 +165,31 @@
   §0 安全铁律(三仓逐字相同)一字未动。
 - `BEFORE_PUBLIC_CHECKLIST.md` 新增 §3.1:第三方 action pin 到 40 位 SHA 升为**转 public 硬门禁**并列出
   当前未 pin 的文件清单与验收断言(现状是只有 `release.yml` 与 mac job 做到了)。
+- **打包脚本与门禁细节收口(issue #23)**:
+  - `ci.yml` windows job 的 Package smoke 改为与 mac 侧同构的三次运行(`0.0.0-ci` → `0.0.0-ci2` → `0.0.0-ci`),
+    断言 `package-summary.md` 恰好 2 段、`ci2` 段原样保留、`ci` 段恰好 1 条(逐行 `-ceq` 精确比对);
+    五条字段行断言由 `-notmatch` 改 **`-cnotmatch`**(pwsh 默认大小写不敏感,`Version:` 漂移会静默走通)。
+  - 两平台 Package smoke 增加 **`.sha256` 内容形态断言**:恰好一行、匹配 `^[0-9a-f]{64}  <zip 基名>$`
+    (两个空格,`sha256sum -c` 认的格式),且 hash 与现算(`Get-FileHash` / `shasum -a 256`)一致 ——
+    此前只断言文件存在,分隔符写错要到打 tag 那一刻才在 `publish` 炸出来。`package.ps1` 的 `.sha256`
+    改为 **LF、无 BOM** 落盘(`WriteAllText`),Windows 侧断言读原始字节(`ReadAllBytes`,显式查 BOM、
+    `\z` 锚定不放过结尾空行),`release.yml` 的 `tr -d '\r'` 兜底升级为「含 CR 即红」;
+    `files:` 改为四个精确文件名与资产等式同口径。
+  - `package-macos.sh` 从 `CMakeLists.txt` 回落读版本的 sed 先丢 `#` 整行注释、RE 改行首锚(POSIX ERE
+    leftmost-longest 会让 `.*project` 吃到行尾注释里的旧 `project()`),`ci.yml` 的对照 grep 先剔行尾注释并加
+    `|| true` 让 `::error` 守卫在 `set -e` 下真能执行;summary 重排的 awk 首行剥 UTF-8 BOM
+    (旧 powershell.exe 5.1 产物)。
+  - mac 侧 Package smoke 开头加跑一次**不传 `--version`** 的 `--dry-run`,断言输出里的 Version 行与
+    `grep` 另取的 `CMakeLists.txt` 版本逐字相等:`release.yml` 与三次真跑全部显式传版本,脚本里从 CMake
+    回落读版本的那条 BSD sed 否则在 CI 上永远不执行。
+  - `release.yml` `publish` 的资产版本断言由子串包含(`*v<ver>*`)改为**整串精确等式**:按两个打包脚本的
+    定式反推出四个文件名逐个要求存在,且 `dist/` 里不得有第五个文件。
+  - `branch-gate.yml` DCO 步与 Frozen-contract 步的 `${{ github.repository }}` /
+    `${{ github.event.pull_request.number }}` 改经 step `env`(`REPO` / `PR_NUMBER`)间接读入,
+    与 `release.yml` 对 tag 名的纪律一致;逻辑不变(骨架改动,SCVB 线同步)。
+  - `scripts/gates.ps1` 版本一致性 gate(3e)的 `Get-Mirror` 在 lockfile 结构变化 / JSON 不合法时不再抛异常
+    中断整个 gates,改记该 gate 的 FAIL 并给出可读原因,其余 gate 照常跑完;reader 返回后再断言取值个数
+    恰等于期望个数(`package-lock.json` 2 个、其余 1 个),字段消失而**不抛**的结构变化不再静默降级成少比一处。
 
 ### 发布 / 分发(对下游可见)
 
@@ -117,6 +211,14 @@
   加载不了的死壳)。压缩用 `ditto -c -k --norsrc --noextattr`:`--sequesterRsrc` 会把资源叉/扩展属性
   写进 `__MACOSX/`,那些条目权限恒为 `-rw-r--r--` 且同样匹配可执行位断言的筛选,会让打包**必然假失败**,
   也会给用户塞一堆垃圾。`--version` 传空串直接 die(不回落到 CMake 版本),避免产出版本号对不上的资产。
+- `scripts/package.ps1` 的 `package-summary.md` 由整文件覆盖改为**按段追加 + 同名 `zipFileName` 段去重**,
+  与 `scripts/package-macos.sh` 同口径(按记录首行 `version:` 切段、只删整行逐字相等的旧段、首条记录之前的
+  内容原样透传);两个「打包唯一真源」在 summary 行为上不再分叉(issue #23)。两边物理布局也统一为
+  「段间恰一个空行、文件末尾恰一个换行」;行尾一律 LF(`package.ps1` 改 `[IO.File]::WriteAllText` 写 UTF-8
+  无 BOM + LF,读旧文件时 CRLF 归一;`package-macos.sh` 的 awk 先剥 CR 再比,旧 CRLF 文件的同名段也删得掉);
+  `package.ps1` 写 summary 改为先写 `.tmp` 再 `Move-Item -Force`,与 mac 侧 tmp + mv 同口径。
+- `scripts/package-macos.sh` 从 `CMakeLists.txt` 回落读版本号时改为带地址的单条 sed(`/re/{s//\1/p;q;}`,
+  GNU / BSD 两端都通),不再 `| head -n 1`(issue #23)。
 - **注入面加固覆盖到 `release.yml`**:`gate` 的 tag 名、两个平台 Package 步骤的版本号、`publish` 的
   job summary 全部改经 step `env` 间接读入。tag 允许 `$`、反引号、`"`,直插 bash 双引号串会真做命令替换,
   直插 pwsh 可闭合引号 —— 与 `ci.yml` 对 `github.ref_name` 的加固同口径,不能只加固一处。

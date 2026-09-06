@@ -50,9 +50,63 @@ jobs:
         run: |
           g++ -std=c++17 -I src -o /tmp/origin_allowlist_selftest tests/origin_allowlist_selftest.cpp
           /tmp/origin_allowlist_selftest
+      - name: PCM frame selftest
+        # PCM 帧头 12 字节布局(BRIDGE_CONTRACT.md §二 第 1 条)的 golden 字节断言
+        # (tests/pcm_frame_selftest.cpp):字段顺序 / 小端 / 偏移 / 总长逐字节钉死,改任一项即红。
+        # src/PcmFrame.h 是同步遗留路径与后台发送线程路径共用的 C++ 侧唯一编码实现,零第三方依赖
+        # (纯 C++17)。与本地 gate 5b 同源同用例,编译参数与上一步逐字同构。
+        run: |
+          g++ -std=c++17 -I src -o /tmp/pcm_frame_selftest tests/pcm_frame_selftest.cpp
+          /tmp/pcm_frame_selftest
+      - name: PCM frame selftest (web-preview mock, node:test)
+        # JS 侧同布局实现 web-preview/pcm-frame.mjs 由 web-preview/pcm-frame.test.mjs 用与上一步
+        # **同一组 golden 字节**钉死(node:test + node:assert,零依赖,不 npm install:测试只 import
+        # pcm-frame.mjs,它只用 Node 内建 Buffer;mock-server.mjs 依赖的 ws 不在本步骤加载)。
+        # 文件路径显式给出而不是传目录:目录参数在 node 20 与 ≥21 的 --test 下语义不同(路径 vs glob),
+        # runner 镜像的 node 版本轮换时不应影响本步骤。ubuntu 镜像自带 node ≥ 20,与 web-preview/README
+        # 的「Node ≥ 18」要求兼容。
+        run: node --test web-preview/pcm-frame.test.mjs
+      - name: PCM frame wiring (VstBridgeServer.cpp must encode via PcmFrame.h)
+        # 与本地 gate 3f 同构:上面的 golden selftest 钉不住「VstBridgeServer.cpp 真的经 PcmFrame.h 组帧」
+        # (那要链 JUCE 才测得到),故用文本断言 —— 必须 #include "PcmFrame.h",且不得再出现抽取前两份
+        # 手写实现的特征(`writeU32(` lambda 与字面量 `headerSize = 12`,87133fe 删掉的就是它们)。
+        run: |
+          f=src/VstBridgeServer.cpp
+          grep -qE '^[[:space:]]*#include[[:space:]]+"PcmFrame\.h"' "$f" \
+            || { echo "::error::$f must #include \"PcmFrame.h\" (PCM header layout is defined once, in src/PcmFrame.h)"; exit 1; }
+          if grep -nE 'writeU32\(|headerSize[[:space:]]*=[[:space:]]*12\b' "$f"; then
+            echo "::error::$f still carries a hand-written PCM header (writeU32( lambda / headerSize = 12); encode via src/PcmFrame.h writeHeader/kHeaderSize"
+            exit 1
+          fi
+          # 正向断言(黑名单只认「上次是怎么错的」,拦不住第三种手写法):两条组帧路径都必须经 pcm::writeHeader,
+          # 调用点 >= 2。覆盖边界:本门只盯 src/VstBridgeServer.cpp;将来别的 .cpp 里出现第四条组帧路径不在射程内。
+          # 计**次**不计行(与 gates.ps1 的 [regex]::Matches().Count 同口径):同行两次调用或 clang-format 折行都不会让两边分叉。
+          # 「>= 2」钉的是当前两条路径(其中 sendPcmPacket 是无调用方的遗留路径);若将来删掉遗留路径,这里改成 >= 1。
+          n=$(grep -oE 'pcm::writeHeader\(' "$f" | wc -l | tr -d '[:space:]')
+          [ "$n" -ge 2 ] || { echo "::error::$f must encode both PCM paths via pcm::writeHeader() (found $n call sites, expected >= 2)"; exit 1; }
+          echo "PCM frame wiring ok: $f encodes via PcmFrame.h ($n writeHeader call sites)"
       - name: REUSE lint
         # 与 §5.1 gate 3c 逐字同参
         run: pipx run reuse lint
+      - name: ixwebsocket cross-platform pin consistency
+        # 与本地 gate 3g 同参。两平台的 ixwebsocket 版本机器强制一致:Windows 侧真源 = vcpkg.json 的 override
+        # (version-semver + 显式 port-version),macOS 侧真源 = CMakeLists.txt 的 IXWEBSOCKET_TAG(40 位 SHA,
+        # 机器不可能反推出版本号),故断言那一行的注释必须标注 `(= tag v<override 版本>)` —— 升级时忘了动
+        # 任何一侧,这里就红。IXWEBSOCKET_TAG 的 set 行要求恰好一处,多于一处说明真源有歧义。
+        # 断言边界:验证的是 IXWEBSOCKET_TAG 那行的注释文字 == override 版本(机器无法从 SHA 反推版本),是防「升了一侧
+        # 忘动另一侧 / 忘改注释」的 tripwire,不是 SHA 真等于上游 tag 的内容级证明。
+        run: |
+          set -euo pipefail
+          [ -f vcpkg.json ] || { echo "no vcpkg.json (classic mode), skip"; exit 0; }
+          ver=$(jq -r '[.overrides[] | select(.name == "ixwebsocket")][0]["version-semver"] // empty' vcpkg.json)
+          [ -n "$ver" ] || { echo "::error::vcpkg.json has no ixwebsocket override with version-semver"; exit 1; }
+          jq -e '[.overrides[] | select(.name == "ixwebsocket")][0] | has("port-version")' vcpkg.json >/dev/null \
+            || { echo "::error::vcpkg.json ixwebsocket override must state port-version explicitly"; exit 1; }
+          n=$(grep -cE '^[[:space:]]*set\(IXWEBSOCKET_TAG[[:space:]]+"[0-9a-f]{40}"' CMakeLists.txt || true)
+          [ "$n" = "1" ] || { echo "::error::expected exactly 1 set(IXWEBSOCKET_TAG \"<40-hex>\" ...) line in CMakeLists.txt, found $n"; exit 1; }
+          grep -E '^[[:space:]]*set\(IXWEBSOCKET_TAG[[:space:]]+"[0-9a-f]{40}"' CMakeLists.txt | grep -qF "(= tag v$ver)" \
+            || { echo "::error::CMakeLists.txt IXWEBSOCKET_TAG line is not annotated '(= tag v$ver)' while vcpkg.json pins $ver"; exit 1; }
+          echo "ixwebsocket pin OK: vcpkg.json override $ver <-> CMakeLists.txt IXWEBSOCKET_TAG (= tag v$ver)"
       - name: Font name-table RFN check
         # 与本地 gate 3b2 同参。上面两步的 gitleaks 只看文本:woff2 是 brotli 压缩的,
         # grep 不命中不等于保留字体名已从 name 表清除(OFL-1.1 §3 管的是「呈现给用户的

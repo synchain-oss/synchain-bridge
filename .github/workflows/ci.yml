@@ -35,19 +35,85 @@ jobs:
           $slug = "${{ github.ref_name }}" -replace '[/\\]','-'
           "REF_SLUG=$slug"      | Out-File $env:GITHUB_ENV -Append
 
-      # 1) JUCE:浅克隆锁 tag(不用 FetchContent,避免上游漂移让 CI 突然红)
-      - name: Clone JUCE (shallow, pinned)
-        run: git clone --depth 1 --branch $env:JUCE_TAG https://github.com/juce-framework/JUCE.git "${{ github.workspace }}/JUCE"
+      # 1) JUCE:浅克隆锁 tag(不用 FetchContent,避免上游漂移让 CI 突然红)。
+      #    先查 actions/cache:key 含 runner.os + .juce-version 内容哈希,tag 一改自动换 key;命中即跳过 clone。
+      #    缓存只是加速 —— clone 步骤按「目录里没有 CMakeLists.txt 就 clone」判定而不是只看 cache-hit,
+      #    这样 miss、以及命中了一份残缺的缓存(tar 半途出错)都照常走 clone,不会绿着带一个空 JUCE 往下跑。
+      #    无论来自缓存还是刚 clone,最后都做身份断言:HEAD 上的 tag(`git tag --points-at HEAD`)必须含 JUCE_TAG
+      #    (两边都剥掉可能的 v 前缀再比)。缓存条目对不上(key 撞了 / 被污染)就删掉重 clone,重 clone 后
+      #    仍对不上才红 —— 与 mac job 对 ixwebsocket 源码缓存的 HEAD == pin 断言同一纪律。
+      - name: Cache JUCE
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ github.workspace }}/JUCE
+          key: juce-${{ runner.os }}-${{ hashFiles('.juce-version') }}
 
-      # 2) vcpkg 静态 triplet;Bridge 真的用 WebSocket → 保留 ixwebsocket(08 §5.3 / 06 §4.1 ④)
-      - name: Setup vcpkg
+      - name: Clone JUCE (shallow, pinned; skipped on cache hit) & assert tag identity
+        shell: pwsh
+        run: |
+          $juce = "${{ github.workspace }}/JUCE"
+          $want = $env:JUCE_TAG -replace '^v', ''
+          for ($attempt = 1; $attempt -le 2; $attempt++) {
+            $cloned = $false
+            if (Test-Path (Join-Path $juce 'CMakeLists.txt')) {
+              Write-Host "JUCE $env:JUCE_TAG restored from cache (attempt $attempt)"
+            } else {
+              if (Test-Path $juce) { Remove-Item $juce -Recurse -Force }
+              git clone --depth 1 --branch $env:JUCE_TAG https://github.com/juce-framework/JUCE.git $juce
+              if ($LASTEXITCODE -ne 0) { Write-Error "git clone JUCE $env:JUCE_TAG failed"; exit 1 }
+              $cloned = $true
+            }
+            # `git tag --points-at HEAD` 列出 HEAD 上的全部 tag 再找 JUCE_TAG,而不是 `describe --exact-match`:后者一个 commit
+            # 挂多个 tag 时只回其中一个,会把正确的缓存误判成污染。不接 `| Select-Object -First 1` 在 git 后面:它会提前掐断
+            # 管道,git 的退出码来不及写进 $LASTEXITCODE(实测为空),断言会随机翻车。
+            # try/catch:缓存目录在但 .git 缺失/损坏时 git 退出 128,pwsh 7.4+ 默认 $PSNativeCommandUseErrorActionPreference
+            # 会把原生命令非零退出抛成终止性错误,下一行的 $LASTEXITCODE 判断轮不到执行 —— 包住才能走到「删掉重 clone」。
+            try { $tags = @(git -C $juce tag --points-at HEAD 2>$null) } catch { $tags = @() }
+            if ($LASTEXITCODE -ne 0) { $tags = @() }
+            $tags = @($tags | ForEach-Object { ([string]$_).Trim() } | Where-Object { $_ })
+            $got = ($tags | Where-Object { ($_ -replace '^v', '') -eq $want } | Select-Object -First 1)
+            if ($got) { Write-Host "JUCE identity OK: HEAD is tag '$got' == .juce-version $env:JUCE_TAG"; exit 0 }
+            if ($cloned) { Write-Error "freshly cloned JUCE HEAD carries tags [$($tags -join ', ')], expected $env:JUCE_TAG"; exit 1 }
+            Write-Host "::warning::cached JUCE HEAD carries tags [$($tags -join ', ')], expected $env:JUCE_TAG; discarding the restored directory and re-cloning (the remote cache entry itself cannot be evicted by this workflow: actions/cache never re-saves an existing primary key, so a bad entry keeps being restored and re-cloned until .juce-version changes)"
+            Remove-Item $juce -Recurse -Force
+          }
+          Write-Error "JUCE identity check failed: expected $env:JUCE_TAG"; exit 1
+
+      # 2) vcpkg 静态 triplet;Bridge 真的用 WebSocket → 保留 ixwebsocket(08 §5.3 / 06 §4.1 ④)。
+      #    manifest 模式(issue #23):版本由仓库根 vcpkg.json 的 builtin-baseline(40 位 commit)+ overrides 钉死,
+      #    不再随 runner 镜像自带的 vcpkg 漂移。这里**不**显式 `vcpkg install`:依赖由下面 Configure 步骤的
+      #    vcpkg toolchain 在 configure 期按 vcpkg.json 自动装进 build/vcpkg_installed —— 与本地 scripts/gates.ps1
+      #    走的是同一条路径(单一真源);显式 install 会在仓库根另落一份 vcpkg_installed,toolchain 随后还要再装一遍。
+      #    VCPKG_DEFAULT_BINARY_CACHE 指到 runner.temp 下的固定目录并交给 actions/cache:vcpkg 的二进制缓存按
+      #    包 ABI 哈希寻址(编译器/triplet/port 任一变化都换哈希),比缓存 installed 树稳。
+      #    key = runner.os + 镜像身份(ImageOS-ImageVersion)+ triplet + vcpkg.json 哈希:actions/cache 对已存在的
+      #    exact key **不会重新保存**,若 key 里没有镜像身份,runner 镜像月度轮换升一次 MSVC 就让 ABI 哈希全变、
+      #    每次都重编,而新 archives 永远存不进去(primary key 已被旧镜像的条目占住)—— 缓存会退化成「永不命中」
+      #    直到 vcpkg.json 下次改动。镜像身份在 Setup 步骤从 runner 进程环境变量读出后经 GITHUB_ENV 交给表达式
+      #    (托管 runner 自带 ImageOS / ImageVersion;缺失时回落成 'unknown-image',只影响 key 粒度不影响正确性)。
+      #    restore-keys 只回落一级(同镜像、不同 vcpkg.json):跨镜像的条目 ABI 哈希必然全变、只能全量重编,
+      #    回落过去除了把新条目撑大(旧 archives 原样带回再存一遍)什么也换不到,故不设跨镜像回落。
+      #    triplet 只由 Configure 的 -DVCPKG_TARGET_TRIPLET 决定,这里不设 VCPKG_DEFAULT_TRIPLET(manifest 模式下
+      #    toolchain 不读它,写了只是死配置)。
+      - name: Setup vcpkg (manifest mode + binary cache dir)
+        shell: pwsh
         run: |
           echo "VCPKG_ROOT=$env:VCPKG_INSTALLATION_ROOT" >> $env:GITHUB_ENV
-          echo "VCPKG_DEFAULT_TRIPLET=x64-windows-static" >> $env:GITHUB_ENV
+          $bc = Join-Path $env:RUNNER_TEMP 'vcpkg-binary-cache'
+          New-Item -ItemType Directory -Force -Path $bc | Out-Null
+          echo "VCPKG_DEFAULT_BINARY_CACHE=$bc" >> $env:GITHUB_ENV
+          $img = if ($env:ImageOS -and $env:ImageVersion) { "$env:ImageOS-$env:ImageVersion" } else { 'unknown-image' }
+          Write-Host "runner image for vcpkg cache key: $img"
+          echo "VCPKG_CACHE_IMAGE=$img" >> $env:GITHUB_ENV
+          & "$env:VCPKG_INSTALLATION_ROOT/vcpkg.exe" --version
 
-      - name: Install dependencies (static)
-        run: |
-          vcpkg install --triplet x64-windows-static ixwebsocket
+      - name: Cache vcpkg binary cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ runner.temp }}/vcpkg-binary-cache
+          key: vcpkg-bincache-${{ runner.os }}-${{ env.VCPKG_CACHE_IMAGE }}-x64-windows-static-${{ hashFiles('vcpkg.json') }}
+          restore-keys: |
+            vcpkg-bincache-${{ runner.os }}-${{ env.VCPKG_CACHE_IMAGE }}-x64-windows-static-
 
       # 3) WebView2 Evergreen Runtime(windows-2022 是无桌面 Server,自带 Runtime 不保证)
       - name: Ensure WebView2 Runtime (Evergreen)
@@ -65,20 +131,30 @@ jobs:
           path: build/packages
           key: webview2-nuget-${{ env.WEBVIEW2_NUGET_VERSION }}
 
-      # 5) Configure
+      # 5) Configure(vcpkg toolchain 在这一步按 vcpkg.json 自动安装 ixwebsocket → build/vcpkg_installed)。
+      #    -DBRIDGE_BUILD_SELFTESTS=ON:两个纯逻辑 selftest(tests/*.cpp)与插件一起编译,让下一步的 /W4 零警告门
+      #    真覆盖它们(此前该选项只在本地 gates.ps1 打开;采纳 #27 review)。release.yml 不开:发版构建不需要。
       - name: Configure CMake
         shell: pwsh
         run: |
           if (Test-Path build) { Get-ChildItem build -Exclude packages | Remove-Item -Recurse -Force }
-          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DJUCE_PATH="${{ github.workspace }}/JUCE" -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x64-windows-static
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DJUCE_PATH="${{ github.workspace }}/JUCE" -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x64-windows-static -DBRIDGE_BUILD_SELFTESTS=ON
+          if ($LASTEXITCODE -ne 0) { Write-Error "cmake configure failed"; exit 1 }
+          # 供应链留痕:configure 装进来的 ixwebsocket 必须正是 vcpkg.json overrides 钉的版本(version-semver 与
+          # port-version 都比,并要求 `Status: install ok installed`),传递依赖 mbedtls / zlib 必须是
+          # THIRD-PARTY-NOTICES.md 登记的版本 —— 断言逻辑在 scripts/assert-vcpkg-installed.ps1,与 release.yml 及
+          # 本地 scripts/gates.ps1(gate 4b)共用同一份,本地 / CI 同口径;对不上即红并打印实际值。
+          ./scripts/assert-vcpkg-installed.ps1 -BuildDir build
+          if ($LASTEXITCODE -ne 0) { Write-Error "vcpkg_installed does not match the pinned versions (see ::error:: lines above)"; exit 1 }
 
-      # 5b) Build + 零 warning 断言(/W4 门在 CI 侧的机器强制,06 §4.1 ⑧)
+      # 5b) Build + 零 warning 断言(/W4 门在 CI 侧的机器强制,06 §4.1 ⑧)。
+      #     排除项含 vcpkg_installed:manifest 模式下第三方头落在 build/vcpkg_installed/...,路径里不再有 `\vcpkg\`。
       - name: Build (fail on any MSVC warning)
         shell: pwsh
         run: |
           cmake --build build --config Release --parallel 2>&1 | Tee-Object -FilePath build.log
           if ($LASTEXITCODE -ne 0) { Write-Error "build failed"; exit 1 }
-          $w = Select-String -Path build.log -Pattern '\swarning\s+C\d{4}' | Where-Object { $_.Line -notmatch '[\\/](JUCE|vcpkg|_deps)[\\/]' }
+          $w = Select-String -Path build.log -Pattern '\swarning\s+C\d{4}' | Where-Object { $_.Line -notmatch '[\\/](JUCE|vcpkg|vcpkg_installed|_deps)[\\/]' }
           if ($w.Count -gt 0) {
             $w | ForEach-Object { Write-Host "::error::$($_.Line)" }
             Write-Error "MSVC warnings: $($w.Count); /W4 requires zero warnings"; exit 1
@@ -90,6 +166,22 @@ jobs:
           name: SynchainBridge-build-log-${{ github.sha }}
           path: build.log
           retention-days: 7
+
+      # 5c) 跑两个 selftest(与 scripts/gates.ps1 的 gate 5b / compliance / mac job 的 Run selftests 同源同用例)。
+      #     VS 多配置生成器把 .exe 放在 build/Release/,用 Get-ChildItem -Recurse 定位并断言「恰好 1 个」:
+      #     找不到即红(静默跳过等于把断言从门禁删掉),多于 1 个说明构建目录不干净。
+      - name: Run selftests (origin allowlist + PCM frame)
+        shell: pwsh
+        run: |
+          foreach ($t in 'origin_allowlist_selftest', 'pcm_frame_selftest') {
+            $exes = @(Get-ChildItem -Path build -Recurse -File -Filter "$t.exe" | Where-Object { $_.FullName -notmatch '[\\/]_deps[\\/]' })
+            if ($exes.Count -ne 1) { Write-Error "expected exactly 1 $t.exe under build (configure must pass -DBRIDGE_BUILD_SELFTESTS=ON), found $($exes.Count)"; exit 1 }
+            Write-Host "::group::$t"
+            & $exes[0].FullName 2>&1 | Out-Host
+            $code = $LASTEXITCODE
+            Write-Host "::endgroup::"
+            if ($code -ne 0) { Write-Error "$t failed (exit $code); cases in tests/$t.cpp"; exit 1 }
+          }
 
       # 6) pluginval strictness 5 --skip-gui-tests(无头 runner 上 WebView2 editor 会崩)
       - name: Download pluginval
@@ -112,23 +204,57 @@ jobs:
 
       # 6b) 发行打包脚本冒烟(与 mac job 的 Package smoke 同构,采纳 #24 review):scripts/package.ps1 只挂在
       #     release.yml 的 tag 触发上;publish 是 needs 两个平台,Windows 打包一回归 = 整个 tag 零资产。
-      #     产物丢弃,断言只看形态:zip + .sha256 都产出、summary 五个字段行齐整。这里**不**测 summary 去重:
-      #     package.ps1 的 summary 是整文件覆盖(Set-Content)而非 mac 侧的追加 + 按段去重,两个「打包唯一
-      #     真源」在这点上行为分叉(release.yml 按 artifact 名分目录下载,summary 只喂 step summary,
-      #     故暂不出事),口径对齐记在 issue #23;对齐后再把 mac 侧的三次运行断言搬过来。
+      #     产物丢弃,断言只看形态:zip + .sha256 都产出、summary 五个字段行齐整。
+      #     三次运行(ci → ci2 → ci)与 mac 侧同构(issue #23 把 package.ps1 的 summary 从整文件覆盖改成
+      #     追加 + 按段去重后搬过来):先再写一条**不同名**的记录,再重跑第一条 —— 它必须只删掉自己那条,
+      #     0.0.0-ci2 的段落要原样留着。只跑两次同名会让 buggy 实现(子串命中就删光)与正确实现输出逐字节
+      #     相同,断言分辨不出。
       - name: Package smoke (scripts/package.ps1, artefacts discarded)
         shell: pwsh
         run: |
           $out = Join-Path $env:RUNNER_TEMP 'package-smoke'
-          ./scripts/package.ps1 -Version 0.0.0-ci -BuildDir build -OutDir $out
+          ./scripts/package.ps1 -Version 0.0.0-ci  -BuildDir build -OutDir $out
+          ./scripts/package.ps1 -Version 0.0.0-ci2 -BuildDir build -OutDir $out
+          ./scripts/package.ps1 -Version 0.0.0-ci  -BuildDir build -OutDir $out
           Get-ChildItem $out | Out-Host
           foreach ($f in 'SynchainBridge-VST3-v0.0.0-ci-win64.zip', 'SynchainBridge-VST3-v0.0.0-ci-win64.zip.sha256', 'package-summary.md') {
             if (-not (Test-Path (Join-Path $out $f))) { Write-Error "package smoke did not produce $f"; exit 1 }
           }
+          # .sha256 的内容形态:恰好一行 `<64 位小写 hex><两个空格><zip 基名>`(sha256sum -c 认的正是这个格式,
+          # publish 跨 job 复验也靠它),且 hash 与 Get-FileHash 现算的一致 —— 只断言文件存在的话,写错分隔符 /
+          # 大写 hex / 带路径前缀都要到打 tag 那一刻才会在 publish 炸出来(与 mac 侧同构,issue #23)。
+          foreach ($v in '0.0.0-ci', '0.0.0-ci2') {
+            $zip  = "SynchainBridge-VST3-v$v-win64.zip"
+            # 读**原始字节**:Get-Content 会剥行尾测不出 CR,ReadAllText 会按 BOM 探测吃掉 preamble 测不出 BOM。
+            # 与 mac 侧 `cat` + 逐字等式同强度:断言字节串恰为 `<hash>  <zip>\n`(LF、无 CR、无 BOM、无多余空行,
+            # 用 \z 而不是 $ —— .NET 的 $ 在末尾 \n 之前也匹配,会放过结尾双换行),package.ps1 回退到 Set-Content 就在这里红。
+            $bytes = [System.IO.File]::ReadAllBytes((Join-Path $out "$zip.sha256"))
+            $raw = [System.Text.Encoding]::ASCII.GetString($bytes)
+            if ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) {
+              Write-Error "$zip.sha256 starts with a UTF-8 BOM"; exit 1
+            }
+            if ($raw -cnotmatch "^[0-9a-f]{64}  $([regex]::Escape($zip))`n\z") {
+              Write-Error "$zip.sha256 is not exactly '<64 hex>  $zip' + one LF (no CR / no trailing blank line): $([BitConverter]::ToString($bytes))"; exit 1
+            }
+            $line = @($raw.TrimEnd("`n"))
+            $want = (Get-FileHash -LiteralPath (Join-Path $out $zip) -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($line[0] -cne "$want  $zip") { Write-Error "$zip.sha256 says '$($line[0])' but the zip hashes to $want"; exit 1 }
+          }
           $summary = Get-Content (Join-Path $out 'package-summary.md') -Raw
           foreach ($k in 'version', 'zipFileName', 'sizeBytes', 'sha256', 'releaseDate') {
-            # `${k}:` 而不是 `$k:`——pwsh 会把 `$k:` 解析成作用域限定符,直接 ParserError
-            if ($summary -notmatch "(?m)^${k}:") { Write-Error "package-summary.md is missing the '${k}:' line"; exit 1 }
+            # `${k}:` 而不是 `$k:`——pwsh 会把 `$k:` 解析成作用域限定符,直接 ParserError。
+            # -cnotmatch 大小写敏感:pwsh 默认不敏感,`Version:` / `SHA256:` 这类漂移会静默走通。
+            if ($summary -cnotmatch "(?m)^${k}:") { Write-Error "package-summary.md is missing the '${k}:' line"; exit 1 }
+          }
+          # 段落断言逐行精确比对(-ceq,大小写敏感),不用子串包含:0.0.0-ci 的行不能被 0.0.0-ci2 的行撞过。
+          $lines = @(Get-Content (Join-Path $out 'package-summary.md'))
+          $n = @($lines | Where-Object { $_ -cmatch '^zipFileName:' }).Count
+          if ($n -ne 2) { Write-Error "package-summary.md should hold exactly 2 segments (ci + ci2), got $n"; exit 1 }
+          if (@($lines | Where-Object { $_ -ceq 'zipFileName: SynchainBridge-VST3-v0.0.0-ci2-win64.zip' }).Count -ne 1) {
+            Write-Error "re-running 0.0.0-ci wiped the unrelated 0.0.0-ci2 segment (over-deletion regression)"; exit 1
+          }
+          if (@($lines | Where-Object { $_ -ceq 'zipFileName: SynchainBridge-VST3-v0.0.0-ci-win64.zip' }).Count -ne 1) {
+            Write-Error "0.0.0-ci segment should appear exactly once after re-run"; exit 1
           }
 
       # 7) artifact(命名/保留策略见 06 §6.3;一律用 REF_SLUG,不用 github.ref_name)
@@ -183,8 +309,8 @@ jobs:
     runs-on: macos-15                   # arm64 原生;macos-14 已进弃用窗口
     permissions:
       contents: read                    # 本 job 只读源码;上传 artifact 不需要 contents 写权限
-    timeout-minutes: 60                 # 与 windows job 对称:两边都要从零 clone JUCE 并编译两个
-                                        # format wrapper,mac 侧还多一次 ixwebsocket 的 FetchContent
+    timeout-minutes: 60                 # 与 windows job 对称:两边都要编译两个 format wrapper,mac 侧还多一次
+                                        # ixwebsocket 的编译;JUCE / ixwebsocket 源码有 actions/cache,但 miss 也得够用
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
@@ -213,6 +339,17 @@ jobs:
           echo "PLUGINVAL_TAG=$pv"   >> "$GITHUB_ENV"
           echo "REF_SLUG=$slug"      >> "$GITHUB_ENV"
           echo "MAC_ZIP=SynchainBridge-macos-arm64-${slug}-${HEAD_SHA:0:7}.zip" >> "$GITHUB_ENV"
+          # ixwebsocket 的 pin 与仓库 URL 同样从单一真源 CMakeLists.txt 现读(供下面的源码缓存 key 与预取用):
+          # 解析不到就直接红,而不是让缓存步骤静默用一个空 key。GIT_REPOSITORY 绑定到 ixwebsocket 的
+          # FetchContent_Declare 段内取(先命中段头再取第一行 GIT_REPOSITORY),将来 CMakeLists 里再出现别的
+          # FetchContent_Declare 也不会把别人的 URL 当成 ixwebsocket 的来 clone。
+          ix_sha=$(sed -nE 's/^[[:space:]]*set\(IXWEBSOCKET_TAG[[:space:]]+"([0-9a-f]{40})".*/\1/p' CMakeLists.txt | head -n 1)
+          ix_url=$(awk '/FetchContent_Declare\(ixwebsocket/ { f = 1 } f && $1 == "GIT_REPOSITORY" { print $2; exit }' CMakeLists.txt)
+          if [ -z "$ix_sha" ] || [ -z "$ix_url" ]; then
+            echo "::error::cannot parse IXWEBSOCKET_TAG (40-hex) / GIT_REPOSITORY from CMakeLists.txt"; exit 1
+          fi
+          echo "IXWEBSOCKET_SHA=$ix_sha" >> "$GITHUB_ENV"
+          echo "IXWEBSOCKET_URL=$ix_url" >> "$GITHUB_ENV"
 
       # 1) 工具链留痕:runner 镜像每月轮换,Xcode/SDK/CMake 一动构建行为就可能变,
       #    出问题时这段日志是判断「代码回归 or 镜像漂移」的第一手材料。
@@ -226,12 +363,79 @@ jobs:
           clang --version
           xcodebuild -version
 
-      # 2) JUCE:浅克隆锁 tag(与 windows job 同策略,不用 FetchContent 避免上游漂移)
-      - name: Clone JUCE (shallow, pinned)
+      # 2) JUCE:浅克隆锁 tag(与 windows job 同策略,不用 FetchContent 避免上游漂移)。
+      #    与 windows job 同一套缓存:key = runner.os + .juce-version 哈希;clone 按「没有 CMakeLists.txt」判定,
+      #    miss 与残缺命中都照常 clone —— 缓存只是加速,永远不是正确性的前提。
+      #    身份断言与 windows job 同口径:HEAD 上的 tag(`git tag --points-at HEAD`)剥 v 前缀后必须含 JUCE_TAG;
+      #    缓存条目对不上就删掉重 clone,重 clone 后仍对不上才红(bash 版,逻辑逐条对应 pwsh 版)。
+      - name: Cache JUCE
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ github.workspace }}/JUCE
+          key: juce-${{ runner.os }}-${{ hashFiles('.juce-version') }}
+
+      - name: Clone JUCE (shallow, pinned; skipped on cache hit) & assert tag identity
         shell: bash
         run: |
           set -euo pipefail
-          git clone --depth 1 --branch "$JUCE_TAG" https://github.com/juce-framework/JUCE.git "${{ github.workspace }}/JUCE"
+          juce="${{ github.workspace }}/JUCE"
+          want="${JUCE_TAG#v}"
+          for attempt in 1 2; do
+            cloned=0
+            if [ -f "$juce/CMakeLists.txt" ]; then
+              echo "JUCE $JUCE_TAG restored from cache (attempt $attempt)"
+            else
+              rm -rf "$juce"
+              git clone --depth 1 --branch "$JUCE_TAG" https://github.com/juce-framework/JUCE.git "$juce"
+              cloned=1
+            fi
+            # `git tag --points-at HEAD` 列出 HEAD 上的全部 tag 再找 JUCE_TAG(与 pwsh 版同口径;`describe --exact-match`
+            # 在一个 commit 挂多个 tag 时只回其中一个,会把正确的缓存误判成污染)
+            tags="$(git -C "$juce" tag --points-at HEAD 2>/dev/null || true)"
+            got=""
+            while IFS= read -r t; do
+              if [ -n "$t" ] && [ "${t#v}" = "$want" ]; then got="$t"; break; fi
+            done <<< "$tags"
+            if [ -n "$got" ]; then
+              echo "JUCE identity OK: HEAD is tag '$got' == .juce-version $JUCE_TAG"; exit 0
+            fi
+            if [ "$cloned" = "1" ]; then
+              echo "::error::freshly cloned JUCE HEAD carries tags [$(printf '%s' "$tags" | tr '\n' ' ')], expected $JUCE_TAG"; exit 1
+            fi
+            echo "::warning::cached JUCE HEAD carries tags [$(printf '%s' "$tags" | tr '\n' ' ')], expected $JUCE_TAG; discarding the restored directory and re-cloning (the remote cache entry itself cannot be evicted by this workflow: actions/cache never re-saves an existing primary key, so a bad entry keeps being restored and re-cloned until .juce-version changes)"
+            rm -rf "$juce"
+          done
+          echo "::error::JUCE identity check failed: expected $JUCE_TAG"; exit 1
+
+      # 2b) ixwebsocket 源码缓存:FetchContent 每次都要完整 clone 上游(钉的是裸 SHA,不能浅克隆)。
+      #     这里把源码树预取到 _deps/ixwebsocket-src 并交给 actions/cache(key 含 runner.os + 从 CMakeLists.txt
+      #     读出的 IXWEBSOCKET_TAG,升 pin 自动换 key),再经 FETCHCONTENT_SOURCE_DIR_IXWEBSOCKET 喂给 configure ——
+      #     CMake 文档语义:设了该变量就跳过 download/update,直接用这份源码。
+      #     只缓存源码,不缓存 _deps/ixwebsocket-build(那是构建产物)。目录名刻意叫 `_deps/`:零警告门的排除正则
+      #     `(^|/)(_deps|JUCE|vcpkg)/` 原样覆盖,无需改门。
+      #     FetchContent 走 SOURCE_DIR 覆盖时不会再核对 commit,所以这里自己断言 HEAD == pin:命中却对不上
+      #     (key 撞了 / 缓存被污染)就重拉,重拉后仍对不上才红 —— 永远不带一份不明来源的源码进产物。
+      - name: Cache ixwebsocket source (FetchContent)
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ github.workspace }}/_deps/ixwebsocket-src
+          key: ixwebsocket-src-${{ runner.os }}-${{ env.IXWEBSOCKET_SHA }}
+
+      - name: Prefetch ixwebsocket at pinned SHA (skipped on cache hit)
+        shell: bash
+        run: |
+          set -euo pipefail
+          src="${{ github.workspace }}/_deps/ixwebsocket-src"
+          head="$(git -C "$src" rev-parse HEAD 2>/dev/null || true)"
+          if [ "$head" != "$IXWEBSOCKET_SHA" ]; then
+            [ -z "$head" ] || echo "::warning::cached ixwebsocket-src is at $head, expected $IXWEBSOCKET_SHA; re-fetching"
+            rm -rf "$src"
+            git clone "$IXWEBSOCKET_URL" "$src"
+            git -C "$src" -c advice.detachedHead=false checkout "$IXWEBSOCKET_SHA"
+          else
+            echo "ixwebsocket $IXWEBSOCKET_SHA restored from cache"
+          fi
+          [ "$(git -C "$src" rev-parse HEAD)" = "$IXWEBSOCKET_SHA" ] || { echo "::error::ixwebsocket-src HEAD != $IXWEBSOCKET_SHA"; exit 1; }
 
       # 3) Ninja:macOS 镜像通常自带;缺失时按需装,避免镜像轮换把 job 弄红
       - name: Ensure Ninja
@@ -241,12 +445,17 @@ jobs:
           command -v ninja >/dev/null 2>&1 || brew install ninja
           ninja --version
 
-      # 4) Configure:OSX 相关参数(架构/部署目标/FORMATS)全在 CMakeLists,命令行不重复 —— 单一真源
+      # 4) Configure:OSX 相关参数(架构/部署目标/FORMATS)全在 CMakeLists,命令行不重复 —— 单一真源。
+      #    FETCHCONTENT_SOURCE_DIR_IXWEBSOCKET 只是把 2b 预取好的源码交给 FetchContent,pin 本身仍在 CMakeLists.txt。
+      #    -DBRIDGE_BUILD_SELFTESTS=ON 与 windows job 同理:让下一步 clang -Wall -Wextra -Wpedantic 零警告门
+      #    真覆盖 tests/*.cpp(采纳 #27 review);release.yml 不开。
       - name: Configure CMake (Ninja)
         shell: bash
         run: |
           set -euo pipefail
-          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DJUCE_PATH="${{ github.workspace }}/JUCE"
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DJUCE_PATH="${{ github.workspace }}/JUCE" \
+            -DFETCHCONTENT_SOURCE_DIR_IXWEBSOCKET="${{ github.workspace }}/_deps/ixwebsocket-src" \
+            -DBRIDGE_BUILD_SELFTESTS=ON
 
       # 5) Build + clang 零警告门 —— 与 windows 的 /W4 门**同构的黑名单**(06 §4.1 ⑧):
       #    只排除第三方,其余一律算(白名单式的 `grep '/src/'` 会让 cmake/ 生成物、
@@ -273,6 +482,27 @@ jobs:
           name: SynchainBridge-macos-build-log-${{ github.sha }}
           path: build.log
           retention-days: 7
+
+      # 5b) 跑两个 selftest(与 scripts/gates.ps1 的 gate 5b / compliance / windows job 同源同用例)。
+      #     Ninja 单配置生成器把可执行文件放在 build/ 根,但仍用 find 定位,免得生成器 / 输出目录一变就
+      #     静默找不到;断言「恰好 1 个」并用 -print -quit 取路径,与下面 bundle 定位同口径(pipefail 下
+      #     `find | head` 会因 SIGPIPE 翻车)。失败也闭合 ::group::,后续日志不被吞进折叠区。
+      - name: Run selftests (origin allowlist + PCM frame)
+        shell: bash
+        run: |
+          set -euo pipefail
+          for t in origin_allowlist_selftest pcm_frame_selftest; do
+            n=$(find build -type f -name "$t" -perm -u+x -not -path '*/_deps/*' | wc -l | tr -d '[:space:]')
+            if [ "$n" != "1" ]; then
+              echo "::error::expected exactly 1 $t executable under build (configure must pass -DBRIDGE_BUILD_SELFTESTS=ON), found $n"; exit 1
+            fi
+            exe=$(find build -type f -name "$t" -perm -u+x -not -path '*/_deps/*' -print -quit)
+            echo "::group::$t"
+            rc=0
+            "$exe" || rc=$?
+            echo "::endgroup::"
+            if [ "$rc" -ne 0 ]; then echo "::error::$t failed (exit $rc); cases in tests/$t.cpp"; exit "$rc"; fi
+          done
 
       # 6) 定位产物 + 架构断言:必须是 arm64 单架构(U13 决定 v1 不出 universal/x86_64)。
       #    数量断言写死「恰好 1 个」而不是「取第一个」:build 下真冒出第 2 个同类 bundle 说明构建
@@ -404,6 +634,20 @@ jobs:
         run: |
           set -euo pipefail
           smoke="$RUNNER_TEMP/package-smoke"
+          # 先跑一次**不传 --version** 的 --dry-run:release.yml 与下面三次真跑全部显式传版本,脚本里从
+          # CMakeLists.txt 回落读版本的那条 sed 否则在 CI 上永远不执行 —— 而它恰是 GNU / BSD 语法差异
+          # 唯一能咬到的地方,只有 macOS runner 上的 BSD sed 才验得到。--dry-run 分支在版本解析之后,
+          # 能真跑 sed。对照值用 grep 另取一份(-m1 两端都通,不经 `| head` 免 SIGPIPE),
+          # 断言 DryRun 输出里的 Version 行与之逐字相等,不只看退出码。
+          # `|| true`:set -e 下赋值语句的退出码就是命令替换的退出码,grep 无命中会当场终止 step,下一行的 ::error 守卫
+          # 成了死代码。对照值同样先剔 `#` 行注释(与 gates.ps1 版本 gate 同口径),否则注释里留一行旧 project() 两边同错同过。
+          cmake_ver="$(sed -E 's/#.*$//' CMakeLists.txt | grep -m1 -oE '^[[:space:]]*project[[:space:]]*\([[:space:]]*[^[:space:]]+[[:space:]]+VERSION[[:space:]]+[0-9]+\.[0-9]+\.[0-9]+' || true)"
+          cmake_ver="${cmake_ver##*[[:space:]]}"
+          [ -n "$cmake_ver" ] || { echo "::error::cannot read project(... VERSION) from CMakeLists.txt"; exit 1; }
+          dry="$(bash scripts/package-macos.sh --dry-run --build-dir build --out-dir "$smoke")"
+          printf '%s\n' "$dry"
+          printf '%s\n' "$dry" | grep -Fqx "[DryRun] Version  : $cmake_ver" \
+            || { echo "::error::package-macos.sh --dry-run without --version did not resolve $cmake_ver from CMakeLists.txt (BSD sed fallback regressed?)"; exit 1; }
           bash scripts/package-macos.sh --version 0.0.0-ci  --build-dir build --out-dir "$smoke"
           # 三次运行才覆盖到 package-summary.md 的「去重旧段落」awk 分支(全仓唯一真出过 bug 的打包逻辑,
           # 14626ec 修的是「删过头,把别的版本/平台的段落一起删光」):先再写一条**不同名**的记录,
@@ -412,6 +656,20 @@ jobs:
           bash scripts/package-macos.sh --version 0.0.0-ci2 --build-dir build --out-dir "$smoke"
           bash scripts/package-macos.sh --version 0.0.0-ci  --build-dir build --out-dir "$smoke"
           ls -l "$smoke"
+          # .sha256 的内容形态:恰好一行 `<64 位小写 hex><两个空格><zip 基名>`(sha256sum -c 认的正是这个格式,
+          # publish 跨 job 复验也靠它),且 hash 与 shasum -a 256 现算的一致 —— 只看退出码的话,写错分隔符 /
+          # 大写 hex / 带路径前缀都要到打 tag 那一刻才会在 publish 炸出来(与 windows 侧同构,issue #23)。
+          for v in 0.0.0-ci 0.0.0-ci2; do
+            zip="SynchainBridge-VST3-AU-v$v-macos-arm64.zip"
+            [ "$(wc -l < "$smoke/$zip.sha256" | tr -d '[:space:]')" = "1" ] \
+              || { echo "::error::$zip.sha256 must be exactly one line"; exit 1; }
+            line="$(cat "$smoke/$zip.sha256")"
+            printf '%s\n' "$line" | grep -qE '^[0-9a-f]{64}  [^[:space:]]+$' \
+              || { echo "::error::$zip.sha256 is not '<64 hex>  <zip>' shaped: '$line'"; exit 1; }
+            want="$(shasum -a 256 "$smoke/$zip" | awk '{ print $1 }')"
+            [ "$line" = "$want  $zip" ] \
+              || { echo "::error::$zip.sha256 says '$line' but expected '$want  $zip'"; exit 1; }
+          done
           n=$(grep -c '^zipFileName:' "$smoke/package-summary.md" || true)
           if [ "$n" != "2" ]; then echo "::error::package-summary.md should hold exactly 2 segments (ci + ci2), got $n"; exit 1; fi
           grep -qx 'zipFileName: SynchainBridge-VST3-AU-v0.0.0-ci2-macos-arm64.zip' "$smoke/package-summary.md" \

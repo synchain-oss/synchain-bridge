@@ -200,7 +200,9 @@ mac 上建议用 Chrome / Edge / Firefox 打开 Creative Space；注意这些浏
 ## CI 对照
 
 `.github/workflows/ci.yml` 的 `build-and-validate-macos`（`macos-15`，arm64 原生）跑的是本页流程的
-子集：Ninja Release 构建（第一方代码零警告）→ 产物定位与 **arm64 单架构断言** → VST3 的
+子集：从 `actions/cache` 恢复 JUCE 与钉死的 ixwebsocket 源码（miss 即 clone；源码经
+`FETCHCONTENT_SOURCE_DIR_IXWEBSOCKET` 交给 configure，并断言 checkout == `IXWEBSOCKET_TAG`，本地手工构建不需要这一步）
+→ Ninja Release 构建（第一方代码零警告）→ 产物定位与 **arm64 单架构断言** → VST3 的
 `pluginval --strictness-level 5 --skip-gui-tests` → `.component` 的 `auval` → `ditto` 打 zip 传 artifact。
 
 对照本页「验证」一节，CI **没有**覆盖两处，仍以本地门禁为准：① VST3 的**含 GUI** 全量 `pluginval`

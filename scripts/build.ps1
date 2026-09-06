@@ -102,11 +102,22 @@ if (-not $vcpkgRoot) {
     $errors += 'VCPKG_ROOT 未设置。安装 vcpkg 并设 VCPKG_ROOT 环境变量。'
 } else {
     $toolchain = Join-Path $vcpkgRoot 'scripts\buildsystems\vcpkg.cmake'
-    $ixConfig  = Join-Path $vcpkgRoot 'installed\x64-windows-static\share\ixwebsocket\ixwebsocket-config.cmake'
     if (-not (Test-Path $toolchain)) { $errors += ('vcpkg toolchain 不存在: ' + $toolchain) }
-    if (-not (Test-Path $ixConfig))  { $errors += 'ixwebsocket (x64-windows-static) 未安装。安装: vcpkg install ixwebsocket:x64-windows-static' }
-    if ((Test-Path $toolchain) -and (Test-Path $ixConfig)) {
-        Write-Host '[OK] vcpkg + ixwebsocket (x64-windows-static)' -ForegroundColor Green
+    if (Test-Path (Join-Path $RepoRoot 'vcpkg.json')) {
+        # manifest 模式:ixwebsocket 由 configure 期的 vcpkg toolchain 按 vcpkg.json 的 baseline 自动装进
+        # <BuildDir>/vcpkg_installed,不需要(也不应)手工 vcpkg install;这里只验 vcpkg.exe 已 bootstrap。
+        $vcpkgExe = Join-Path $vcpkgRoot 'vcpkg.exe'
+        if (-not (Test-Path $vcpkgExe)) { $errors += 'VCPKG_ROOT 下无 vcpkg.exe。先跑 bootstrap-vcpkg.bat。' }
+        if ((Test-Path $toolchain) -and (Test-Path $vcpkgExe)) {
+            Write-Host '[OK] vcpkg(manifest 模式,ixwebsocket 由 configure 期按 vcpkg.json 自动安装)' -ForegroundColor Green
+        }
+    } else {
+        # 经典模式(无 vcpkg.json 的旧分支):向后兼容,仍验全局 installed 树。
+        $ixConfig  = Join-Path $vcpkgRoot 'installed\x64-windows-static\share\ixwebsocket\ixwebsocket-config.cmake'
+        if (-not (Test-Path $ixConfig))  { $errors += 'ixwebsocket (x64-windows-static) 未安装。安装: vcpkg install ixwebsocket:x64-windows-static' }
+        if ((Test-Path $toolchain) -and (Test-Path $ixConfig)) {
+            Write-Host '[OK] vcpkg + ixwebsocket (x64-windows-static)' -ForegroundColor Green
+        }
     }
 }
 

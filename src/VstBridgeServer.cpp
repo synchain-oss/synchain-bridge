@@ -5,6 +5,7 @@
 #include "BridgeApi.h"
 #include "BridgeOriginConfig.h" // CMake 生成：仅在配置期注入了额外来源时定义 BRIDGE_EXTRA_ALLOWED_ORIGIN_HOSTS
 #include "OriginAllowlist.h" // 归一化 / 模式可用性 / 模式匹配（纯 std，自测覆盖见 tests/）
+#include "PcmFrame.h" // PCM 帧头 12 字节编码的 C++ 侧唯一实现（纯 std，golden 自测见 tests/）
 #include "VstBridgeServer.h"
 #include "WebSocketProtocol.h"
 #include <cstring> // std::memcpy
@@ -315,23 +316,17 @@ void VstBridgeServer::sendPcmPacket(const float* interleaved, int numSamples, in
     if (!mServer)
         return;
 
-    // Pack header: 3 x u32 LE (sampleRate, channels, numSamples)
-    const size_t headerSize = 12;
-    const size_t dataSize = static_cast<size_t>(numSamples) * static_cast<size_t>(channels) * sizeof(float);
-    std::string frame(headerSize + dataSize, '\0');
+    // 同步遗留路径(无调用方,见 .h 声明处说明)。帧头 12 字节(3 x u32 LE)+ float32 interleaved
+    // payload：布局由 src/PcmFrame.h 唯一定义，与后台发送线程的 buildPcmFrame() 同源，
+    // golden 字节见 tests/pcm_frame_selftest.cpp。
+    const size_t dataSize = pcm::payloadSize(static_cast<size_t>(numSamples), static_cast<size_t>(channels));
+    std::string frame(pcm::kHeaderSize + dataSize, '\0');
 
-    auto writeU32 = [&](int offset, uint32_t val) {
-        frame[offset] = static_cast<char>(val & 0xFF);
-        frame[offset + 1] = static_cast<char>((val >> 8) & 0xFF);
-        frame[offset + 2] = static_cast<char>((val >> 16) & 0xFF);
-        frame[offset + 3] = static_cast<char>((val >> 24) & 0xFF);
-    };
-
-    writeU32(0, static_cast<uint32_t>(sampleRate));
-    writeU32(4, static_cast<uint32_t>(channels));
-    writeU32(8, static_cast<uint32_t>(numSamples));
-
-    std::memcpy(&frame[headerSize], interleaved, dataSize);
+    pcm::writeHeader(frame.data(), static_cast<uint32_t>(sampleRate), static_cast<uint32_t>(channels),
+                     static_cast<uint32_t>(numSamples));
+    // 与 buildPcmFrame() 同口径:空 payload 不调 memcpy(源指针可为空,零长度 memcpy 传空指针仍是 UB)。
+    if (dataSize > 0)
+        std::memcpy(frame.data() + pcm::kHeaderSize, interleaved, dataSize);
 
     // Snapshot clients under lock
     std::vector<std::shared_ptr<ix::WebSocket>> snapshot;
@@ -460,21 +455,14 @@ void VstBridgeServer::stopSenderThread()
 void VstBridgeServer::buildPcmFrame(const PcmSlot& slot)
 {
     // 调用方须持有 mStreamMutex（读取 slot.data）。组帧到复用的 mSendFrame。
-    const size_t headerSize = 12;
-    const size_t dataSize = static_cast<size_t>(slot.numSamples) * static_cast<size_t>(slot.channels) * sizeof(float);
-    mSendFrame.resize(headerSize + dataSize);
+    // 帧头布局由 src/PcmFrame.h 唯一定义（与同步路径 sendPcmPacket() 同源），不在此手写偏移。
+    const size_t dataSize = pcm::payloadSize(static_cast<size_t>(slot.numSamples), static_cast<size_t>(slot.channels));
+    mSendFrame.resize(pcm::kHeaderSize + dataSize);
 
-    auto writeU32 = [this](size_t off, uint32_t val) {
-        mSendFrame[off] = static_cast<char>(val & 0xFF);
-        mSendFrame[off + 1] = static_cast<char>((val >> 8) & 0xFF);
-        mSendFrame[off + 2] = static_cast<char>((val >> 16) & 0xFF);
-        mSendFrame[off + 3] = static_cast<char>((val >> 24) & 0xFF);
-    };
-    writeU32(0, static_cast<uint32_t>(slot.sampleRate));
-    writeU32(4, static_cast<uint32_t>(slot.channels));
-    writeU32(8, static_cast<uint32_t>(slot.numSamples));
+    pcm::writeHeader(mSendFrame.data(), static_cast<uint32_t>(slot.sampleRate), static_cast<uint32_t>(slot.channels),
+                     static_cast<uint32_t>(slot.numSamples));
     if (dataSize > 0)
-        std::memcpy(&mSendFrame[headerSize], slot.data.data(), dataSize);
+        std::memcpy(mSendFrame.data() + pcm::kHeaderSize, slot.data.data(), dataSize);
 }
 
 void VstBridgeServer::sendFrameToClients()

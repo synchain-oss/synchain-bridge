@@ -52,6 +52,9 @@ public:
 
     // Send raw PCM to all connected clients as binary WebSocket frame.
     // Frame format: u32 sampleRate | u32 channels | u32 numSamples | float32 interleaved
+    // 无调用方的同步遗留路径(issue #168 后实时路径改走 pushPcm → SPSC ring → 后台发送线程
+    // buildPcmFrame);保留仅为 API 兼容,勿在音频线程调用(它分配、上锁、同步发网络)。
+    // 帧头编码与实时路径同源(src/PcmFrame.h)。
     void sendPcmPacket(const float* interleaved, int numSamples, int sampleRate, int channels);
 
     // -------------------------------------------------------------------------

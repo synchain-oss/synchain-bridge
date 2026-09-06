@@ -1,9 +1,11 @@
 # 契约变更说明 —— `<YYYYMMDD>-<slug>`
 
-> 触碰冻结契约面（`BRIDGE_CONTRACT.md`、`src/WebSocketProtocol.{h,cpp}`）且 PR body 的 `contract-impact` 为
-> `minor` / `major` 时，必须在**同一个 PR** 里以本模板新增一份 `docs/contract-changes/<YYYYMMDD>-<slug>.md`
-> （`branch-gate` 的 Frozen-contract change guard 机器校验；`none` 级的纯文档澄清 / 登记快照不需要）。
-> 分级定义与流程见 `CLAUDE.md` §5；协议真源永远是 `BRIDGE_CONTRACT.md`，本文件只是变更的说明与兼容性承诺。
+> `branch-gate` 的 Frozen-contract change guard 分两档（`CLAUDE.md` §5，判据在 `.github/workflows/branch-gate.yml`）：
+> **strict**（`src/WebSocketProtocol.{h,cpp}`、`src/BridgeApi.h`、`src/PcmFrame.h`）——碰到即须在**同一个 PR** 里以本模板
+> 新增一份 `docs/contract-changes/<YYYYMMDD>-<slug>.md`，自申报 `none` 不免检；**loose**（`BRIDGE_CONTRACT.md`、
+> `src/VstBridgeServer.{h,cpp}`）——PR body 申报 `contract-impact: none`（纯文档澄清 / 登记快照 / 不动 wire 的重构）
+> 免检，`minor` / `major` 或未申报同样须新增本文档。凭据只认本 PR **新增**（`added`）的文档，改名 / 修改旧文档不算。
+> 协议真源永远是 `BRIDGE_CONTRACT.md`；本文件只是变更的说明与兼容性承诺。
 
 | 项 | 值 |
 |---|---|
