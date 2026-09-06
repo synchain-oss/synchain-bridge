@@ -350,6 +350,11 @@ function Test-Version {
 function Test-IxwebsocketPin {
     $ok = $true
     $detail = ''
+    # 与 gate 1 / 4b 同口径的经典模式向后兼容:无 vcpkg.json 的 worktree 上 SKIP 而不是一条含义不明的 FAIL
+    if (-not (Test-Path (Join-Path $RepoRoot 'vcpkg.json'))) {
+        Add-Result 'ixwebsocket 版本一致性 (vcpkg.json ↔ CMakeLists IXWEBSOCKET_TAG)' 'SKIP' '无 vcpkg.json(经典模式)'
+        return $true
+    }
     try {
         $m = Get-Content -LiteralPath (Join-Path $RepoRoot 'vcpkg.json') -Raw | ConvertFrom-Json
         $ov = @($m.overrides | Where-Object name -eq 'ixwebsocket') | Select-Object -First 1

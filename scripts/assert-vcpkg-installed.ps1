@@ -7,7 +7,8 @@
     ① ixwebsocket 核心段(显式排掉 feature 段)`Status: install ok installed`,Version == vcpkg.json override 的
        version-semver,Port-Version == override 的 port-version(override 缺省视为 0;status 段里 #0 时 vcpkg 不写
        Port-Version 行,缺行同样视为 0);
-    ② 传递依赖 mbedtls / zlib 的核心段 Version == 下方 $ExpectedTransitive 表(与 THIRD-PARTY-NOTICES.md 的表逐项对应)。
+    ② 传递依赖 mbedtls / zlib 的核心段 Version == 下方 $ExpectedTransitive 表(与 THIRD-PARTY-NOTICES.md 的表逐项对应);
+    ③ 闭包完整性:本 triplet 下 install ok installed 的非 feature 段集合不得超出 ixwebsocket + 期望表(多出即红)。
   任一不符即非零退出并打印实际值;全部相符打印一行「installed ... == pinned ...」留痕。
 .EXAMPLE   pwsh scripts/assert-vcpkg-installed.ps1 -BuildDir build
 .EXAMPLE   pwsh scripts/assert-vcpkg-installed.ps1 -BuildDir build-B11   # 并行 agent:各用各的构建目录
@@ -80,6 +81,22 @@ foreach ($pkg in $expect.Keys) {
         Write-Host "::error::${pkg}:${Triplet} installed port-version $gotPortVersion != $($e.PortVersion) pinned by $($e.Source)"
         $failed = $true
     }
+}
+
+# 闭包完整性:点名式断言只盖「表里有的包版本要对」,反方向没人看 —— 升 baseline / 上游 port 换默认 feature
+# (ssl 从 mbedtls 切 openssl、新引入 zstd)时闭包里冒出第四个包,THIRD-PARTY-NOTICES.md 就漏登记一个静态
+# 链进产物的包。枚举 status 里 Architecture == triplet 且 install ok installed 的非 feature 段,集合超出
+# 期望表即红,并把实际闭包打进日志供人工核 NOTICES。host 依赖(vcpkg-cmake 等)Architecture 不是本 triplet,天然排除。
+$archRe = '(?m)^Architecture: ' + [regex]::Escape($Triplet) + '$'
+$installedPkgs = @($stanzas | Where-Object {
+    $_ -match $archRe -and $_ -notmatch '(?m)^Feature:' -and $_ -match '(?m)^Status: install ok installed$'
+} | ForEach-Object { [regex]::Match($_, '(?m)^Package: (\S+)$').Groups[1].Value } | Where-Object { $_ } | Sort-Object -Unique)
+Write-Host ("vcpkg closure ($Triplet): " + ($installedPkgs -join ', '))
+$unexpected = @($installedPkgs | Where-Object { $expect.Keys -notcontains $_ })
+if ($unexpected.Count -gt 0) {
+    Write-Host ("::error::unexpected packages in the $Triplet closure: " + ($unexpected -join ', ') +
+        "; update THIRD-PARTY-NOTICES.md and `$ExpectedTransitive together")
+    $failed = $true
 }
 
 if ($failed) { exit 1 }

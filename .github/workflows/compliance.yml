@@ -58,8 +58,11 @@ jobs:
         # (version-semver + 显式 port-version),macOS 侧真源 = CMakeLists.txt 的 IXWEBSOCKET_TAG(40 位 SHA,
         # 机器不可能反推出版本号),故断言那一行的注释必须标注 `(= tag v<override 版本>)` —— 升级时忘了动
         # 任何一侧,这里就红。IXWEBSOCKET_TAG 的 set 行要求恰好一处,多于一处说明真源有歧义。
+        # 断言边界:验证的是 IXWEBSOCKET_TAG 那行的注释文字 == override 版本(机器无法从 SHA 反推版本),是防「升了一侧
+        # 忘动另一侧 / 忘改注释」的 tripwire,不是 SHA 真等于上游 tag 的内容级证明。
         run: |
           set -euo pipefail
+          [ -f vcpkg.json ] || { echo "no vcpkg.json (classic mode), skip"; exit 0; }
           ver=$(jq -r '[.overrides[] | select(.name == "ixwebsocket")][0]["version-semver"] // empty' vcpkg.json)
           [ -n "$ver" ] || { echo "::error::vcpkg.json has no ixwebsocket override with version-semver"; exit 1; }
           jq -e '[.overrides[] | select(.name == "ixwebsocket")][0] | has("port-version")' vcpkg.json >/dev/null \

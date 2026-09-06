@@ -123,7 +123,9 @@ jobs:
             # `git tag --points-at HEAD` 列出 HEAD 上的全部 tag 再找 JUCE_TAG,而不是 `describe --exact-match`:后者一个 commit
             # 挂多个 tag 时只回其中一个,会把正确的缓存误判成污染。不接 `| Select-Object -First 1` 在 git 后面:它会提前掐断
             # 管道,git 的退出码来不及写进 $LASTEXITCODE(实测为空),断言会随机翻车。
-            $tags = @(git -C $juce tag --points-at HEAD 2>$null)
+            # try/catch:缓存目录在但 .git 缺失/损坏时 git 退出 128,pwsh 7.4+ 默认 $PSNativeCommandUseErrorActionPreference
+            # 会把原生命令非零退出抛成终止性错误,下一行的 $LASTEXITCODE 判断轮不到执行 —— 包住才能走到「删掉重 clone」。
+            try { $tags = @(git -C $juce tag --points-at HEAD 2>$null) } catch { $tags = @() }
             if ($LASTEXITCODE -ne 0) { $tags = @() }
             $tags = @($tags | ForEach-Object { ([string]$_).Trim() } | Where-Object { $_ })
             $got = ($tags | Where-Object { ($_ -replace '^v', '') -eq $want } | Select-Object -First 1)
