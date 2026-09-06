@@ -4,8 +4,9 @@
 每条许可证结论均以**实际安装/链接版本对应的上游许可证原文**逐条核实(核验出处见末列,均为可公开访问的上游权威来源:
 版本 tag 下的 LICENSE 文件、上游官网许可页或包分发页),无「待验证」项。
 静态链接闭包经机器枚举 vcpkg x64-windows-static 实际安装的全部包(ixwebsocket + 传递依赖),与 08 §3.1 表一致;
-ixwebsocket / mbedtls / zlib 三行的版本另由 `scripts/assert-vcpkg-installed.ps1`(本地 gate 4b 与 CI 同一份)在每次 configure 后
-对照实际装进 `vcpkg_installed` 的版本断言 —— 升 `vcpkg.json` 的 baseline 时,本表与该脚本里的期望版本表同步改。
+ixwebsocket / mbedtls / zlib 三行的版本、以及**闭包集合本身**(本 triplet 下 `install ok installed` 的非 feature 段不得超出这三个包,
+多出即红并打印实际闭包)另由 `scripts/assert-vcpkg-installed.ps1`(本地 gate 4b 与 CI 同一份)在每次 configure 后对照实际装进
+`vcpkg_installed` 的内容断言 —— 「机器枚举全部包」自此有机器兜底;升 `vcpkg.json` 的 baseline 时,本表与该脚本里的期望版本表同步改。
 **闭包按平台不同**:标注「仅 Windows 构建」的条目不进 macOS 产物;macOS 侧的第三方闭包见下方「说明」的 macOS 一条。
 
 | 依赖 | 版本 | 许可证(SPDX) | URL | 核验来源(上游许可证原文) |

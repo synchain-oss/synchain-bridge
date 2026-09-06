@@ -111,7 +111,11 @@
   将来别的 FetchContent 依赖的 URL。**缓存只是加速,miss 必须照常成功;不缓存 build 产物本身。**
   **验证状态**:本 PR 是子 PR(base = `feature/extraction`),按 `CLAUDE.md` §1 只跑 review bot、不跑完整 CI,以上
   workflow 改动在本 PR 上**跑不到**,首次在主支线 push 时真跑;本地能覆盖的部分(status 断言脚本、gate 3g / 4b)已在
-  Windows 本地 gates 跑通。
+  Windows 本地 gates 跑通。断言脚本另做**闭包完整性**:本 triplet 下 `install ok installed` 的非 feature 段集合不得超出
+  ixwebsocket + 期望表(升 baseline 冒出第四个包时 `THIRD-PARTY-NOTICES.md` 不再静默漏登记),并把实际闭包打进日志;
+  status 先把 CRLF 归一再分段与匹配。gate 3g 与 compliance 的 pin 一致性在无 `vcpkg.json` 时 SKIP(经典模式向后兼容,
+  与 gate 1 / 4b 同口径)。已知边界:被污染的 JUCE 缓存条目不会自愈(`actions/cache` 对已存在的 exact key 不重存),
+  之后每次都 warning + 全量重 clone,直到手工删缓存或 `.juce-version` 变动 —— 行为正确(缓存只加速),只是慢。
 - **ixwebsocket 两平台版本一致性机器强制**:`vcpkg.json` 的 override 显式写 `"port-version": 0`(与 baseline 下的
   port 一致;version-semver 与 port-version 共同才唯一确定一份 port 内容),`compliance.yml` 新增
   "ixwebsocket cross-platform pin consistency" 步骤、`scripts/gates.ps1` 新增同参的 **gate 3g**:读 override 的

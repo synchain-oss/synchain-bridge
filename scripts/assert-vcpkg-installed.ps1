@@ -42,7 +42,9 @@ if (-not (Test-Path -LiteralPath $statusPath)) {
     Write-Host "::error::vcpkg status file not found: $statusPath (manifest install did not run?)"; exit 1
 }
 # 分隔正则用非捕获组,否则 -split 会把分隔符本身也混进结果
-$stanzas = (Get-Content -LiteralPath $statusPath -Raw) -split '(?:\r?\n){2,}'
+# 先把 CRLF 归一成 LF 再分段与匹配:.NET 的 (?m)$ 只在 \n 前匹配、\r 属于 \s 且 (\S+) 吃不掉它,status 若是 CRLF,
+# 下面所有字段正则都会不命中(点名断言先红,闭包枚举则静默变 no-op)。当前 vcpkg-tool 写 LF,这是防将来换写法。
+$stanzas = ((Get-Content -LiteralPath $statusPath -Raw) -replace "`r`n", "`n") -split '\n{2,}'
 
 function Get-CoreStanza([string]$pkg) {
     # feature 段(`Feature: ssl` / `Feature: mbedtls`)与核心段同 Package + Architecture 但没有 Version 行,
