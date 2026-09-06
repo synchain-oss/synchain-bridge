@@ -167,13 +167,15 @@ jobs:
           # 不需要变更文档就过 —— 比就地改一行更危险。status=="renamed" 的条目带 previous_filename,一并纳入。
           files=$(jq -r '.[] | (.filename, (.previous_filename // empty))' "$RUNNER_TEMP/files.json")
           # 【本段判据为 Bridge 仓专属,不与 SCVB/CLI 逐字同源】冻结面与 contract-guard.yml 的 paths 同一组
-          # 六个文件,但分两档(采纳 #24 review):
+          # 七个文件,但分两档(采纳 #24 review;#27 review 补 PcmFrame.h):
           #   strict —— src/WebSocketProtocol.{h,cpp}(wire 层定义)+ src/BridgeApi.h(DefaultPort / ContractVersion
-          #             常量面,§7 逐字冻结):碰到即要求变更说明,body 自申报 none 不免检(「wire 零变化」无人复核)。
+          #             常量面,§7 逐字冻结)+ src/PcmFrame.h(PCM 帧头 12 字节布局的 C++ 侧唯一定义,契约 §二 第 1 条
+          #             的 wire 层实现):碰到即要求变更说明,body 自申报 none 不免检(「wire 零变化」无人复核)。
           #   loose  —— BRIDGE_CONTRACT.md(登记快照 / 纯文档澄清常见)+ src/VstBridgeServer.{h,cpp}(实现文件,
-          #             日常重构都会碰,但 PCM 帧的序列化也在这里):申报 none 免检;minor / major / 未申报仍拦。
+          #             日常重构都会碰;PCM 帧的组帧调用在这里,布局本身已收敛到 PcmFrame.h):申报 none 免检;
+          #             minor / major / 未申报仍拦。
           # 此前这里照抄的是 SCVB 的四个路径(docs/PARAMETERS.md 等),在本仓一个都不存在,守卫恒不命中(review 连提四轮)。
-          strict_touched=$(printf '%s\n' "$files" | grep -E '^(src/WebSocketProtocol\.(h|cpp)|src/BridgeApi\.h)$' || true)
+          strict_touched=$(printf '%s\n' "$files" | grep -E '^(src/WebSocketProtocol\.(h|cpp)|src/BridgeApi\.h|src/PcmFrame\.h)$' || true)
           loose_touched=$(printf '%s\n' "$files" | grep -E '^(BRIDGE_CONTRACT\.md|src/VstBridgeServer\.(h|cpp))$' || true)
           touched=$(printf '%s\n' "$strict_touched" "$loose_touched" | sed '/^$/d')
           if [ -n "$touched" ]; then
@@ -198,7 +200,7 @@ jobs:
               doc=$(jq -r '.[] | select(.status == "added") | .filename' "$RUNNER_TEMP/files.json" \
                 | grep -E '^docs/contract-changes/[0-9]{8}-.+\.md$' || true)
               if [ -z "$doc" ]; then
-                echo "::error::本 PR 触碰了冻结契约面(contract-impact=$impact;strict 档 WebSocketProtocol.{h,cpp} / BridgeApi.h 被触碰时 none 不免检):必须在同一个 PR 里新增 docs/contract-changes/<YYYYMMDD>-<slug>.md(模板见 docs/contract-changes/TEMPLATE.md),写清兼容性说明(变更说明是唯一凭据,本 workflow 不读标签)。"
+                echo "::error::本 PR 触碰了冻结契约面(contract-impact=$impact;strict 档 WebSocketProtocol.{h,cpp} / BridgeApi.h / PcmFrame.h 被触碰时 none 不免检):必须在同一个 PR 里新增 docs/contract-changes/<YYYYMMDD>-<slug>.md(模板见 docs/contract-changes/TEMPLATE.md),写清兼容性说明(变更说明是唯一凭据,本 workflow 不读标签)。"
                 exit 1
               fi
               echo "frozen-contract guard: change doc present:"; printf '%s\n' "$doc" | sed 's/^/  /'

@@ -38,4 +38,4 @@
 ## 3. 契约治理与护栏
 
 - 协议改动必须：① 写兼容性说明（旧客户端遇新插件 / 新客户端遇旧插件各自行为）；② 记入 [CHANGELOG.md](../CHANGELOG.md)「契约变更」小节；③ 在 PR 描述里 @ 主仓维护者同步。
-- 机器护栏：PR 若改动 `BRIDGE_CONTRACT.md` / `src/WebSocketProtocol.*` / `src/VstBridgeServer.*` / `src/BridgeApi.h` 任一，`.github/workflows/contract-guard.yml` 要求 PR body 含一行 `contract-impact: none|minor|major`，缺则 fail。
+- 机器护栏：PR 若改动 `BRIDGE_CONTRACT.md` / `src/WebSocketProtocol.*` / `src/VstBridgeServer.*` / `src/BridgeApi.h` / `src/PcmFrame.h` 任一，`.github/workflows/contract-guard.yml` 要求 PR body 含一行 `contract-impact: none|minor|major`，缺则 fail。
