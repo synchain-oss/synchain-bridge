@@ -137,7 +137,10 @@
   也会给用户塞一堆垃圾。`--version` 传空串直接 die(不回落到 CMake 版本),避免产出版本号对不上的资产。
 - `scripts/package.ps1` 的 `package-summary.md` 由整文件覆盖改为**按段追加 + 同名 `zipFileName` 段去重**,
   与 `scripts/package-macos.sh` 同口径(按记录首行 `version:` 切段、只删整行逐字相等的旧段、首条记录之前的
-  内容原样透传);两个「打包唯一真源」在 summary 行为上不再分叉(issue #23)。
+  内容原样透传);两个「打包唯一真源」在 summary 行为上不再分叉(issue #23)。两边物理布局也统一为
+  「段间恰一个空行、文件末尾恰一个换行」;行尾一律 LF(`package.ps1` 改 `[IO.File]::WriteAllText` 写 UTF-8
+  无 BOM + LF,读旧文件时 CRLF 归一;`package-macos.sh` 的 awk 先剥 CR 再比,旧 CRLF 文件的同名段也删得掉);
+  `package.ps1` 写 summary 改为先写 `.tmp` 再 `Move-Item -Force`,与 mac 侧 tmp + mv 同口径。
 - `scripts/package-macos.sh` 从 `CMakeLists.txt` 回落读版本号时改为带地址的单条 sed(`/re/{s//\1/p;q;}`,
   GNU / BSD 两端都通),不再 `| head -n 1`(issue #23)。
 - **注入面加固覆盖到 `release.yml`**:`gate` 的 tag 名、两个平台 Package 步骤的版本号、`publish` 的
