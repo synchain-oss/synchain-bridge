@@ -90,9 +90,12 @@
 - **依赖缓存**(issue #23 第一批第 4 条,`ci.yml` 与 `release.yml` 两平台 job 同 key,发版链路直接复用 CI 攒下的缓存;
   `actions/cache` 沿用已 pin 的 v4.3.0 SHA):① JUCE 目录按 `runner.os` + `.juce-version` 内容哈希缓存,clone 步骤按
   「目录里没有 `CMakeLists.txt`」判定而不是只看 cache-hit,miss 与残缺命中都照常 clone;② Windows 的 vcpkg
-  **二进制缓存**(`VCPKG_DEFAULT_BINARY_CACHE` 指到 `runner.temp` 下固定目录,key 含 `vcpkg.json` 哈希 + triplet +
-  `runner.os`,带 `restore-keys` 前缀回落 —— vcpkg 按包 ABI 哈希寻址,不匹配的条目只是闲置),比缓存 installed 树稳;
-  configure 后另断言 `build/vcpkg_installed/vcpkg/status` 里的 ixwebsocket 版本 == `vcpkg.json` 的 override;
+  **二进制缓存**(`VCPKG_DEFAULT_BINARY_CACHE` 指到 `runner.temp` 下固定目录,key 含 `runner.os` + 镜像身份
+  `ImageOS-ImageVersion` + triplet + `vcpkg.json` 哈希,带 `restore-keys` 两级前缀回落 —— vcpkg 按包 ABI 哈希寻址,
+  不匹配的条目只是闲置;镜像身份进 key 是因为 `actions/cache` 对已存在的 exact key 不会重新保存,镜像月度轮换升一次
+  MSVC 就会让缓存退化成「永远重编、永远存不进去」),比缓存 installed 树稳;configure 后另断言
+  `build/vcpkg_installed/vcpkg/status` 里 ixwebsocket **核心段**(显式排掉无 `Version:` 行的 feature 段)的版本 ==
+  `vcpkg.json` 的 override;
   ③ macOS 把钉死的 ixwebsocket 源码预取到 `_deps/ixwebsocket-src`(key 含从 `CMakeLists.txt` 现读的
   `IXWEBSOCKET_TAG`,升 pin 自动换 key),经 `FETCHCONTENT_SOURCE_DIR_IXWEBSOCKET` 交给 configure;因 FetchContent 走
   该覆盖时不再核对 commit,workflow 自己断言 `HEAD == IXWEBSOCKET_TAG`,对不上先重拉、再对不上才红;只缓存源码,

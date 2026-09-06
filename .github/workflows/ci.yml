@@ -60,8 +60,13 @@ jobs:
       #    vcpkg toolchain 在 configure 期按 vcpkg.json 自动装进 build/vcpkg_installed —— 与本地 scripts/gates.ps1
       #    走的是同一条路径(单一真源);显式 install 会在仓库根另落一份 vcpkg_installed,toolchain 随后还要再装一遍。
       #    VCPKG_DEFAULT_BINARY_CACHE 指到 runner.temp 下的固定目录并交给 actions/cache:vcpkg 的二进制缓存按
-      #    包 ABI 哈希寻址(编译器/triplet/port 任一变化都换哈希),比缓存 installed 树稳;key 含 vcpkg.json 哈希 +
-      #    triplet + runner.os,restore-keys 允许回落到旧 key(不匹配的 ABI 条目只是闲置,不会被误用)。
+      #    包 ABI 哈希寻址(编译器/triplet/port 任一变化都换哈希),比缓存 installed 树稳。
+      #    key = runner.os + 镜像身份(ImageOS-ImageVersion)+ triplet + vcpkg.json 哈希:actions/cache 对已存在的
+      #    exact key **不会重新保存**,若 key 里没有镜像身份,runner 镜像月度轮换升一次 MSVC 就让 ABI 哈希全变、
+      #    每次都重编,而新 archives 永远存不进去(primary key 已被旧镜像的条目占住)—— 缓存会退化成「永不命中」
+      #    直到 vcpkg.json 下次改动。镜像身份在 Setup 步骤从 runner 进程环境变量读出后经 GITHUB_ENV 交给表达式
+      #    (托管 runner 自带 ImageOS / ImageVersion;缺失时回落成 'unknown-image',只影响 key 粒度不影响正确性)。
+      #    restore-keys 两级回落:同镜像不同 vcpkg.json → 任意镜像;不匹配的 ABI 条目只是闲置,不会被误用。
       - name: Setup vcpkg (manifest mode + binary cache dir)
         shell: pwsh
         run: |
@@ -70,15 +75,19 @@ jobs:
           $bc = Join-Path $env:RUNNER_TEMP 'vcpkg-binary-cache'
           New-Item -ItemType Directory -Force -Path $bc | Out-Null
           echo "VCPKG_DEFAULT_BINARY_CACHE=$bc" >> $env:GITHUB_ENV
+          $img = if ($env:ImageOS -and $env:ImageVersion) { "$env:ImageOS-$env:ImageVersion" } else { 'unknown-image' }
+          Write-Host "runner image for vcpkg cache key: $img"
+          echo "VCPKG_CACHE_IMAGE=$img" >> $env:GITHUB_ENV
           & "$env:VCPKG_INSTALLATION_ROOT/vcpkg.exe" --version
 
       - name: Cache vcpkg binary cache
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ${{ runner.temp }}/vcpkg-binary-cache
-          key: vcpkg-bincache-${{ runner.os }}-x64-windows-static-${{ hashFiles('vcpkg.json') }}
+          key: vcpkg-bincache-${{ runner.os }}-${{ env.VCPKG_CACHE_IMAGE }}-x64-windows-static-${{ hashFiles('vcpkg.json') }}
           restore-keys: |
-            vcpkg-bincache-${{ runner.os }}-x64-windows-static-
+            vcpkg-bincache-${{ runner.os }}-${{ env.VCPKG_CACHE_IMAGE }}-x64-windows-static-
+            vcpkg-bincache-${{ runner.os }}-
 
       # 3) WebView2 Evergreen Runtime(windows-2022 是无桌面 Server,自带 Runtime 不保证)
       - name: Ensure WebView2 Runtime (Evergreen)
@@ -105,10 +114,12 @@ jobs:
           if ($LASTEXITCODE -ne 0) { Write-Error "cmake configure failed"; exit 1 }
           # 供应链留痕:configure 装进来的 ixwebsocket 必须正是 vcpkg.json overrides 钉的版本 —— 读 vcpkg 落盘的
           # status 文件(debian control 格式,按空行分段)而不是 `vcpkg list` 的实验性 --x-* 参数;两者对不上即红。
+          # feature 段(`Feature: ssl` / `Feature: mbedtls`)与核心段同 Package + Architecture 但没有 Version 行,
+          # 显式排掉而不是赌核心段先落盘;分隔正则用非捕获组,否则 -split 会把分隔符本身也混进结果。
           $want = ((Get-Content vcpkg.json -Raw | ConvertFrom-Json).overrides | Where-Object name -eq 'ixwebsocket' | Select-Object -First 1).'version-semver'
           if (-not $want) { Write-Error "vcpkg.json has no ixwebsocket override to assert against"; exit 1 }
-          $stanzas = (Get-Content build/vcpkg_installed/vcpkg/status -Raw) -split '(\r?\n){2,}'
-          $ix = $stanzas | Where-Object { $_ -match '(?m)^Package: ixwebsocket$' -and $_ -match '(?m)^Architecture: x64-windows-static$' } | Select-Object -First 1
+          $stanzas = (Get-Content build/vcpkg_installed/vcpkg/status -Raw) -split '(?:\r?\n){2,}'
+          $ix = $stanzas | Where-Object { $_ -match '(?m)^Package: ixwebsocket$' -and $_ -match '(?m)^Architecture: x64-windows-static$' -and $_ -notmatch '(?m)^Feature:' } | Select-Object -First 1
           if (-not $ix -or $ix -notmatch '(?m)^Version: (\S+)$') { Write-Error "ixwebsocket:x64-windows-static is not in build/vcpkg_installed after configure"; exit 1 }
           Write-Host "vcpkg installed ixwebsocket:x64-windows-static $($Matches[1]) (vcpkg.json pins $want)"
           if ($Matches[1] -ne $want) { Write-Error "ixwebsocket $($Matches[1]) != vcpkg.json override $want"; exit 1 }

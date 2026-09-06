@@ -94,8 +94,9 @@ jobs:
           "JUCE_TAG=$juce"    | Out-File $env:GITHUB_ENV -Append
           "PLUGINVAL_TAG=$pv" | Out-File $env:GITHUB_ENV -Append
 
-      # JUCE / vcpkg 缓存与 ci.yml 的 windows job 同 key(juce-<os>-<.juce-version 哈希> / vcpkg-bincache-…-<vcpkg.json 哈希>):
-      # 发版 tag 与 dev 同一份 .juce-version / vcpkg.json 时直接复用 CI 攒下的缓存;miss 亦照常 clone / 编译。
+      # JUCE / vcpkg 缓存与 ci.yml 的 windows job 同 key(juce-<os>-<.juce-version 哈希> /
+      # vcpkg-bincache-<os>-<ImageOS-ImageVersion>-<triplet>-<vcpkg.json 哈希>):发版 tag 与 dev 同一份 .juce-version /
+      # vcpkg.json、同一代 runner 镜像时直接复用 CI 攒下的缓存;镜像轮换后经 restore-keys 回落;miss 亦照常 clone / 编译。
       - name: Cache JUCE
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
@@ -121,15 +122,19 @@ jobs:
           $bc = Join-Path $env:RUNNER_TEMP 'vcpkg-binary-cache'
           New-Item -ItemType Directory -Force -Path $bc | Out-Null
           echo "VCPKG_DEFAULT_BINARY_CACHE=$bc" >> $env:GITHUB_ENV
+          $img = if ($env:ImageOS -and $env:ImageVersion) { "$env:ImageOS-$env:ImageVersion" } else { 'unknown-image' }
+          Write-Host "runner image for vcpkg cache key: $img"
+          echo "VCPKG_CACHE_IMAGE=$img" >> $env:GITHUB_ENV
           & "$env:VCPKG_INSTALLATION_ROOT/vcpkg.exe" --version
 
       - name: Cache vcpkg binary cache
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ${{ runner.temp }}/vcpkg-binary-cache
-          key: vcpkg-bincache-${{ runner.os }}-x64-windows-static-${{ hashFiles('vcpkg.json') }}
+          key: vcpkg-bincache-${{ runner.os }}-${{ env.VCPKG_CACHE_IMAGE }}-x64-windows-static-${{ hashFiles('vcpkg.json') }}
           restore-keys: |
-            vcpkg-bincache-${{ runner.os }}-x64-windows-static-
+            vcpkg-bincache-${{ runner.os }}-${{ env.VCPKG_CACHE_IMAGE }}-x64-windows-static-
+            vcpkg-bincache-${{ runner.os }}-
 
       - name: Ensure WebView2 Runtime (Evergreen)
         shell: pwsh
@@ -155,8 +160,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { Write-Error "cmake configure failed"; exit 1 }
           $want = ((Get-Content vcpkg.json -Raw | ConvertFrom-Json).overrides | Where-Object name -eq 'ixwebsocket' | Select-Object -First 1).'version-semver'
           if (-not $want) { Write-Error "vcpkg.json has no ixwebsocket override to assert against"; exit 1 }
-          $stanzas = (Get-Content build/vcpkg_installed/vcpkg/status -Raw) -split '(\r?\n){2,}'
-          $ix = $stanzas | Where-Object { $_ -match '(?m)^Package: ixwebsocket$' -and $_ -match '(?m)^Architecture: x64-windows-static$' } | Select-Object -First 1
+          $stanzas = (Get-Content build/vcpkg_installed/vcpkg/status -Raw) -split '(?:\r?\n){2,}'
+          $ix = $stanzas | Where-Object { $_ -match '(?m)^Package: ixwebsocket$' -and $_ -match '(?m)^Architecture: x64-windows-static$' -and $_ -notmatch '(?m)^Feature:' } | Select-Object -First 1
           if (-not $ix -or $ix -notmatch '(?m)^Version: (\S+)$') { Write-Error "ixwebsocket:x64-windows-static is not in build/vcpkg_installed after configure"; exit 1 }
           Write-Host "vcpkg installed ixwebsocket:x64-windows-static $($Matches[1]) (vcpkg.json pins $want)"
           if ($Matches[1] -ne $want) { Write-Error "ixwebsocket $($Matches[1]) != vcpkg.json override $want"; exit 1 }
