@@ -586,18 +586,30 @@ jobs:
           mkdir -p dist
           cp artifacts/dist-win64/*.zip artifacts/dist-win64/*.zip.sha256 dist/
           cp artifacts/dist-macos-arm64/*.zip artifacts/dist-macos-arm64/*.zip.sha256 dist/
-          # package.ps1 落盘的 .sha256 行尾是 CRLF,而 sha256sum -c 会把结尾的 \r 当成文件名的一部分,
-          # 校验必失败。统一成 LF 后再验 —— 用户在 mac/Linux 上手动 sha256sum -c 也才不会踩同一个坑。
+          # 两个打包脚本现在都以 LF 落盘 .sha256(issue #23):这里从「兜底修复」升级为「断言不该有 CR」——
+          # 出现 \r 说明某个打包脚本回退到了 Set-Content,直接红,不再静默修好。
           for f in dist/*.sha256; do
-            tr -d '\r' < "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+            if grep -q $'\r' "$f"; then echo "::error::$f contains CR line endings; packaging scripts must write LF"; exit 1; fi
           done
           cd dist
           # 跨 job 复验:构建 job 算出的哈希与 publish 实际下载到的字节必须对得上,
           # 否则说明 artifact 上传/下载路径上出了问题,绝不能挂到 Release 上。
           sha256sum -c ./*.sha256
-          # 资产名必须带本次 tag 的版本号:sha256 只证明字节一致,不证明版本对得上(采纳 #21 review)
-          for f in *.zip; do
-            case "$f" in *"v${GATE_VERSION}"*) ;; *) echo "::error::asset '$f' does not carry version v${GATE_VERSION}"; exit 1 ;; esac
+          # 资产名必须带本次 tag 的版本号:sha256 只证明字节一致,不证明版本对得上(采纳 #21 review)。
+          # 整串精确等式而不是子串包含(issue #23):`*v1.5.0*` 会被 v1.5.0-rc1 / v1.5.01 之类的名字撞过;
+          # 资产名本就是两个打包脚本从版本号算出的定式(CLAUDE.md §9),这里按同一定式反推出四个文件名,
+          # 逐个要求存在,且 dist/ 里除这四个之外不得有别的东西 —— 多出来的任何文件(旧版本残留、
+          # 平台目录没分开)都不该上 Release。
+          win_zip="SynchainBridge-VST3-v${GATE_VERSION}-win64.zip"
+          mac_zip="SynchainBridge-VST3-AU-v${GATE_VERSION}-macos-arm64.zip"
+          for f in "$win_zip" "$win_zip.sha256" "$mac_zip" "$mac_zip.sha256"; do
+            [ -f "$f" ] || { echo "::error::expected asset '$f' is missing from dist/"; exit 1; }
+          done
+          for f in *; do
+            case "$f" in
+              "$win_zip"|"$win_zip.sha256"|"$mac_zip"|"$mac_zip.sha256") ;;
+              *) echo "::error::unexpected file '$f' in dist/: assets must be exactly the four v${GATE_VERSION} names"; exit 1 ;;
+            esac
           done
           ls -l
 
@@ -623,8 +635,9 @@ jobs:
           name: Synchain Bridge ${{ github.ref_name }} (Windows x64 · macOS arm64)
           draft: true
           generate_release_notes: true
+          # 与上一步的四精确名等式同口径(dist/ 已被断言恰为这四个文件,这里不再用通配)。
           files: |
-            dist/SynchainBridge-VST3-*-win64.zip
-            dist/SynchainBridge-VST3-*-win64.zip.sha256
-            dist/SynchainBridge-VST3-AU-*-macos-arm64.zip
-            dist/SynchainBridge-VST3-AU-*-macos-arm64.zip.sha256
+            dist/SynchainBridge-VST3-v${{ needs.gate.outputs.version }}-win64.zip
+            dist/SynchainBridge-VST3-v${{ needs.gate.outputs.version }}-win64.zip.sha256
+            dist/SynchainBridge-VST3-AU-v${{ needs.gate.outputs.version }}-macos-arm64.zip
+            dist/SynchainBridge-VST3-AU-v${{ needs.gate.outputs.version }}-macos-arm64.zip.sha256

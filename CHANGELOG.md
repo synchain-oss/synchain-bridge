@@ -55,6 +55,28 @@
   `src/VstBridgeServer.cpp` 调用它 —— 行为零变化。新增 `tests/origin_allowlist_selftest.cpp`(51 条断言)
   与 CMake 选项 `BRIDGE_BUILD_SELFTESTS`(默认 OFF),由 `scripts/gates.ps1` 的 gate 5b 构建并运行。
 
+### 内部工程(无契约变更)
+
+- **PCM 帧头编码收敛到一处并加 golden 测试**(issue #23 第二批第 1 条):`src/VstBridgeServer.cpp` 里
+  同步遗留路径 `sendPcmPacket()`(无调用方,issue #168 后实时路径改走 `pushPcm`;保留仅为 API 兼容,
+  声明处已加注勿在音频线程调用)与后台发送线程路径 `buildPcmFrame()` 此前各自手写一份 12 字节帧头
+  (`u32 LE sampleRate | u32 LE channels | u32 LE numSamples`),彼此无机器约束。现抽成新头文件
+  `src/PcmFrame.h`(`synchain::pcm`,纯标准库,零 JUCE / ixwebsocket 依赖:`kHeaderSize` / `writeHeader` /
+  `readHeader` / `payloadSize` / `frameSize`,**C++ 侧唯一实现**),两条路径都改为调用它 —— **wire 逐字节相同,
+  行为零变化**。JS 侧(本地 mock)的 `web-preview/pcm-frame.mjs` 是同布局的另一份实现,新增
+  `web-preview/pcm-frame.test.mjs`(`node:test` + `node:assert`,零依赖,`npm test` / `node --test`)用
+  **同一组 golden 字节**钉死它,`compliance` workflow 加一步 `node --test`(ubuntu 自带 node,不装依赖)。
+  新增 `tests/pcm_frame_selftest.cpp`:固定输入 `(48000, 2, 512)` 的帧头逐字节钉死为
+  `80 BB 00 00 | 02 00 00 00 | 00 02 00 00`,另覆盖 `0` / `0xFFFFFFFF` 边界、端序、字段顺序、
+  `12 + numSamples*channels*4` 总长与 payload 偏移 —— 改任一字段顺序 / 端序 / 偏移即红。
+  并入 `BRIDGE_BUILD_SELFTESTS`(同 `/W4` 或 `-Wall -Wextra -Wpedantic`),`scripts/gates.ps1` 的 gate 5b
+  扩为跑两个 selftest,`compliance` workflow 新增同构的「PCM frame selftest」步骤(g++ 直接编译)。
+  `ci.yml` 的 windows / mac 两个构建 job 现也以 `-DBRIDGE_BUILD_SELFTESTS=ON` 配置并在构建后运行两个
+  selftest,MSVC `/W4` 与 clang `-Wall -Wextra -Wpedantic` 零警告门因此真覆盖 `tests/*.cpp`
+  (`release.yml` 不开)。golden 钉不住「`VstBridgeServer.cpp` 真的经 `PcmFrame.h` 组帧」(要链 JUCE),
+  由 `scripts/gates.ps1` 新增的 gate 3f 与 `compliance` 的同构 grep 步骤以文本断言补上:必须
+  `#include "PcmFrame.h"`,且不得再出现 `writeU32(` 手写 lambda 或字面量 `headerSize = 12`。
+
 ### 构建
 
 - 新增 CMake cache 变量 `BRIDGE_EXTRA_ALLOWED_ORIGIN_HOSTS`(`;` 或 `,` 分隔的 host 模式,每个至多一个 `*`
@@ -142,6 +164,31 @@
   §0 安全铁律(三仓逐字相同)一字未动。
 - `BEFORE_PUBLIC_CHECKLIST.md` 新增 §3.1:第三方 action pin 到 40 位 SHA 升为**转 public 硬门禁**并列出
   当前未 pin 的文件清单与验收断言(现状是只有 `release.yml` 与 mac job 做到了)。
+- **打包脚本与门禁细节收口(issue #23)**:
+  - `ci.yml` windows job 的 Package smoke 改为与 mac 侧同构的三次运行(`0.0.0-ci` → `0.0.0-ci2` → `0.0.0-ci`),
+    断言 `package-summary.md` 恰好 2 段、`ci2` 段原样保留、`ci` 段恰好 1 条(逐行 `-ceq` 精确比对);
+    五条字段行断言由 `-notmatch` 改 **`-cnotmatch`**(pwsh 默认大小写不敏感,`Version:` 漂移会静默走通)。
+  - 两平台 Package smoke 增加 **`.sha256` 内容形态断言**:恰好一行、匹配 `^[0-9a-f]{64}  <zip 基名>$`
+    (两个空格,`sha256sum -c` 认的格式),且 hash 与现算(`Get-FileHash` / `shasum -a 256`)一致 ——
+    此前只断言文件存在,分隔符写错要到打 tag 那一刻才在 `publish` 炸出来。`package.ps1` 的 `.sha256`
+    改为 **LF、无 BOM** 落盘(`WriteAllText`),Windows 侧断言读原始字节(`ReadAllBytes`,显式查 BOM、
+    `\z` 锚定不放过结尾空行),`release.yml` 的 `tr -d '\r'` 兜底升级为「含 CR 即红」;
+    `files:` 改为四个精确文件名与资产等式同口径。
+  - `package-macos.sh` 从 `CMakeLists.txt` 回落读版本的 sed 先丢 `#` 整行注释、RE 改行首锚(POSIX ERE
+    leftmost-longest 会让 `.*project` 吃到行尾注释里的旧 `project()`),`ci.yml` 的对照 grep 先剔行尾注释并加
+    `|| true` 让 `::error` 守卫在 `set -e` 下真能执行;summary 重排的 awk 首行剥 UTF-8 BOM
+    (旧 powershell.exe 5.1 产物)。
+  - mac 侧 Package smoke 开头加跑一次**不传 `--version`** 的 `--dry-run`,断言输出里的 Version 行与
+    `grep` 另取的 `CMakeLists.txt` 版本逐字相等:`release.yml` 与三次真跑全部显式传版本,脚本里从 CMake
+    回落读版本的那条 BSD sed 否则在 CI 上永远不执行。
+  - `release.yml` `publish` 的资产版本断言由子串包含(`*v<ver>*`)改为**整串精确等式**:按两个打包脚本的
+    定式反推出四个文件名逐个要求存在,且 `dist/` 里不得有第五个文件。
+  - `branch-gate.yml` DCO 步与 Frozen-contract 步的 `${{ github.repository }}` /
+    `${{ github.event.pull_request.number }}` 改经 step `env`(`REPO` / `PR_NUMBER`)间接读入,
+    与 `release.yml` 对 tag 名的纪律一致;逻辑不变(骨架改动,SCVB 线同步)。
+  - `scripts/gates.ps1` 版本一致性 gate(3e)的 `Get-Mirror` 在 lockfile 结构变化 / JSON 不合法时不再抛异常
+    中断整个 gates,改记该 gate 的 FAIL 并给出可读原因,其余 gate 照常跑完;reader 返回后再断言取值个数
+    恰等于期望个数(`package-lock.json` 2 个、其余 1 个),字段消失而**不抛**的结构变化不再静默降级成少比一处。
 
 ### 发布 / 分发(对下游可见)
 
@@ -163,6 +210,14 @@
   加载不了的死壳)。压缩用 `ditto -c -k --norsrc --noextattr`:`--sequesterRsrc` 会把资源叉/扩展属性
   写进 `__MACOSX/`,那些条目权限恒为 `-rw-r--r--` 且同样匹配可执行位断言的筛选,会让打包**必然假失败**,
   也会给用户塞一堆垃圾。`--version` 传空串直接 die(不回落到 CMake 版本),避免产出版本号对不上的资产。
+- `scripts/package.ps1` 的 `package-summary.md` 由整文件覆盖改为**按段追加 + 同名 `zipFileName` 段去重**,
+  与 `scripts/package-macos.sh` 同口径(按记录首行 `version:` 切段、只删整行逐字相等的旧段、首条记录之前的
+  内容原样透传);两个「打包唯一真源」在 summary 行为上不再分叉(issue #23)。两边物理布局也统一为
+  「段间恰一个空行、文件末尾恰一个换行」;行尾一律 LF(`package.ps1` 改 `[IO.File]::WriteAllText` 写 UTF-8
+  无 BOM + LF,读旧文件时 CRLF 归一;`package-macos.sh` 的 awk 先剥 CR 再比,旧 CRLF 文件的同名段也删得掉);
+  `package.ps1` 写 summary 改为先写 `.tmp` 再 `Move-Item -Force`,与 mac 侧 tmp + mv 同口径。
+- `scripts/package-macos.sh` 从 `CMakeLists.txt` 回落读版本号时改为带地址的单条 sed(`/re/{s//\1/p;q;}`,
+  GNU / BSD 两端都通),不再 `| head -n 1`(issue #23)。
 - **注入面加固覆盖到 `release.yml`**:`gate` 的 tag 名、两个平台 Package 步骤的版本号、`publish` 的
   job summary 全部改经 step `env` 间接读入。tag 允许 `$`、反引号、`"`,直插 bash 双引号串会真做命令替换,
   直插 pwsh 可闭合引号 —— 与 `ci.yml` 对 `github.ref_name` 的加固同口径,不能只加固一处。

@@ -6,7 +6,8 @@
   "scripts": {
     "mock": "node mock-server.mjs",
     "serve": "npx --yes serve ../web -l 5173",
-    "serve:python": "python -m http.server 5173 --directory ../web"
+    "serve:python": "python -m http.server 5173 --directory ../web",
+    "test": "node --test"
   },
   "dependencies": {
     "ws": "^8.18.0"
