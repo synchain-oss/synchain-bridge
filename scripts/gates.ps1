@@ -279,9 +279,15 @@ function Test-Version {
         function Get-Mirror([string]$rel, [scriptblock]$reader) {
             $path = Join-Path $RepoRoot $rel
             if (-not (Test-Path $path)) { return @{ Err = ($rel + '(不存在)') } }
-            $text = Get-Content -LiteralPath $path -Raw
-            $vals = & $reader $text
-            $vals = @($vals | Where-Object { $_ })
+            # reader 在文件结构变化时会直接抛(package-lock.json 升版把 packages[''] 挪走、JSON 不合法……),
+            # 本脚本 $ErrorActionPreference = 'Stop',不兜住的话整个 gates 会在这里中断、后面的 gate 一个不跑、
+            # 结果表也打不出。兜成本 gate 的 FAIL 并带上可读原因(issue #23)。
+            try {
+                $text = Get-Content -LiteralPath $path -Raw
+                $vals = @(& $reader $text | Where-Object { $_ })
+            } catch {
+                return @{ Err = ($rel + '(解析失败: ' + $_.Exception.Message + ')') }
+            }
             if ($vals.Count -eq 0) { return @{ Err = ($rel + '(未找到版本号)') } }
             return @{ Vals = $vals }
         }
