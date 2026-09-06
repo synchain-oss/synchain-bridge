@@ -138,7 +138,9 @@ Remove-Item -LiteralPath $staging -Recurse -Force
 
 # 9) .sha256 独立资产 + package-summary.md(硬要求 #3)
 $hash = (Get-FileHash -LiteralPath $zipPath -Algorithm SHA256).Hash.ToLowerInvariant()
-"$hash  $zipFileName" | Set-Content -LiteralPath $shaPath -Encoding ASCII
+# LF + 无 BOM:.sha256 是跨 job 被 sha256sum -c 消费、也是发给用户在 mac/Linux 上直接校验的资产,CRLF 会让
+# 结尾的 \r 被当成文件名的一部分而校验必失败;与下面 summary 的落盘同口径。
+[System.IO.File]::WriteAllText($shaPath, "$hash  $zipFileName`n", [System.Text.UTF8Encoding]::new($false))
 
 $sizeBytes   = (Get-Item -LiteralPath $zipPath).Length
 $releaseDate = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')

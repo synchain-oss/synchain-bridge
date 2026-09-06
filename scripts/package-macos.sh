@@ -82,7 +82,9 @@ if [ -z "$VERSION" ]; then
     # pipefail 下 head 关管道会给 sed 送 SIGPIPE(141),与本脚本第 4 步弃用 `find | head` 同一理由。
     # 不用 GNU 专有的 `0,/re/` 地址;`q;}` 里的分号是 BSD sed(macOS)的硬要求,两端都通。
     version_re='.*project[[:space:]]*\([[:space:]]*[^[:space:]]+[[:space:]]+VERSION[[:space:]]+([0-9]+\.[0-9]+\.[0-9]+).*'
-    VERSION="$(sed -nE '/'"$version_re"'/{s//\1/p;q;}' "$REPO_ROOT/CMakeLists.txt")"
+    # 先丢注释行(`d` 在 -n 下即丢弃并进下一轮,GNU/BSD 均通):注释里留一行旧 `project(... VERSION x.y.z)` 否则会被先命中,
+    # 本地手工发版(不传 --version 的唯一场景)会产出版本号对不上的资产 —— 与 gates.ps1 版本 gate 剔注释同口径。
+    VERSION="$(sed -nE '/^[[:space:]]*#/d; /'"$version_re"'/{s//\1/p;q;}' "$REPO_ROOT/CMakeLists.txt")"
     [ -n "$VERSION" ] || die "cannot parse VERSION from CMakeLists.txt"
 fi
 VERSION="${VERSION#v}"
@@ -285,6 +287,7 @@ RELEASE_DATE="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 if [ -f "$SUMMARY_PATH" ]; then
     awk -v z="zipFileName: $ZIP_NAME" '
         function flush() { if (started && !drop) { print rec; print "" } }   # 保留段 + 段后一个空行
+        NR == 1 { sub(/^\357\273\277/, "") }                 # 旧 powershell.exe 5.1 写出的 UTF-8 BOM 只可能在首行
         { sub(/\r$/, "") }                                  # CRLF 归一成 LF,再做下面的一切比对
         NF == 0 { next }                                    # 空行只是分隔符,重排时统一重新生成
         /^version:[[:space:]]/ {                            # 记录首行:先结算上一条
