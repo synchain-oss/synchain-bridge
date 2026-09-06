@@ -143,12 +143,13 @@ $hash = (Get-FileHash -LiteralPath $zipPath -Algorithm SHA256).Hash.ToLowerInvar
 $sizeBytes   = (Get-Item -LiteralPath $zipPath).Length
 $releaseDate = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
 
-# summary 以空行分段追加 + 同名段去重,与 package-macos.sh 第 10 步的 awk 逻辑逐条等价(issue #23):
+# summary 以空行分段追加 + 同名段去重,与 package-macos.sh 第 10 步的 awk 语义与布局一致(issue #23):
 # 同一个 OutDir 下可能已有别的平台或本脚本上一次运行写的段落,整文件覆盖会把它们静默抹掉。
 #   - 切段一律按记录首行 `version:` 切,不按空行切:旧文件的段间可能没有空行,按空行切会把整个文件当一段;
 #   - 只删 `zipFileName:` 整行逐字相等(-ceq,大小写敏感)的旧段,不用子串包含 —— 0.0.0-ci 不能误删 0.0.0-ci2;
 #   - 首条记录之前的内容(将来若加表头)原样透传;空行只是分隔符,重排时统一重新生成;
-#   - 保留的旧段之间各补一个空行,末尾追加本次的新段。
+#   - 布局:每个保留的旧段后补一个空行,末尾追加本次的新段 —— 段间恰一个空行、文件末尾恰一个换行,
+#     两边字节布局相同。
 $zipLine = "zipFileName: $zipFileName"
 $kept    = New-Object System.Collections.Generic.List[string]
 if (Test-Path -LiteralPath $summaryPath) {

@@ -274,21 +274,22 @@ RELEASE_DATE="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 
 # summary 以空行分段追加:同一个 OutDir 下可能已有别的平台(package.ps1)或本脚本上一次运行写的段落。
 # 同名 zip 的旧段落先删掉,避免重复跑脚本时越堆越长 —— 但**只删同名的那一条**。
+# 与 package.ps1 第 9 步语义与布局一致:重排后「段间恰一个空行、文件末尾恰一个换行」,两边字节布局相同。
 #
-# 切段一律按记录首行 `version:` 切,**不能按空行切**:package.ps1 用 Set-Content 写的是紧贴的 5 行、
-# 段间没有空行,本脚本首次追加时也不会补空行。若用 awk 的段落模式(RS=''),整个文件会被当成**一条**
-# 记录,只要里面含本次的 zipFileName 就连 Windows 的段落、历史版本的段落一起删光(实测:文件被清空)。
+# 切段一律按记录首行 `version:` 切,**不能按空行切**:旧文件(整文件覆盖时代的 package.ps1 写的是紧贴的
+# 5 行)段间可能没有空行。若用 awk 的段落模式(RS=''),整个文件会被当成**一条**记录,只要里面含本次的
+# zipFileName 就连 Windows 的段落、历史版本的段落一起删光(实测:文件被清空)。
 # 同时匹配改为 `zipFileName:` 整行逐字相等,不再用子串包含。首条记录之前的内容(将来若加表头)原样保留。
 if [ -f "$SUMMARY_PATH" ]; then
     awk -v z="zipFileName: $ZIP_NAME" '
+        function flush() { if (started && !drop) { print rec; print "" } }   # 保留段 + 段后一个空行
         NF == 0 { next }                                    # 空行只是分隔符,重排时统一重新生成
         /^version:[[:space:]]/ {                            # 记录首行:先结算上一条
-            if (started && !drop) printf "%s\n", rec
-            rec = ""; drop = 0; started = 1
+            flush(); rec = ""; drop = 0; started = 1
         }
         !started { print; next }                            # 首条记录之前的内容原样透传
-        { rec = rec $0 "\n"; if ($0 == z) drop = 1 }
-        END { if (started && !drop) printf "%s\n", rec }
+        { rec = rec (rec == "" ? "" : "\n") $0; if ($0 == z) drop = 1 }
+        END { flush() }
     ' "$SUMMARY_PATH" > "$SUMMARY_PATH.tmp"
     mv "$SUMMARY_PATH.tmp" "$SUMMARY_PATH"
 fi
