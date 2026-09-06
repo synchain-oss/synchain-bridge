@@ -118,7 +118,9 @@ juce_add_binary_data(SynchainBridgeWebAssets SOURCES
 )
 
 # --- Dependencies ---
-# Windows: vcpkg x64-windows-static（全静态）。macOS: FetchContent，tag 钉死，不引入包管理器。
+# Windows: vcpkg x64-windows-static（全静态），manifest 模式——版本由仓库根 vcpkg.json 的 builtin-baseline
+#   （40 位 commit）+ overrides 钉死，configure 期经 vcpkg toolchain 自动装进 <build>/vcpkg_installed。
+# macOS: FetchContent，commit 钉死（下方 IXWEBSOCKET_TAG），不引入包管理器。两侧升版本必须同一 PR 一起动。
 
 if(APPLE)
   # 版本号对齐 Windows 侧 vcpkg port 实际安装的 ixwebsocket 12.0.1：permessage-deflate 协商 /

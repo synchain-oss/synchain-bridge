@@ -1,7 +1,8 @@
 <#
 .SYNOPSIS  Synchain Bridge 本地质量门禁 —— 提子 PR 前必须全绿(单 bundle)。
 .DESCRIPTION
-  结构同 06 §5.1,但只有一个 bundle;额外含 vcpkg ixwebsocket 预检(gate 1)、
+  结构同 06 §5.1,但只有一个 bundle;额外含 vcpkg ixwebsocket 预检(gate 1;仓库根有 vcpkg.json 时按
+  manifest 模式验 baseline 与依赖声明,依赖本身由 configure 期的 vcpkg toolchain 自动安装)、
   端口 9420 一致性检查(gate 3d:src/BridgeApi.h ↔ web/bridge.js ↔ web-preview/mock-server.mjs)、
   版本一致性检查(gate 3e:CMakeLists.txt project(VERSION) ↔ web-preview 的 mock-server.mjs /
   package.json / package-lock.json ↔ BRIDGE_CONTRACT.md §三 VERSION 行)、
@@ -94,9 +95,32 @@ function Test-Deps {
 
     $vcpkgRoot = $env:VCPKG_ROOT
     if (-not $vcpkgRoot) { $ok = $false; $detail += 'VCPKG_ROOT 未设置; ' }
+    elseif (-not (Test-Path (Join-Path $vcpkgRoot 'scripts\buildsystems\vcpkg.cmake'))) { $ok = $false; $detail += 'VCPKG_ROOT 下无 scripts/buildsystems/vcpkg.cmake; ' }
     else {
-        $ixConfig = Join-Path $vcpkgRoot 'installed\x64-windows-static\share\ixwebsocket\ixwebsocket-config.cmake'
-        if (-not (Test-Path $ixConfig)) { $ok = $false; $detail += 'ixwebsocket (x64-windows-static) 未安装(vcpkg install ixwebsocket:x64-windows-static); ' }
+        $manifest = Join-Path $RepoRoot 'vcpkg.json'
+        if (Test-Path $manifest) {
+            # manifest 模式(仓库根有 vcpkg.json):ixwebsocket 不再由人手 `vcpkg install`,而是 CMake 配置期经
+            # vcpkg toolchain 按 vcpkg.json 的 builtin-baseline 自动装进 <BuildDir>/vcpkg_installed(每个 -BuildDir
+            # 各自一份,并行 agent 互不干扰;二进制缓存在 %LOCALAPPDATA%\vcpkg\archives,第二次起秒级)。
+            # 预检因此改验三件事:vcpkg.exe 已 bootstrap、manifest 声明了 ixwebsocket、baseline 是 40 位 SHA
+            # (与 CLAUDE.md §0 铁律 3 对 action 的口径相同:可变 ref 不接受)。
+            $vcpkgExe = Join-Path $vcpkgRoot 'vcpkg.exe'
+            if (-not (Test-Path $vcpkgExe)) { $ok = $false; $detail += 'VCPKG_ROOT 下无 vcpkg.exe(先跑 bootstrap-vcpkg.bat); ' }
+            try {
+                $m = Get-Content -LiteralPath $manifest -Raw | ConvertFrom-Json
+                $depNames = @($m.dependencies | ForEach-Object { if ($_ -is [string]) { $_ } else { $_.name } })
+                if ($depNames -notcontains 'ixwebsocket') { $ok = $false; $detail += 'vcpkg.json 未声明 ixwebsocket 依赖; ' }
+                if (-not ($m.'builtin-baseline' -is [string]) -or $m.'builtin-baseline' -notmatch '^[0-9a-f]{40}$') {
+                    $ok = $false; $detail += 'vcpkg.json 的 builtin-baseline 不是 40 位 commit SHA; '
+                }
+            } catch {
+                $ok = $false; $detail += ('vcpkg.json 解析失败: ' + $_.Exception.Message + '; ')
+            }
+        } else {
+            # 经典模式(无 vcpkg.json 的旧分支):向后兼容,仍验全局 installed 树里的 ixwebsocket。
+            $ixConfig = Join-Path $vcpkgRoot 'installed\x64-windows-static\share\ixwebsocket\ixwebsocket-config.cmake'
+            if (-not (Test-Path $ixConfig)) { $ok = $false; $detail += 'ixwebsocket (x64-windows-static) 未安装(vcpkg install ixwebsocket:x64-windows-static); ' }
+        }
     }
 
     Add-Result '依赖预检 (cmake/VS/JUCE/clang-format/pluginval/vcpkg ixwebsocket)' ($(if ($ok) { 'PASS' } else { 'FAIL' })) $detail
@@ -349,7 +373,9 @@ function Test-Build {
         $ok = $false
         $detail = ('cmake build 失败 (exit ' + $buildCode + ')')
     } else {
-        $w = Select-String -Path $logFile -Pattern '\swarning\s+C\d{4}' | Where-Object { $_.Line -notmatch '[\\/](JUCE|vcpkg|_deps)[\\/]' }
+        # 排除项含 vcpkg_installed:manifest 模式下 ixwebsocket 头文件落在 <BuildDir>/vcpkg_installed/...,
+        # 路径里不再出现 `\vcpkg\`,只写 vcpkg 会让第三方头的告警混进第一方零告警门(与 ci.yml / release.yml 同参)。
+        $w = Select-String -Path $logFile -Pattern '\swarning\s+C\d{4}' | Where-Object { $_.Line -notmatch '[\\/](JUCE|vcpkg|vcpkg_installed|_deps)[\\/]' }
         if ($w.Count -gt 0) {
             $ok = $false
             $detail = ('MSVC 告警 ' + $w.Count + ' 条(/W4 要求零告警): ' + $w[0].Line)

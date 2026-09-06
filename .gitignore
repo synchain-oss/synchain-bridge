@@ -1,6 +1,9 @@
 build/
 # 并行 agent 按 CLAUDE.md §2 各用 -BuildDir build-<名>,这些目录同样绝不入库
 build-*/
+# vcpkg manifest 模式的安装树:configure 期落在 <BuildDir>/vcpkg_installed(已被上两行覆盖);
+# 有人在仓库根手工跑 `vcpkg install` 时会生成根级 vcpkg_installed/,同样不入库
+vcpkg_installed/
 dist/
 out/
 .vs/
