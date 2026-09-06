@@ -5,7 +5,7 @@
 #include "BridgeApi.h"
 #include "BridgeOriginConfig.h" // CMake 生成：仅在配置期注入了额外来源时定义 BRIDGE_EXTRA_ALLOWED_ORIGIN_HOSTS
 #include "OriginAllowlist.h" // 归一化 / 模式可用性 / 模式匹配（纯 std，自测覆盖见 tests/）
-#include "PcmFrame.h" // PCM 帧头 12 字节编码的唯一实现（纯 std，golden 自测见 tests/）
+#include "PcmFrame.h" // PCM 帧头 12 字节编码的 C++ 侧唯一实现（纯 std，golden 自测见 tests/）
 #include "VstBridgeServer.h"
 #include "WebSocketProtocol.h"
 #include <cstring> // std::memcpy
