@@ -175,7 +175,11 @@ $kept.AddRange([string[]]@(
     "sha256: $hash",
     "releaseDate: $releaseDate"
 ))
-Set-Content -LiteralPath $summaryPath -Value $kept.ToArray() -Encoding UTF8
+# 先写同目录 .tmp 再 Move-Item -Force 覆盖,与 mac 侧 tmp + mv 同口径:上面已把旧 summary 读进内存,
+# 直接 Set-Content 原路径是「先截断再写」,中途被打断会把别的平台 / 历史版本的段落一起丢掉。
+$summaryTmp = $summaryPath + '.tmp'
+Set-Content -LiteralPath $summaryTmp -Value $kept.ToArray() -Encoding UTF8
+Move-Item -LiteralPath $summaryTmp -Destination $summaryPath -Force
 
 Write-Host "Packaged: $zipPath ($sizeBytes bytes)"
 Write-Host "SHA256:   $hash"
