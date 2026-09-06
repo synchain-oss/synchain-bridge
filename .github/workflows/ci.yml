@@ -74,7 +74,7 @@ jobs:
             $got = ($tags | Where-Object { ($_ -replace '^v', '') -eq $want } | Select-Object -First 1)
             if ($got) { Write-Host "JUCE identity OK: HEAD is tag '$got' == .juce-version $env:JUCE_TAG"; exit 0 }
             if ($cloned) { Write-Error "freshly cloned JUCE HEAD carries tags [$($tags -join ', ')], expected $env:JUCE_TAG"; exit 1 }
-            Write-Host "::warning::cached JUCE HEAD carries tags [$($tags -join ', ')], expected $env:JUCE_TAG; discarding cache entry and re-cloning"
+            Write-Host "::warning::cached JUCE HEAD carries tags [$($tags -join ', ')], expected $env:JUCE_TAG; discarding the restored directory and re-cloning (the remote cache entry itself cannot be evicted by this workflow: actions/cache never re-saves an existing primary key, so a bad entry keeps being restored and re-cloned until .juce-version changes)"
             Remove-Item $juce -Recurse -Force
           }
           Write-Error "JUCE identity check failed: expected $env:JUCE_TAG"; exit 1
@@ -402,7 +402,7 @@ jobs:
             if [ "$cloned" = "1" ]; then
               echo "::error::freshly cloned JUCE HEAD carries tags [$(printf '%s' "$tags" | tr '\n' ' ')], expected $JUCE_TAG"; exit 1
             fi
-            echo "::warning::cached JUCE HEAD carries tags [$(printf '%s' "$tags" | tr '\n' ' ')], expected $JUCE_TAG; discarding cache entry and re-cloning"
+            echo "::warning::cached JUCE HEAD carries tags [$(printf '%s' "$tags" | tr '\n' ' ')], expected $JUCE_TAG; discarding the restored directory and re-cloning (the remote cache entry itself cannot be evicted by this workflow: actions/cache never re-saves an existing primary key, so a bad entry keeps being restored and re-cloned until .juce-version changes)"
             rm -rf "$juce"
           done
           echo "::error::JUCE identity check failed: expected $JUCE_TAG"; exit 1

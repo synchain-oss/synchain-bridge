@@ -324,7 +324,9 @@ void VstBridgeServer::sendPcmPacket(const float* interleaved, int numSamples, in
 
     pcm::writeHeader(frame.data(), static_cast<uint32_t>(sampleRate), static_cast<uint32_t>(channels),
                      static_cast<uint32_t>(numSamples));
-    std::memcpy(frame.data() + pcm::kHeaderSize, interleaved, dataSize);
+    // 与 buildPcmFrame() 同口径:空 payload 不调 memcpy(源指针可为空,零长度 memcpy 传空指针仍是 UB)。
+    if (dataSize > 0)
+        std::memcpy(frame.data() + pcm::kHeaderSize, interleaved, dataSize);
 
     // Snapshot clients under lock
     std::vector<std::shared_ptr<ix::WebSocket>> snapshot;
