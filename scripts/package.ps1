@@ -2,7 +2,8 @@
 # 六条硬要求逐条落地:
 #   1. zip 名从 -Version 算出来(SynchainBridge-VST3-v$Version-win64.zip),绝不写字面量
 #   2. 枚举 .vst3 bundle 目录并断言恰好 1 个(Synchain Bridge.vst3),打包时保住 .vst3/Contents/ 层级
-#   3. 生成 .sha256 独立资产 + dist/package-summary.md(version/zipFileName/sizeBytes/sha256/releaseDate)
+#   3. 生成 .sha256 独立资产 + dist/package-summary.md(version/zipFileName/sizeBytes/sha256/releaseDate;
+#      按段追加 + 同名 zipFileName 段去重,与 package-macos.sh 同口径)
 #   4. 生成 INSTALL.txt(安装路径 + SmartScreen 说明 + 精确到 tag 的源码声明)
 #   5. 许可证与声明文件入 zip 根目录(LICENSE.txt / THIRD-PARTY-NOTICES.md / LICENSES/OFL-1.1.txt;
 #      U2 = 不附 LICENSE-EXCEPTION.md,依赖 GPLv3 系统库例外默认解释)
@@ -141,13 +142,39 @@ $hash = (Get-FileHash -LiteralPath $zipPath -Algorithm SHA256).Hash.ToLowerInvar
 
 $sizeBytes   = (Get-Item -LiteralPath $zipPath).Length
 $releaseDate = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
-@"
-version: $Version
-zipFileName: $zipFileName
-sizeBytes: $sizeBytes
-sha256: $hash
-releaseDate: $releaseDate
-"@ | Set-Content -LiteralPath $summaryPath -Encoding UTF8
+
+# summary 以空行分段追加 + 同名段去重,与 package-macos.sh 第 10 步的 awk 逻辑逐条等价(issue #23):
+# 同一个 OutDir 下可能已有别的平台或本脚本上一次运行写的段落,整文件覆盖会把它们静默抹掉。
+#   - 切段一律按记录首行 `version:` 切,不按空行切:旧文件的段间可能没有空行,按空行切会把整个文件当一段;
+#   - 只删 `zipFileName:` 整行逐字相等(-ceq,大小写敏感)的旧段,不用子串包含 —— 0.0.0-ci 不能误删 0.0.0-ci2;
+#   - 首条记录之前的内容(将来若加表头)原样透传;空行只是分隔符,重排时统一重新生成;
+#   - 保留的旧段之间各补一个空行,末尾追加本次的新段。
+$zipLine = "zipFileName: $zipFileName"
+$kept    = New-Object System.Collections.Generic.List[string]
+if (Test-Path -LiteralPath $summaryPath) {
+    $rec = New-Object System.Collections.Generic.List[string]
+    $started = $false
+    $drop    = $false
+    foreach ($ln in @(Get-Content -LiteralPath $summaryPath)) {
+        if ($ln.Trim().Length -eq 0) { continue }
+        if ($ln -cmatch '^version:\s') {
+            if ($started -and -not $drop) { $kept.AddRange($rec); $kept.Add('') }
+            $rec.Clear(); $drop = $false; $started = $true
+        }
+        if (-not $started) { $kept.Add($ln); continue }
+        $rec.Add($ln)
+        if ($ln -ceq $zipLine) { $drop = $true }
+    }
+    if ($started -and -not $drop) { $kept.AddRange($rec); $kept.Add('') }
+}
+$kept.AddRange([string[]]@(
+    "version: $Version",
+    $zipLine,
+    "sizeBytes: $sizeBytes",
+    "sha256: $hash",
+    "releaseDate: $releaseDate"
+))
+Set-Content -LiteralPath $summaryPath -Value $kept.ToArray() -Encoding UTF8
 
 Write-Host "Packaged: $zipPath ($sizeBytes bytes)"
 Write-Host "SHA256:   $hash"

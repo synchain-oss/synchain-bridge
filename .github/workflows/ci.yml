@@ -112,15 +112,18 @@ jobs:
 
       # 6b) 发行打包脚本冒烟(与 mac job 的 Package smoke 同构,采纳 #24 review):scripts/package.ps1 只挂在
       #     release.yml 的 tag 触发上;publish 是 needs 两个平台,Windows 打包一回归 = 整个 tag 零资产。
-      #     产物丢弃,断言只看形态:zip + .sha256 都产出、summary 五个字段行齐整。这里**不**测 summary 去重:
-      #     package.ps1 的 summary 是整文件覆盖(Set-Content)而非 mac 侧的追加 + 按段去重,两个「打包唯一
-      #     真源」在这点上行为分叉(release.yml 按 artifact 名分目录下载,summary 只喂 step summary,
-      #     故暂不出事),口径对齐记在 issue #23;对齐后再把 mac 侧的三次运行断言搬过来。
+      #     产物丢弃,断言只看形态:zip + .sha256 都产出、summary 五个字段行齐整。
+      #     三次运行(ci → ci2 → ci)与 mac 侧同构(issue #23 把 package.ps1 的 summary 从整文件覆盖改成
+      #     追加 + 按段去重后搬过来):先再写一条**不同名**的记录,再重跑第一条 —— 它必须只删掉自己那条,
+      #     0.0.0-ci2 的段落要原样留着。只跑两次同名会让 buggy 实现(子串命中就删光)与正确实现输出逐字节
+      #     相同,断言分辨不出。
       - name: Package smoke (scripts/package.ps1, artefacts discarded)
         shell: pwsh
         run: |
           $out = Join-Path $env:RUNNER_TEMP 'package-smoke'
-          ./scripts/package.ps1 -Version 0.0.0-ci -BuildDir build -OutDir $out
+          ./scripts/package.ps1 -Version 0.0.0-ci  -BuildDir build -OutDir $out
+          ./scripts/package.ps1 -Version 0.0.0-ci2 -BuildDir build -OutDir $out
+          ./scripts/package.ps1 -Version 0.0.0-ci  -BuildDir build -OutDir $out
           Get-ChildItem $out | Out-Host
           foreach ($f in 'SynchainBridge-VST3-v0.0.0-ci-win64.zip', 'SynchainBridge-VST3-v0.0.0-ci-win64.zip.sha256', 'package-summary.md') {
             if (-not (Test-Path (Join-Path $out $f))) { Write-Error "package smoke did not produce $f"; exit 1 }
@@ -129,6 +132,16 @@ jobs:
           foreach ($k in 'version', 'zipFileName', 'sizeBytes', 'sha256', 'releaseDate') {
             # `${k}:` 而不是 `$k:`——pwsh 会把 `$k:` 解析成作用域限定符,直接 ParserError
             if ($summary -notmatch "(?m)^${k}:") { Write-Error "package-summary.md is missing the '${k}:' line"; exit 1 }
+          }
+          # 段落断言逐行精确比对(-ceq,大小写敏感),不用子串包含:0.0.0-ci 的行不能被 0.0.0-ci2 的行撞过。
+          $lines = @(Get-Content (Join-Path $out 'package-summary.md'))
+          $n = @($lines | Where-Object { $_ -cmatch '^zipFileName:' }).Count
+          if ($n -ne 2) { Write-Error "package-summary.md should hold exactly 2 segments (ci + ci2), got $n"; exit 1 }
+          if (@($lines | Where-Object { $_ -ceq 'zipFileName: SynchainBridge-VST3-v0.0.0-ci2-win64.zip' }).Count -ne 1) {
+            Write-Error "re-running 0.0.0-ci wiped the unrelated 0.0.0-ci2 segment (over-deletion regression)"; exit 1
+          }
+          if (@($lines | Where-Object { $_ -ceq 'zipFileName: SynchainBridge-VST3-v0.0.0-ci-win64.zip' }).Count -ne 1) {
+            Write-Error "0.0.0-ci segment should appear exactly once after re-run"; exit 1
           }
 
       # 7) artifact(命名/保留策略见 06 §6.3;一律用 REF_SLUG,不用 github.ref_name)
