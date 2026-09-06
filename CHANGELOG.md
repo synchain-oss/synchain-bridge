@@ -103,6 +103,9 @@
   - 两平台 Package smoke 增加 **`.sha256` 内容形态断言**:恰好一行、匹配 `^[0-9a-f]{64}  <zip 基名>$`
     (两个空格,`sha256sum -c` 认的格式),且 hash 与现算(`Get-FileHash` / `shasum -a 256`)一致 ——
     此前只断言文件存在,分隔符写错要到打 tag 那一刻才在 `publish` 炸出来。
+  - mac 侧 Package smoke 开头加跑一次**不传 `--version`** 的 `--dry-run`,断言输出里的 Version 行与
+    `grep` 另取的 `CMakeLists.txt` 版本逐字相等:`release.yml` 与三次真跑全部显式传版本,脚本里从 CMake
+    回落读版本的那条 BSD sed 否则在 CI 上永远不执行。
   - `release.yml` `publish` 的资产版本断言由子串包含(`*v<ver>*`)改为**整串精确等式**:按两个打包脚本的
     定式反推出四个文件名逐个要求存在,且 `dist/` 里不得有第五个文件。
   - `branch-gate.yml` DCO 步与 Frozen-contract 步的 `${{ github.repository }}` /

@@ -430,6 +430,18 @@ jobs:
         run: |
           set -euo pipefail
           smoke="$RUNNER_TEMP/package-smoke"
+          # 先跑一次**不传 --version** 的 --dry-run:release.yml 与下面三次真跑全部显式传版本,脚本里从
+          # CMakeLists.txt 回落读版本的那条 sed 否则在 CI 上永远不执行 —— 而它恰是 GNU / BSD 语法差异
+          # 唯一能咬到的地方,只有 macOS runner 上的 BSD sed 才验得到。--dry-run 分支在版本解析之后,
+          # 能真跑 sed。对照值用 grep 另取一份(-m1 两端都通,不经 `| head` 免 SIGPIPE),
+          # 断言 DryRun 输出里的 Version 行与之逐字相等,不只看退出码。
+          cmake_ver="$(grep -m1 -oE 'project[[:space:]]*\([[:space:]]*[^[:space:]]+[[:space:]]+VERSION[[:space:]]+[0-9]+\.[0-9]+\.[0-9]+' CMakeLists.txt)"
+          cmake_ver="${cmake_ver##*[[:space:]]}"
+          [ -n "$cmake_ver" ] || { echo "::error::cannot read project(... VERSION) from CMakeLists.txt"; exit 1; }
+          dry="$(bash scripts/package-macos.sh --dry-run --build-dir build --out-dir "$smoke")"
+          printf '%s\n' "$dry"
+          printf '%s\n' "$dry" | grep -Fqx "[DryRun] Version  : $cmake_ver" \
+            || { echo "::error::package-macos.sh --dry-run without --version did not resolve $cmake_ver from CMakeLists.txt (BSD sed fallback regressed?)"; exit 1; }
           bash scripts/package-macos.sh --version 0.0.0-ci  --build-dir build --out-dir "$smoke"
           # 三次运行才覆盖到 package-summary.md 的「去重旧段落」awk 分支(全仓唯一真出过 bug 的打包逻辑,
           # 14626ec 修的是「删过头,把别的版本/平台的段落一起删光」):先再写一条**不同名**的记录,
