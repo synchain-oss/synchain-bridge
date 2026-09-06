@@ -5,8 +5,9 @@
   端口 9420 一致性检查(gate 3d:src/BridgeApi.h ↔ web/bridge.js ↔ web-preview/mock-server.mjs)、
   版本一致性检查(gate 3e:CMakeLists.txt project(VERSION) ↔ web-preview 的 mock-server.mjs /
   package.json / package-lock.json ↔ BRIDGE_CONTRACT.md §三 VERSION 行)、
-  字体 name 表 RFN 断言(gate 3b2,与 compliance.yml 同参)与零依赖纯逻辑自测(gate 5b:Origin 白名单 +
-  PCM 帧头 golden,与 compliance.yml 同源同用例)。
+  字体 name 表 RFN 断言(gate 3b2,与 compliance.yml 同参)、PCM 帧头组帧接线断言(gate 3f:
+  src/VstBridgeServer.cpp 必须经 src/PcmFrame.h 组帧,与 compliance.yml 同构)与零依赖纯逻辑自测
+  (gate 5b:Origin 白名单 + PCM 帧头 golden,与 compliance.yml 同源同用例)。
   任一 gate FAIL 即以非零码退出,最后打印一张可直接粘进 PR 描述的表格。
 .EXAMPLE   pwsh scripts/gates.ps1                         # 全量(含 GUI pluginval)
 .EXAMPLE   pwsh scripts/gates.ps1 -PluginOnly             # 跳过 GUI pluginval(与 CI 等价)
@@ -317,6 +318,35 @@ function Test-Version {
     return $ok
 }
 
+# ---- gate 3f:PCM 帧头组帧接线(src/VstBridgeServer.cpp 必须走 src/PcmFrame.h)----
+# tests/pcm_frame_selftest.cpp 只能钉 PcmFrame.h 自身的字节布局,钉不住「VstBridgeServer.cpp 真的经它组帧」
+# (那要链 JUCE 才测得到)。这里用轻量文本断言补上:必须 #include "PcmFrame.h",且不得再出现抽取前两份
+# 手写实现的特征 —— `writeU32(` 手写 lambda 与字面量 `headerSize = 12`(87133fe 删掉的就是它们)。
+# 与 compliance.yml 的「PCM frame wiring」步骤同构(那边用 grep)。只读、秒级,归入只读 gate 恒跑。
+function Test-PcmFrameWiring {
+    $ok = $true
+    $detail = ''
+    $rel = 'src/VstBridgeServer.cpp'
+    $path = Join-Path $RepoRoot $rel
+    if (-not (Test-Path $path)) {
+        $ok = $false; $detail = ($rel + ' 不存在')
+    } else {
+        $text = Get-Content -LiteralPath $path -Raw
+        $bad = @()
+        if ($text -notmatch '(?m)^\s*#include\s+"PcmFrame\.h"') { $bad += '缺少 #include "PcmFrame.h"' }
+        if ($text -match 'writeU32\(') { $bad += '出现手写 writeU32( lambda' }
+        if ($text -match 'headerSize\s*=\s*12\b') { $bad += '出现字面量 headerSize = 12' }
+        if ($bad.Count -gt 0) {
+            $ok = $false
+            $detail = ($rel + ': ' + ($bad -join '; ') + ';帧头必须经 src/PcmFrame.h 的 writeHeader/kHeaderSize 组帧')
+        } else {
+            $detail = ($rel + ' 经 PcmFrame.h 组帧,无手写帧头')
+        }
+    }
+    Add-Result 'PCM 帧头接线 (VstBridgeServer.cpp → PcmFrame.h)' ($(if ($ok) { 'PASS' } else { 'FAIL' })) $detail
+    return $ok
+}
+
 # ---- gate 4:cmake 配置 ----
 function Test-Configure {
     $ok = $true
@@ -437,7 +467,7 @@ Write-Host ('  BuildDir: ' + $BuildDir)
 Write-Host ('  Mode    : ' + $(if ($Quick) { 'Quick(跳过 pluginval)' } elseif ($PluginOnly) { 'PluginOnly(跳过 GUI pluginval)' } else { '全量(含 GUI pluginval)' }))
 Write-Host ''
 
-# 只读 gate(1,2,3,3b,3b2,3c,3d,3e)恒跑,互不依赖
+# 只读 gate(1,2,3,3b,3b2,3c,3d,3e,3f)恒跑,互不依赖
 $roOk = $true
 $roOk = (Test-Deps) -and $roOk
 $roOk = (Test-ClangFormat) -and $roOk
@@ -447,6 +477,7 @@ $roOk = (Test-FontNames) -and $roOk
 $roOk = (Test-Reuse) -and $roOk
 $roOk = (Test-Port) -and $roOk
 $roOk = (Test-Version) -and $roOk
+$roOk = (Test-PcmFrameWiring) -and $roOk
 
 if (-not $roOk) {
     Add-Result 'cmake 配置' 'SKIP' '只读 gate 失败,跳过'

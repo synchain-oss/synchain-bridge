@@ -66,6 +66,19 @@ jobs:
         # runner 镜像的 node 版本轮换时不应影响本步骤。ubuntu 镜像自带 node ≥ 20,与 web-preview/README
         # 的「Node ≥ 18」要求兼容。
         run: node --test web-preview/pcm-frame.test.mjs
+      - name: PCM frame wiring (VstBridgeServer.cpp must encode via PcmFrame.h)
+        # 与本地 gate 3f 同构:上面的 golden selftest 钉不住「VstBridgeServer.cpp 真的经 PcmFrame.h 组帧」
+        # (那要链 JUCE 才测得到),故用文本断言 —— 必须 #include "PcmFrame.h",且不得再出现抽取前两份
+        # 手写实现的特征(`writeU32(` lambda 与字面量 `headerSize = 12`,87133fe 删掉的就是它们)。
+        run: |
+          f=src/VstBridgeServer.cpp
+          grep -qE '^[[:space:]]*#include[[:space:]]+"PcmFrame\.h"' "$f" \
+            || { echo "::error::$f must #include \"PcmFrame.h\" (PCM header layout is defined once, in src/PcmFrame.h)"; exit 1; }
+          if grep -nE 'writeU32\(|headerSize[[:space:]]*=[[:space:]]*12\b' "$f"; then
+            echo "::error::$f still carries a hand-written PCM header (writeU32( lambda / headerSize = 12); encode via src/PcmFrame.h writeHeader/kHeaderSize"
+            exit 1
+          fi
+          echo "PCM frame wiring ok: $f encodes via PcmFrame.h"
       - name: REUSE lint
         # 与 §5.1 gate 3c 逐字同参
         run: pipx run reuse lint

@@ -71,6 +71,11 @@
   `12 + numSamples*channels*4` 总长与 payload 偏移 —— 改任一字段顺序 / 端序 / 偏移即红。
   并入 `BRIDGE_BUILD_SELFTESTS`(同 `/W4` 或 `-Wall -Wextra -Wpedantic`),`scripts/gates.ps1` 的 gate 5b
   扩为跑两个 selftest,`compliance` workflow 新增同构的「PCM frame selftest」步骤(g++ 直接编译)。
+  `ci.yml` 的 windows / mac 两个构建 job 现也以 `-DBRIDGE_BUILD_SELFTESTS=ON` 配置并在构建后运行两个
+  selftest,MSVC `/W4` 与 clang `-Wall -Wextra -Wpedantic` 零警告门因此真覆盖 `tests/*.cpp`
+  (`release.yml` 不开)。golden 钉不住「`VstBridgeServer.cpp` 真的经 `PcmFrame.h` 组帧」(要链 JUCE),
+  由 `scripts/gates.ps1` 新增的 gate 3f 与 `compliance` 的同构 grep 步骤以文本断言补上:必须
+  `#include "PcmFrame.h"`,且不得再出现 `writeU32(` 手写 lambda 或字面量 `headerSize = 12`。
 
 ### 构建
 
