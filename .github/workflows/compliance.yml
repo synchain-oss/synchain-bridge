@@ -80,7 +80,9 @@ jobs:
           fi
           # 正向断言(黑名单只认「上次是怎么错的」,拦不住第三种手写法):两条组帧路径都必须经 pcm::writeHeader,
           # 调用点 >= 2。覆盖边界:本门只盯 src/VstBridgeServer.cpp;将来别的 .cpp 里出现第四条组帧路径不在射程内。
-          n=$(grep -cE 'pcm::writeHeader\(' "$f" || true)
+          # 计**次**不计行(与 gates.ps1 的 [regex]::Matches().Count 同口径):同行两次调用或 clang-format 折行都不会让两边分叉。
+          # 「>= 2」钉的是当前两条路径(其中 sendPcmPacket 是无调用方的遗留路径);若将来删掉遗留路径,这里改成 >= 1。
+          n=$(grep -oE 'pcm::writeHeader\(' "$f" | wc -l | tr -d '[:space:]')
           [ "$n" -ge 2 ] || { echo "::error::$f must encode both PCM paths via pcm::writeHeader() (found $n call sites, expected >= 2)"; exit 1; }
           echo "PCM frame wiring ok: $f encodes via PcmFrame.h ($n writeHeader call sites)"
       - name: REUSE lint

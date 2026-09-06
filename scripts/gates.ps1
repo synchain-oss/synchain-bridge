@@ -338,6 +338,8 @@ function Test-PcmFrameWiring {
         if ($text -match 'headerSize\s*=\s*12\b') { $bad += '出现字面量 headerSize = 12' }
         # 正向断言(黑名单只认「上次是怎么错的」,拦不住第三种手写法):两条组帧路径都必须经 pcm::writeHeader。
         # 覆盖边界:本 gate 只盯 VstBridgeServer.cpp,别的 .cpp 里出现第四条组帧路径不在射程内。
+        # 计次(compliance 侧 grep -o | wc -l 同口径)。「>= 2」钉的是当前两条路径(sendPcmPacket 为遗留无调用方路径);
+        # 将来删掉遗留路径时改 >= 1。
         $calls = [regex]::Matches($text, 'pcm::writeHeader\(').Count
         if ($calls -lt 2) { $bad += ('pcm::writeHeader( 调用点 ' + $calls + ' 处,应 >= 2(两条组帧路径各一处)') }
         if ($bad.Count -gt 0) {
