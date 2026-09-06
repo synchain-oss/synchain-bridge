@@ -94,16 +94,42 @@ jobs:
           "JUCE_TAG=$juce"    | Out-File $env:GITHUB_ENV -Append
           "PLUGINVAL_TAG=$pv" | Out-File $env:GITHUB_ENV -Append
 
-      - name: Clone JUCE (shallow, pinned)
-        run: git clone --depth 1 --branch $env:JUCE_TAG https://github.com/juce-framework/JUCE.git "${{ github.workspace }}/JUCE"
+      # JUCE / vcpkg 缓存与 ci.yml 的 windows job 同 key(juce-<os>-<.juce-version 哈希> / vcpkg-bincache-…-<vcpkg.json 哈希>):
+      # 发版 tag 与 dev 同一份 .juce-version / vcpkg.json 时直接复用 CI 攒下的缓存;miss 亦照常 clone / 编译。
+      - name: Cache JUCE
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ github.workspace }}/JUCE
+          key: juce-${{ runner.os }}-${{ hashFiles('.juce-version') }}
 
-      - name: Setup vcpkg
+      - name: Clone JUCE (shallow, pinned; skipped on cache hit)
+        shell: pwsh
+        run: |
+          $juce = "${{ github.workspace }}/JUCE"
+          if (Test-Path (Join-Path $juce 'CMakeLists.txt')) { Write-Host "JUCE $env:JUCE_TAG restored from cache"; exit 0 }
+          if (Test-Path $juce) { Remove-Item $juce -Recurse -Force }
+          git clone --depth 1 --branch $env:JUCE_TAG https://github.com/juce-framework/JUCE.git $juce
+          if ($LASTEXITCODE -ne 0) { Write-Error "git clone JUCE $env:JUCE_TAG failed"; exit 1 }
+
+      # vcpkg manifest 模式(与 ci.yml 同构,细节注释见那里):版本由仓库根 vcpkg.json 的 builtin-baseline + overrides 钉死;
+      # 不显式 `vcpkg install`,依赖由 Configure 步骤的 vcpkg toolchain 按 vcpkg.json 装进 build/vcpkg_installed。
+      - name: Setup vcpkg (manifest mode + binary cache dir)
+        shell: pwsh
         run: |
           echo "VCPKG_ROOT=$env:VCPKG_INSTALLATION_ROOT" >> $env:GITHUB_ENV
           echo "VCPKG_DEFAULT_TRIPLET=x64-windows-static" >> $env:GITHUB_ENV
+          $bc = Join-Path $env:RUNNER_TEMP 'vcpkg-binary-cache'
+          New-Item -ItemType Directory -Force -Path $bc | Out-Null
+          echo "VCPKG_DEFAULT_BINARY_CACHE=$bc" >> $env:GITHUB_ENV
+          & "$env:VCPKG_INSTALLATION_ROOT/vcpkg.exe" --version
 
-      - name: Install dependencies (static)
-        run: vcpkg install --triplet x64-windows-static ixwebsocket
+      - name: Cache vcpkg binary cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ runner.temp }}/vcpkg-binary-cache
+          key: vcpkg-bincache-${{ runner.os }}-x64-windows-static-${{ hashFiles('vcpkg.json') }}
+          restore-keys: |
+            vcpkg-bincache-${{ runner.os }}-x64-windows-static-
 
       - name: Ensure WebView2 Runtime (Evergreen)
         shell: pwsh
@@ -119,18 +145,29 @@ jobs:
           path: build/packages
           key: webview2-nuget-${{ env.WEBVIEW2_NUGET_VERSION }}
 
+      # Configure 里 vcpkg toolchain 按 vcpkg.json 自动装 ixwebsocket;随后断言装进来的版本 == vcpkg.json overrides
+      # (发版链路更不能静默带一个漂了的依赖出去;读 vcpkg 落盘的 status 文件,与 ci.yml 逐字相同)。
       - name: Configure CMake
         shell: pwsh
         run: |
           if (Test-Path build) { Get-ChildItem build -Exclude packages | Remove-Item -Recurse -Force }
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DJUCE_PATH="${{ github.workspace }}/JUCE" -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x64-windows-static
+          if ($LASTEXITCODE -ne 0) { Write-Error "cmake configure failed"; exit 1 }
+          $want = ((Get-Content vcpkg.json -Raw | ConvertFrom-Json).overrides | Where-Object name -eq 'ixwebsocket' | Select-Object -First 1).'version-semver'
+          if (-not $want) { Write-Error "vcpkg.json has no ixwebsocket override to assert against"; exit 1 }
+          $stanzas = (Get-Content build/vcpkg_installed/vcpkg/status -Raw) -split '(\r?\n){2,}'
+          $ix = $stanzas | Where-Object { $_ -match '(?m)^Package: ixwebsocket$' -and $_ -match '(?m)^Architecture: x64-windows-static$' } | Select-Object -First 1
+          if (-not $ix -or $ix -notmatch '(?m)^Version: (\S+)$') { Write-Error "ixwebsocket:x64-windows-static is not in build/vcpkg_installed after configure"; exit 1 }
+          Write-Host "vcpkg installed ixwebsocket:x64-windows-static $($Matches[1]) (vcpkg.json pins $want)"
+          if ($Matches[1] -ne $want) { Write-Error "ixwebsocket $($Matches[1]) != vcpkg.json override $want"; exit 1 }
 
+      # 排除项含 vcpkg_installed:manifest 模式下第三方头落在 build/vcpkg_installed/...,路径里不再有 `\vcpkg\`
       - name: Build (fail on any MSVC warning)
         shell: pwsh
         run: |
           cmake --build build --config Release --parallel 2>&1 | Tee-Object -FilePath build.log
           if ($LASTEXITCODE -ne 0) { Write-Error "build failed"; exit 1 }
-          $w = Select-String -Path build.log -Pattern '\swarning\s+C\d{4}' | Where-Object { $_.Line -notmatch '[\\/](JUCE|vcpkg|_deps)[\\/]' }
+          $w = Select-String -Path build.log -Pattern '\swarning\s+C\d{4}' | Where-Object { $_.Line -notmatch '[\\/](JUCE|vcpkg|vcpkg_installed|_deps)[\\/]' }
           if ($w.Count -gt 0) {
             $w | ForEach-Object { Write-Host "::error::$($_.Line)" }
             Write-Error "MSVC warnings: $($w.Count); /W4 requires zero warnings"; exit 1
@@ -191,8 +228,8 @@ jobs:
   #
   # ⚠️ 已知权衡(见 docs/release.md §6):publish `needs: [release, release-macos]`,
   #    本 job 挂掉 = 整个 tag 一个产物都发不出去(包括已构建成功的 Windows zip)。
-  #    timeout 与 windows job 对齐到 60 分钟 —— 两边都要从零 clone JUCE 并编译两个
-  #    format wrapper,mac 侧还多一次 ixwebsocket 的 FetchContent 编译,30 分钟偏紧。
+  #    timeout 与 windows job 对齐到 60 分钟 —— 两边都要编译两个 format wrapper,mac 侧还多一次
+  #    ixwebsocket 的编译,30 分钟偏紧(JUCE / ixwebsocket 源码有缓存,但 miss 也得够用)。
   # ============================================================================
   release-macos:
     name: release-macos
@@ -213,6 +250,14 @@ jobs:
           fi
           echo "JUCE_TAG=$juce"    >> "$GITHUB_ENV"
           echo "PLUGINVAL_TAG=$pv" >> "$GITHUB_ENV"
+          # ixwebsocket 的 pin 与仓库 URL 从单一真源 CMakeLists.txt 现读(与 ci.yml 的 mac job 逐字相同)
+          ix_sha=$(sed -nE 's/^[[:space:]]*set\(IXWEBSOCKET_TAG[[:space:]]+"([0-9a-f]{40})".*/\1/p' CMakeLists.txt | head -n 1)
+          ix_url=$(awk '$1 == "GIT_REPOSITORY" { print $2; exit }' CMakeLists.txt)
+          if [ -z "$ix_sha" ] || [ -z "$ix_url" ]; then
+            echo "::error::cannot parse IXWEBSOCKET_TAG (40-hex) / GIT_REPOSITORY from CMakeLists.txt"; exit 1
+          fi
+          echo "IXWEBSOCKET_SHA=$ix_sha" >> "$GITHUB_ENV"
+          echo "IXWEBSOCKET_URL=$ix_url" >> "$GITHUB_ENV"
 
       # 工具链留痕:runner 镜像每月轮换,出问题时这段日志用于区分「代码回归 or 镜像漂移」
       - name: Record toolchain
@@ -225,11 +270,43 @@ jobs:
           clang --version
           xcodebuild -version
 
-      - name: Clone JUCE (shallow, pinned)
+      # JUCE / ixwebsocket 源码缓存与 ci.yml 的 mac job 同 key、同判定(细节注释见那里):miss 照常 clone。
+      - name: Cache JUCE
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ github.workspace }}/JUCE
+          key: juce-${{ runner.os }}-${{ hashFiles('.juce-version') }}
+
+      - name: Clone JUCE (shallow, pinned; skipped on cache hit)
         shell: bash
         run: |
           set -euo pipefail
-          git clone --depth 1 --branch "$JUCE_TAG" https://github.com/juce-framework/JUCE.git "${{ github.workspace }}/JUCE"
+          juce="${{ github.workspace }}/JUCE"
+          if [ -f "$juce/CMakeLists.txt" ]; then echo "JUCE $JUCE_TAG restored from cache"; exit 0; fi
+          rm -rf "$juce"
+          git clone --depth 1 --branch "$JUCE_TAG" https://github.com/juce-framework/JUCE.git "$juce"
+
+      - name: Cache ixwebsocket source (FetchContent)
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ github.workspace }}/_deps/ixwebsocket-src
+          key: ixwebsocket-src-${{ runner.os }}-${{ env.IXWEBSOCKET_SHA }}
+
+      - name: Prefetch ixwebsocket at pinned SHA (skipped on cache hit)
+        shell: bash
+        run: |
+          set -euo pipefail
+          src="${{ github.workspace }}/_deps/ixwebsocket-src"
+          head="$(git -C "$src" rev-parse HEAD 2>/dev/null || true)"
+          if [ "$head" != "$IXWEBSOCKET_SHA" ]; then
+            [ -z "$head" ] || echo "::warning::cached ixwebsocket-src is at $head, expected $IXWEBSOCKET_SHA; re-fetching"
+            rm -rf "$src"
+            git clone "$IXWEBSOCKET_URL" "$src"
+            git -C "$src" -c advice.detachedHead=false checkout "$IXWEBSOCKET_SHA"
+          else
+            echo "ixwebsocket $IXWEBSOCKET_SHA restored from cache"
+          fi
+          [ "$(git -C "$src" rev-parse HEAD)" = "$IXWEBSOCKET_SHA" ] || { echo "::error::ixwebsocket-src HEAD != $IXWEBSOCKET_SHA"; exit 1; }
 
       # Ninja:macOS 镜像通常自带;缺失时按需装,避免镜像轮换把发版弄红
       - name: Ensure Ninja
@@ -239,12 +316,14 @@ jobs:
           command -v ninja >/dev/null 2>&1 || brew install ninja
           ninja --version
 
-      # OSX 相关参数(架构/部署目标/FORMATS)全在 CMakeLists,命令行不重复 —— 单一真源
+      # OSX 相关参数(架构/部署目标/FORMATS)全在 CMakeLists,命令行不重复 —— 单一真源;
+      # FETCHCONTENT_SOURCE_DIR_IXWEBSOCKET 只是把预取好的源码交给 FetchContent,pin 仍在 CMakeLists.txt
       - name: Configure CMake (Ninja)
         shell: bash
         run: |
           set -euo pipefail
-          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DJUCE_PATH="${{ github.workspace }}/JUCE"
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DJUCE_PATH="${{ github.workspace }}/JUCE" \
+            -DFETCHCONTENT_SOURCE_DIR_IXWEBSOCKET="${{ github.workspace }}/_deps/ixwebsocket-src"
 
       # clang 零警告门 —— 与 windows 的 /W4 门同构的黑名单,与 ci.yml 的 mac job 逐字相同:
       # 只排除第三方(_deps / JUCE / vcpkg),其余一律算;排除模式写 (^|/) 同时覆盖 Ninja 的
