@@ -55,7 +55,7 @@ Synchain Bridge 使用玻璃拟态 WebView UI(JUCE 8 WebView;Windows 走 WebView
 Windows:
 
 - **Windows x64** + **Visual Studio 2022**(「使用 C++ 的桌面开发」,MSVC v143 + Windows SDK);VS2019 BuildTools(v142)亦可。
-- **vcpkg** + `ixwebsocket:x64-windows-static`
+- **vcpkg**(已 bootstrap 的克隆即可;ixwebsocket 由仓库根 `vcpkg.json` manifest 钉死并在配置期自动安装,无需手工 `vcpkg install`)
 - **NuGet CLI**(`nuget.exe` 在 PATH;CMake 配置期自动拉 `Microsoft.Web.WebView2`)
 - **Microsoft Edge WebView2 Runtime**(Windows 11 已内置;Win10 若无则装 Evergreen)
 
@@ -133,10 +133,9 @@ npm run serve         # 用 http 托管 ../web(不能用 file://,ES module 会�
 ### Windows
 
 ```powershell
-# 一次性准备
+# 一次性准备(不需要 `vcpkg install`:vcpkg.json 是 manifest,见下)
 git clone https://github.com/microsoft/vcpkg C:\dev\vcpkg
 C:\dev\vcpkg\bootstrap-vcpkg.bat
-C:\dev\vcpkg\vcpkg install ixwebsocket:x64-windows-static
 git clone --depth 1 --branch 8.0.8 https://github.com/juce-framework/JUCE C:\dev\JUCE
 
 # 配置 + 构建(在仓库根目录)
@@ -148,9 +147,9 @@ cmake --build build --config Release
 # 产物: build/SynchainBridgeVST_artefacts/Release/VST3/Synchain Bridge.vst3
 ```
 
-CMake 会在配置期用 `nuget` 把 `Microsoft.Web.WebView2` 拉到 `build/packages` 并链接静态 loader,无需手动装 SDK。
+配置期 vcpkg toolchain 会读仓库根的 `vcpkg.json`(manifest 模式),把 `ixwebsocket` 12.0.1 —— 由 `builtin-baseline`(microsoft/vcpkg 的 40 位 commit)加一条 `overrides` 钉死 —— 装进 `build/vcpkg_installed`;首次配置会编译,之后走 vcpkg 二进制缓存。CMake 同时用 `nuget` 把 `Microsoft.Web.WebView2` 拉到 `build/packages` 并链接静态 loader,无需手动装 SDK。
 
-CI(`.github/workflows/ci.yml`,job `build-and-validate`,`windows-2022`):clone JUCE 8.0.8 → vcpkg 装 ixwebsocket → 装 WebView2 Evergreen Runtime → CMake 配置(拉 WebView2 NuGet)→ 构建 → pluginval `--skip-gui-tests`(strictness 5)。含 Editor 的全量 strictness-5 在真实 Windows 11 本地验证 —— 无桌面的 Server runner 无法托管 WebView2 编辑器。
+CI(`.github/workflows/ci.yml`,job `build-and-validate`,`windows-2022`):clone JUCE 8.0.8(`actions/cache` 命中即跳过)→ 装 WebView2 Evergreen Runtime → CMake 配置(vcpkg 按 manifest 装 ixwebsocket,二进制缓存经 `actions/cache` 复用,随后断言装进来的版本 == `vcpkg.json`;拉 WebView2 NuGet)→ 构建 → pluginval `--skip-gui-tests`(strictness 5)。缓存只是加速,miss 时照常 clone / 编译。含 Editor 的全量 strictness-5 在真实 Windows 11 本地验证 —— 无桌面的 Server runner 无法托管 WebView2 编辑器。
 
 ### macOS
 
@@ -163,7 +162,7 @@ cmake --build build --parallel
 
 无需 vcpkg / NuGet / WebView2 —— ixwebsocket 由 CMake 在配置期按钉死的 commit SHA(= 上游 tag v12.0.1)拉取,UI 用系统 WKWebView;目标架构 arm64,部署目标 macOS 11.0。完整指南(含 `auval` / pluginval 验收)见 [`docs/build-macos.md`](docs/build-macos.md)。
 
-CI(`.github/workflows/ci.yml`,job `build-and-validate-macos`,`macos-15`):构建两种格式 → 断言产物为 arm64 单架构 → 对 VST3 跑 pluginval `--skip-gui-tests`(strictness 5)、对 AU 跑 `auval` → `ditto` 打 zip 传 artifact。含 GUI 的 pluginval、以及对 AU 的 pluginval 仍是本地门禁。
+CI(`.github/workflows/ci.yml`,job `build-and-validate-macos`,`macos-15`):从 `actions/cache` 恢复 JUCE 与钉死的 ixwebsocket 源码(miss 即 clone,并断言 checkout == 钉的 SHA)→ 构建两种格式 → 断言产物为 arm64 单架构 → 对 VST3 跑 pluginval `--skip-gui-tests`(strictness 5)、对 AU 跑 `auval` → `ditto` 打 zip 传 artifact。含 GUI 的 pluginval、以及对 AU 的 pluginval 仍是本地门禁。
 
 ## 文档
 

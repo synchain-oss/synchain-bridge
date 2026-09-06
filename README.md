@@ -55,7 +55,7 @@ Common to both platforms:
 Windows:
 
 - **Windows x64** with **Visual Studio 2022** (Desktop development with C++; MSVC v143 + Windows SDK). VS2019 BuildTools (v142) also works.
-- **vcpkg** + `ixwebsocket:x64-windows-static`
+- **vcpkg** (a bootstrapped clone; ixwebsocket is pinned by the repo's `vcpkg.json` manifest and installed automatically at configure time — no manual `vcpkg install`)
 - **NuGet CLI** (`nuget.exe` on PATH; CMake fetches `Microsoft.Web.WebView2` at configure time)
 - **Microsoft Edge WebView2 Runtime** (preinstalled on Windows 11; on Windows 10 install the Evergreen runtime)
 
@@ -133,10 +133,9 @@ npm run serve         # serves ../web over http (not file://; ES modules are blo
 ### Windows
 
 ```powershell
-# One-time setup
+# One-time setup (no `vcpkg install` needed: vcpkg.json is a manifest, see below)
 git clone https://github.com/microsoft/vcpkg C:\dev\vcpkg
 C:\dev\vcpkg\bootstrap-vcpkg.bat
-C:\dev\vcpkg\vcpkg install ixwebsocket:x64-windows-static
 git clone --depth 1 --branch 8.0.8 https://github.com/juce-framework/JUCE C:\dev\JUCE
 
 # Configure + build (repo root)
@@ -148,9 +147,9 @@ cmake --build build --config Release
 # Artifact: build/SynchainBridgeVST_artefacts/Release/VST3/Synchain Bridge.vst3
 ```
 
-At configure time CMake uses `nuget` to fetch `Microsoft.Web.WebView2` into `build/packages` and links the static loader — no manual SDK install needed.
+At configure time the vcpkg toolchain reads the repo's `vcpkg.json` (manifest mode) and installs `ixwebsocket` 12.0.1 — pinned by `builtin-baseline` (a 40-char microsoft/vcpkg commit) plus an `overrides` entry — into `build/vcpkg_installed`; the first configure compiles it, later ones hit vcpkg's binary cache. CMake also uses `nuget` to fetch `Microsoft.Web.WebView2` into `build/packages` and links the static loader — no manual SDK install needed.
 
-CI (`.github/workflows/ci.yml`, job `build-and-validate`, `windows-2022`) clones JUCE 8.0.8, installs ixwebsocket via vcpkg, installs the WebView2 Evergreen runtime, configures, builds, and runs pluginval `--skip-gui-tests` (strictness 5). The full strictness-5 run including the WebView2 editor is validated locally on real Windows 11 — a headless server runner cannot host the editor.
+CI (`.github/workflows/ci.yml`, job `build-and-validate`, `windows-2022`) clones JUCE 8.0.8 (skipped on an `actions/cache` hit), installs the WebView2 Evergreen runtime, configures (vcpkg installs ixwebsocket from the manifest, with its binary cache persisted via `actions/cache`; the installed version is then asserted against `vcpkg.json`), builds, and runs pluginval `--skip-gui-tests` (strictness 5). Caches only speed things up — a miss clones / compiles as before. The full strictness-5 run including the WebView2 editor is validated locally on real Windows 11 — a headless server runner cannot host the editor.
 
 ### macOS
 
@@ -163,7 +162,7 @@ cmake --build build --parallel
 
 No vcpkg, NuGet or WebView2 needed — CMake fetches ixwebsocket at configure time from a pinned commit SHA (= upstream tag v12.0.1), and the UI runs on the system WKWebView. The build targets arm64 with a macOS 11.0 deployment target. Full guide, including `auval` / pluginval acceptance: [`docs/build-macos.md`](docs/build-macos.md).
 
-CI (`.github/workflows/ci.yml`, job `build-and-validate-macos`, `macos-15`) builds both formats, asserts the binaries are arm64-only, runs pluginval `--skip-gui-tests` (strictness 5) against the VST3 and `auval` against the AU, and uploads a `ditto` zip of both bundles. The GUI pluginval run — and pluginval against the AU — remain local gates.
+CI (`.github/workflows/ci.yml`, job `build-and-validate-macos`, `macos-15`) restores JUCE and the pinned ixwebsocket source from `actions/cache` (cloning on a miss and asserting the checkout equals the pinned SHA), builds both formats, asserts the binaries are arm64-only, runs pluginval `--skip-gui-tests` (strictness 5) against the VST3 and `auval` against the AU, and uploads a `ditto` zip of both bundles. The GUI pluginval run — and pluginval against the AU — remain local gates.
 
 ## Documentation
 

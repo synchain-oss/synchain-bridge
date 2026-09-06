@@ -1,0 +1,9 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
+  "$comment": "Windows 侧 ixwebsocket 的唯一钉死点(issue #23):builtin-baseline = microsoft/vcpkg 的 40 位 commit,该 baseline 下 ports/ixwebsocket 的 version-semver = 12.0.1、port-version = 0(port 的 vcpkg.json 无该字段即 #0),与 CMakeLists.txt 里 macOS 侧 FetchContent 钉的 IXWEBSOCKET_TAG(= 上游 tag v12.0.1)同版本;overrides 是双保险,baseline 漂了也不会静默换版本。port-version 显式写 0 而不省略:override 的 version-semver 与 port-version 共同才唯一确定一份 port 内容(同 12.0.1 下 vcpkg 侧打补丁会升 #1 / #2),CI 与本地 gates 都按这两个值断言 status 文件。升级时 baseline、overrides 的 version-semver 与 port-version、IXWEBSOCKET_TAG 必须一起动,并同步 THIRD-PARTY-NOTICES.md 与 scripts/assert-vcpkg-installed.ps1 的传递依赖表。不写 name / version:插件版本真源是 CMakeLists.txt 的 project(... VERSION),这里不再镜像一份。",
+  "dependencies": ["ixwebsocket"],
+  "overrides": [
+    { "name": "ixwebsocket", "version-semver": "12.0.1", "port-version": 0 }
+  ],
+  "builtin-baseline": "da411b1cfb549469ae350136f954deed7ad8c650"
+}

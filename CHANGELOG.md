@@ -95,8 +95,54 @@
   均带 `NOT DEFINED` 守卫、置于 `project()` 之前(要参与编译器探测),命令行可覆盖;`IXWEBSOCKET_TAG` 只在
   `if(APPLE)` 分支内定义。**对 Windows 构建为 no-op**:VS2019 生成器下 configure 的 cache 差异只有前两个
   变量,生成的 `.sln` / `.vcxproj` 目标列表与改动前逐项相同、无任何 `*_AU*` 目标。
+- **Windows 侧 ixwebsocket 改 vcpkg manifest 模式钉死**(issue #23 第一批第 3 条):新增仓库根 `vcpkg.json`,
+  `builtin-baseline` 钉到 microsoft/vcpkg 的 40 位 commit(该 baseline 下 `ports/ixwebsocket` = 12.0.1),再加一条
+  `overrides`(12.0.1)双保险 —— 此前 CI 用 runner 镜像自带的 vcpkg 做经典模式 `vcpkg install`,版本随镜像每月轮换漂移,
+  仓库里没有任何文件记录它。依赖由 CMake configure 期的 vcpkg toolchain 按 manifest 自动装进 `<build>/vcpkg_installed`
+  (每个 `-BuildDir` 各自一份,并行 agent 互不干扰),本地与 CI 走同一条路径,不再手工 `vcpkg install ixwebsocket`。
+  至此**两平台的 ixwebsocket 都钉到内容级**(Windows = vcpkg 仓库 commit + 版本,macOS = 上游 commit),升级时
+  `vcpkg.json` 与 `CMakeLists.txt` 的 `IXWEBSOCKET_TAG` 须同一 PR 一起动。`scripts/gates.ps1` / `scripts/build.ps1` 的
+  依赖预检检测到 `vcpkg.json` 即按 manifest 模式校验(vcpkg 已 bootstrap、声明了 ixwebsocket、baseline 是 40 位 SHA),
+  无 manifest 的旧分支仍走经典模式检查;`scripts/gates.ps1` 另在 configure 之后加 **gate 4b**,调用
+  `scripts/assert-vcpkg-installed.ps1` 断言 `<BuildDir>/vcpkg_installed/vcpkg/status` 里的安装版本(ixwebsocket 含
+  port-version、传递依赖 mbedtls / zlib)与 `vcpkg.json` override / `THIRD-PARTY-NOTICES.md` 一致 —— 与 CI 同一份脚本、
+  同一口径,断言失败视同配置失败,后续构建 / pluginval 一律 SKIP;`/W4` 零告警门的第三方排除项补 `vcpkg_installed`
+  (manifest 模式下第三方头的路径里不再出现 `\vcpkg\`)。README(双语)、`docs/build-windows.md`、`CONTRIBUTING.md`、`CLAUDE.md` §6、
+  `THIRD-PARTY-NOTICES.md`、`BEFORE_PUBLIC_CHECKLIST.md` §4.1 同步。
 
 ### 持续集成
+
+- **依赖缓存**(issue #23 第一批第 4 条,`ci.yml` 与 `release.yml` 两平台 job 同 key,发版链路直接复用 CI 攒下的缓存;
+  `actions/cache` 沿用已 pin 的 v4.3.0 SHA):① JUCE 目录按 `runner.os` + `.juce-version` 内容哈希缓存,clone 步骤按
+  「目录里没有 `CMakeLists.txt`」判定而不是只看 cache-hit,miss 与残缺命中都照常 clone;无论来自缓存还是刚 clone,
+  随后都做**身份断言**:HEAD 上的 tag(`git tag --points-at HEAD`,剥 v 前缀)须含 `.juce-version`,缓存条目对不上就删掉重 clone,
+  重 clone 后仍对不上才红(两平台 × 两个 workflow 共四处,pwsh / bash 各一版逐条对应);② Windows 的 vcpkg
+  **二进制缓存**(`VCPKG_DEFAULT_BINARY_CACHE` 指到 `runner.temp` 下固定目录,key 含 `runner.os` + 镜像身份
+  `ImageOS-ImageVersion` + triplet + `vcpkg.json` 哈希,`restore-keys` 只回落一级到同镜像前缀 —— vcpkg 按包 ABI 哈希寻址,
+  跨镜像的条目必然全量重编、回落过去只会撑大新条目,故不设跨镜像回落;镜像身份进 key 是因为 `actions/cache` 对已存在的
+  exact key 不会重新保存,镜像月度轮换升一次 MSVC 就会让缓存退化成「永远重编、永远存不进去」),比缓存 installed 树稳;
+  configure 后经 **`scripts/assert-vcpkg-installed.ps1`**(与本地 gate 4b 同一份脚本)断言 `build/vcpkg_installed/vcpkg/status`:
+  ixwebsocket **核心段**(显式排掉无 `Version:` 行的 feature 段,且 `Status: install ok installed`)的 `Version` **与
+  `Port-Version`**(缺行视为 #0)== `vcpkg.json` override 的 `version-semver` / `port-version`,传递依赖 mbedtls / zlib 的
+  `Version` == `THIRD-PARTY-NOTICES.md` 登记版本(期望表手抄在脚本里,升 baseline 时同步);不符即红并打印实际值。
+  Setup 步骤不再写 `VCPKG_DEFAULT_TRIPLET`(manifest 模式下 toolchain 只认 `-DVCPKG_TARGET_TRIPLET`,那是死配置);
+  ③ macOS 把钉死的 ixwebsocket 源码预取到 `_deps/ixwebsocket-src`(key 含从 `CMakeLists.txt` 现读的
+  `IXWEBSOCKET_TAG`,升 pin 自动换 key),经 `FETCHCONTENT_SOURCE_DIR_IXWEBSOCKET` 交给 configure;因 FetchContent 走
+  该覆盖时不再核对 commit,workflow 自己断言 `HEAD == IXWEBSOCKET_TAG`,对不上先重拉、再对不上才红;只缓存源码,
+  不缓存 `_deps/ixwebsocket-build`;`GIT_REPOSITORY` 的读取绑定到 ixwebsocket 的 `FetchContent_Declare` 段内,不会误拿
+  将来别的 FetchContent 依赖的 URL。**缓存只是加速,miss 必须照常成功;不缓存 build 产物本身。**
+  **验证状态**:本 PR 是子 PR(base = `feature/extraction`),按 `CLAUDE.md` §1 只跑 review bot、不跑完整 CI,以上
+  workflow 改动在本 PR 上**跑不到**,首次在主支线 push 时真跑;本地能覆盖的部分(status 断言脚本、gate 3g / 4b)已在
+  Windows 本地 gates 跑通。断言脚本另做**闭包完整性**:本 triplet 下 `install ok installed` 的非 feature 段集合不得超出
+  ixwebsocket + 期望表(升 baseline 冒出第四个包时 `THIRD-PARTY-NOTICES.md` 不再静默漏登记),并把实际闭包打进日志;
+  status 先把 CRLF 归一再分段与匹配。gate 3g 与 compliance 的 pin 一致性在无 `vcpkg.json` 时 SKIP(经典模式向后兼容,
+  与 gate 1 / 4b 同口径)。已知边界:被污染的 JUCE 缓存条目不会自愈(`actions/cache` 对已存在的 exact key 不重存),
+  之后每次都 warning + 全量重 clone,直到手工删缓存或 `.juce-version` 变动 —— 行为正确(缓存只加速),只是慢。
+- **ixwebsocket 两平台版本一致性机器强制**:`vcpkg.json` 的 override 显式写 `"port-version": 0`(与 baseline 下的
+  port 一致;version-semver 与 port-version 共同才唯一确定一份 port 内容),`compliance.yml` 新增
+  "ixwebsocket cross-platform pin consistency" 步骤、`scripts/gates.ps1` 新增同参的 **gate 3g**:读 override 的
+  `version-semver`,断言 override 显式带 `port-version`,且 `CMakeLists.txt` 恰有一处 `set(IXWEBSOCKET_TAG "<40 位 SHA>" ...)`
+  并在同一行标注 `(= tag v<该版本>)` —— macOS 侧钉的是 SHA、机器反推不出版本号,升级时忘了动任何一侧即红。
 
 - `ci.yml` 新增与 `build-and-validate` 同级的 **`build-and-validate-macos`**(`macos-15`,arm64 原生):
   Ninja 配置 → 构建 → **clang 零警告门** → arm64-only 架构断言 → pluginval 验 VST3 + `auval` 验 AU →
