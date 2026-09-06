@@ -96,6 +96,20 @@
   §0 安全铁律(三仓逐字相同)一字未动。
 - `BEFORE_PUBLIC_CHECKLIST.md` 新增 §3.1:第三方 action pin 到 40 位 SHA 升为**转 public 硬门禁**并列出
   当前未 pin 的文件清单与验收断言(现状是只有 `release.yml` 与 mac job 做到了)。
+- **打包脚本与门禁细节收口(issue #23)**:
+  - `ci.yml` windows job 的 Package smoke 改为与 mac 侧同构的三次运行(`0.0.0-ci` → `0.0.0-ci2` → `0.0.0-ci`),
+    断言 `package-summary.md` 恰好 2 段、`ci2` 段原样保留、`ci` 段恰好 1 条(逐行 `-ceq` 精确比对);
+    五条字段行断言由 `-notmatch` 改 **`-cnotmatch`**(pwsh 默认大小写不敏感,`Version:` 漂移会静默走通)。
+  - 两平台 Package smoke 增加 **`.sha256` 内容形态断言**:恰好一行、匹配 `^[0-9a-f]{64}  <zip 基名>$`
+    (两个空格,`sha256sum -c` 认的格式),且 hash 与现算(`Get-FileHash` / `shasum -a 256`)一致 ——
+    此前只断言文件存在,分隔符写错要到打 tag 那一刻才在 `publish` 炸出来。
+  - `release.yml` `publish` 的资产版本断言由子串包含(`*v<ver>*`)改为**整串精确等式**:按两个打包脚本的
+    定式反推出四个文件名逐个要求存在,且 `dist/` 里不得有第五个文件。
+  - `branch-gate.yml` DCO 步与 Frozen-contract 步的 `${{ github.repository }}` /
+    `${{ github.event.pull_request.number }}` 改经 step `env`(`REPO` / `PR_NUMBER`)间接读入,
+    与 `release.yml` 对 tag 名的纪律一致;逻辑不变(骨架改动,SCVB 线同步)。
+  - `scripts/gates.ps1` 版本一致性 gate(3e)的 `Get-Mirror` 在 lockfile 结构变化 / JSON 不合法时不再抛异常
+    中断整个 gates,改记该 gate 的 FAIL 并给出可读原因,其余 gate 照常跑完。
 
 ### 发布 / 分发(对下游可见)
 
@@ -117,6 +131,11 @@
   加载不了的死壳)。压缩用 `ditto -c -k --norsrc --noextattr`:`--sequesterRsrc` 会把资源叉/扩展属性
   写进 `__MACOSX/`,那些条目权限恒为 `-rw-r--r--` 且同样匹配可执行位断言的筛选,会让打包**必然假失败**,
   也会给用户塞一堆垃圾。`--version` 传空串直接 die(不回落到 CMake 版本),避免产出版本号对不上的资产。
+- `scripts/package.ps1` 的 `package-summary.md` 由整文件覆盖改为**按段追加 + 同名 `zipFileName` 段去重**,
+  与 `scripts/package-macos.sh` 同口径(按记录首行 `version:` 切段、只删整行逐字相等的旧段、首条记录之前的
+  内容原样透传);两个「打包唯一真源」在 summary 行为上不再分叉(issue #23)。
+- `scripts/package-macos.sh` 从 `CMakeLists.txt` 回落读版本号时改为带地址的单条 sed(`/re/{s//\1/p;q;}`,
+  GNU / BSD 两端都通),不再 `| head -n 1`(issue #23)。
 - **注入面加固覆盖到 `release.yml`**:`gate` 的 tag 名、两个平台 Package 步骤的版本号、`publish` 的
   job summary 全部改经 step `env` 间接读入。tag 允许 `$`、反引号、`"`,直插 bash 双引号串会真做命令替换,
   直插 pwsh 可闭合引号 —— 与 `ci.yml` 对 `github.ref_name` 的加固同口径,不能只加固一处。
