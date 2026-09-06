@@ -150,13 +150,17 @@ $releaseDate = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
 #   - 首条记录之前的内容(将来若加表头)原样透传;空行只是分隔符,重排时统一重新生成;
 #   - 布局:每个保留的旧段后补一个空行,末尾追加本次的新段 —— 段间恰一个空行、文件末尾恰一个换行,
 #     两边字节布局相同。
+#   - 行尾一律 LF、UTF-8 无 BOM:Set-Content 在 Windows 写的是 CRLF,mac 侧 awk 的 `$0 == z` 是逐字相等,
+#     读到带 CR 尾的行会失配、同名段删不掉;两边共用一个 OutDir 时双向都得成立,故这里写 LF、读旧文件时
+#     把 CRLF 归一成 LF(mac 侧 awk 同样先 sub(/\r$/, "") 再比)。
 $zipLine = "zipFileName: $zipFileName"
 $kept    = New-Object System.Collections.Generic.List[string]
 if (Test-Path -LiteralPath $summaryPath) {
     $rec = New-Object System.Collections.Generic.List[string]
     $started = $false
     $drop    = $false
-    foreach ($ln in @(Get-Content -LiteralPath $summaryPath)) {
+    $oldText = [string](Get-Content -LiteralPath $summaryPath -Raw)
+    foreach ($ln in @(($oldText -replace "`r`n", "`n") -split "`n")) {
         if ($ln.Trim().Length -eq 0) { continue }
         if ($ln -cmatch '^version:\s') {
             if ($started -and -not $drop) { $kept.AddRange($rec); $kept.Add('') }
@@ -176,9 +180,10 @@ $kept.AddRange([string[]]@(
     "releaseDate: $releaseDate"
 ))
 # 先写同目录 .tmp 再 Move-Item -Force 覆盖,与 mac 侧 tmp + mv 同口径:上面已把旧 summary 读进内存,
-# 直接 Set-Content 原路径是「先截断再写」,中途被打断会把别的平台 / 历史版本的段落一起丢掉。
+# 直接写原路径是「先截断再写」,中途被打断会把别的平台 / 历史版本的段落一起丢掉。
+# 不用 Set-Content:它在 Windows 写 CRLF,且 Windows PowerShell 5.1 的 -Encoding UTF8 还会带 BOM。
 $summaryTmp = $summaryPath + '.tmp'
-Set-Content -LiteralPath $summaryTmp -Value $kept.ToArray() -Encoding UTF8
+[System.IO.File]::WriteAllText($summaryTmp, (($kept -join "`n") + "`n"), [System.Text.UTF8Encoding]::new($false))
 Move-Item -LiteralPath $summaryTmp -Destination $summaryPath -Force
 
 Write-Host "Packaged: $zipPath ($sizeBytes bytes)"

@@ -280,9 +280,12 @@ RELEASE_DATE="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 # 5 行)段间可能没有空行。若用 awk 的段落模式(RS=''),整个文件会被当成**一条**记录,只要里面含本次的
 # zipFileName 就连 Windows 的段落、历史版本的段落一起删光(实测:文件被清空)。
 # 同时匹配改为 `zipFileName:` 整行逐字相等,不再用子串包含。首条记录之前的内容(将来若加表头)原样保留。
+# 行尾先把 CR 剥掉再比:package.ps1 现在一律写 LF,但旧文件(Set-Content 时代)是 CRLF,`$0 == z` 逐字
+# 相等读到 CR 尾会失配、同名段删不掉;两边共用一个 OutDir 时双向都得成立。
 if [ -f "$SUMMARY_PATH" ]; then
     awk -v z="zipFileName: $ZIP_NAME" '
         function flush() { if (started && !drop) { print rec; print "" } }   # 保留段 + 段后一个空行
+        { sub(/\r$/, "") }                                  # CRLF 归一成 LF,再做下面的一切比对
         NF == 0 { next }                                    # 空行只是分隔符,重排时统一重新生成
         /^version:[[:space:]]/ {                            # 记录首行:先结算上一条
             flush(); rec = ""; drop = 0; started = 1
