@@ -78,8 +78,11 @@ if [ "$VERSION_GIVEN" -eq 1 ] && [ -z "$VERSION" ]; then
     die "--version 传入空串:调用方未算出版本号(不回落到 CMakeLists.txt,避免产出版本对不上的资产)"
 fi
 if [ -z "$VERSION" ]; then
-    VERSION="$(sed -nE 's/.*project[[:space:]]*\([[:space:]]*[^[:space:]]+[[:space:]]+VERSION[[:space:]]+([0-9]+\.[0-9]+\.[0-9]+).*/\1/p' \
-        "$REPO_ROOT/CMakeLists.txt" | head -n 1)"
+    # 单条 sed 取首个命中即退出(`/re/{s//\1/p;q;}`:地址命中后 s 复用同一 RE),不再 `| head -n 1`:
+    # pipefail 下 head 关管道会给 sed 送 SIGPIPE(141),与本脚本第 4 步弃用 `find | head` 同一理由。
+    # 不用 GNU 专有的 `0,/re/` 地址;`q;}` 里的分号是 BSD sed(macOS)的硬要求,两端都通。
+    version_re='.*project[[:space:]]*\([[:space:]]*[^[:space:]]+[[:space:]]+VERSION[[:space:]]+([0-9]+\.[0-9]+\.[0-9]+).*'
+    VERSION="$(sed -nE '/'"$version_re"'/{s//\1/p;q;}' "$REPO_ROOT/CMakeLists.txt")"
     [ -n "$VERSION" ] || die "cannot parse VERSION from CMakeLists.txt"
 fi
 VERSION="${VERSION#v}"
