@@ -128,10 +128,23 @@ jobs:
           foreach ($f in 'SynchainBridge-VST3-v0.0.0-ci-win64.zip', 'SynchainBridge-VST3-v0.0.0-ci-win64.zip.sha256', 'package-summary.md') {
             if (-not (Test-Path (Join-Path $out $f))) { Write-Error "package smoke did not produce $f"; exit 1 }
           }
+          # .sha256 的内容形态:恰好一行 `<64 位小写 hex><两个空格><zip 基名>`(sha256sum -c 认的正是这个格式,
+          # publish 跨 job 复验也靠它),且 hash 与 Get-FileHash 现算的一致 —— 只断言文件存在的话,写错分隔符 /
+          # 大写 hex / 带路径前缀都要到打 tag 那一刻才会在 publish 炸出来(与 mac 侧同构,issue #23)。
+          foreach ($v in '0.0.0-ci', '0.0.0-ci2') {
+            $zip  = "SynchainBridge-VST3-v$v-win64.zip"
+            $line = @(Get-Content (Join-Path $out "$zip.sha256"))
+            if ($line.Count -ne 1 -or $line[0] -cnotmatch "^[0-9a-f]{64}  $([regex]::Escape($zip))$") {
+              Write-Error "$zip.sha256 is not exactly one '<64 hex>  $zip' line: $($line -join ' | ')"; exit 1
+            }
+            $want = (Get-FileHash -LiteralPath (Join-Path $out $zip) -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($line[0] -cne "$want  $zip") { Write-Error "$zip.sha256 says '$($line[0])' but the zip hashes to $want"; exit 1 }
+          }
           $summary = Get-Content (Join-Path $out 'package-summary.md') -Raw
           foreach ($k in 'version', 'zipFileName', 'sizeBytes', 'sha256', 'releaseDate') {
-            # `${k}:` 而不是 `$k:`——pwsh 会把 `$k:` 解析成作用域限定符,直接 ParserError
-            if ($summary -notmatch "(?m)^${k}:") { Write-Error "package-summary.md is missing the '${k}:' line"; exit 1 }
+            # `${k}:` 而不是 `$k:`——pwsh 会把 `$k:` 解析成作用域限定符,直接 ParserError。
+            # -cnotmatch 大小写敏感:pwsh 默认不敏感,`Version:` / `SHA256:` 这类漂移会静默走通。
+            if ($summary -cnotmatch "(?m)^${k}:") { Write-Error "package-summary.md is missing the '${k}:' line"; exit 1 }
           }
           # 段落断言逐行精确比对(-ceq,大小写敏感),不用子串包含:0.0.0-ci 的行不能被 0.0.0-ci2 的行撞过。
           $lines = @(Get-Content (Join-Path $out 'package-summary.md'))
@@ -425,6 +438,20 @@ jobs:
           bash scripts/package-macos.sh --version 0.0.0-ci2 --build-dir build --out-dir "$smoke"
           bash scripts/package-macos.sh --version 0.0.0-ci  --build-dir build --out-dir "$smoke"
           ls -l "$smoke"
+          # .sha256 的内容形态:恰好一行 `<64 位小写 hex><两个空格><zip 基名>`(sha256sum -c 认的正是这个格式,
+          # publish 跨 job 复验也靠它),且 hash 与 shasum -a 256 现算的一致 —— 只看退出码的话,写错分隔符 /
+          # 大写 hex / 带路径前缀都要到打 tag 那一刻才会在 publish 炸出来(与 windows 侧同构,issue #23)。
+          for v in 0.0.0-ci 0.0.0-ci2; do
+            zip="SynchainBridge-VST3-AU-v$v-macos-arm64.zip"
+            [ "$(wc -l < "$smoke/$zip.sha256" | tr -d '[:space:]')" = "1" ] \
+              || { echo "::error::$zip.sha256 must be exactly one line"; exit 1; }
+            line="$(cat "$smoke/$zip.sha256")"
+            printf '%s\n' "$line" | grep -qE '^[0-9a-f]{64}  [^[:space:]]+$' \
+              || { echo "::error::$zip.sha256 is not '<64 hex>  <zip>' shaped: '$line'"; exit 1; }
+            want="$(shasum -a 256 "$smoke/$zip" | awk '{ print $1 }')"
+            [ "$line" = "$want  $zip" ] \
+              || { echo "::error::$zip.sha256 says '$line' but expected '$want  $zip'"; exit 1; }
+          done
           n=$(grep -c '^zipFileName:' "$smoke/package-summary.md" || true)
           if [ "$n" != "2" ]; then echo "::error::package-summary.md should hold exactly 2 segments (ci + ci2), got $n"; exit 1; fi
           grep -qx 'zipFileName: SynchainBridge-VST3-AU-v0.0.0-ci2-macos-arm64.zip' "$smoke/package-summary.md" \
