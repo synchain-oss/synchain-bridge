@@ -266,12 +266,14 @@ target_include_directories(SynchainBridgeVST PRIVATE "${CMAKE_CURRENT_BINARY_DIR
 #   origin_allowlist_selftest — src/OriginAllowlist.h (normalisation, injected-pattern
 #                               usability, pattern matching);
 #   pcm_frame_selftest        — src/PcmFrame.h (12-byte PCM frame header, golden bytes per
-#                               BRIDGE_CONTRACT.md §二 1; both send paths in
-#                               src/VstBridgeServer.cpp encode through it).
+#                               BRIDGE_CONTRACT.md §二 1; the legacy synchronous path and
+#                               the sender-thread path in src/VstBridgeServer.cpp both
+#                               encode through it).
 # Standard library only: no JUCE, no ixwebsocket, no link against the plugin target — so
 # they build and run in seconds. OFF by default; the local gate script (scripts/gates.ps1)
-# configures with -DBRIDGE_BUILD_SELFTESTS=ON and runs both (gate 5b); the compliance
-# workflow compiles the same sources with plain g++ on ubuntu.
+# and both ci.yml build jobs configure with -DBRIDGE_BUILD_SELFTESTS=ON and run both, so
+# the /W4 and clang -Wall -Wextra -Wpedantic zero-warning gates cover the selftests too;
+# the compliance workflow compiles the same sources with plain g++ on ubuntu.
 option(BRIDGE_BUILD_SELFTESTS "Build pure-logic selftests (origin allowlist + PCM frame)" OFF)
 if(BRIDGE_BUILD_SELFTESTS)
   foreach(_selftest IN ITEMS origin_allowlist_selftest pcm_frame_selftest)

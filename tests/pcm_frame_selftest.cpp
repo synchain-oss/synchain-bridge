@@ -10,8 +10,12 @@
 // 断言口径:golden 字节写死为字面量而不是用 readHeader 反推——反解函数与编码函数若一起写错
 // (例如同时把字段顺序调换)roundtrip 仍会绿,只有字面量能抓到。改任一字段顺序 / 端序 / 偏移即红。
 //
-// 覆盖不到的一层:VstBridgeServer 两条发送路径是否真的调用了 writeHeader(而非又手写一份),
-// 那部分靠 code review;payload 的实际 memcpy 仍在 VstBridgeServer.cpp。
+// 覆盖不到的一层:VstBridgeServer 的两条组帧路径(同步遗留路径 sendPcmPacket 与后台发送线程路径
+// buildPcmFrame)是否真的调用了 writeHeader(而非又手写一份)—— 本文件链不了 JUCE,改由
+// scripts/gates.ps1 的 gate 3f 与 compliance workflow 的同构 grep 步骤做文本断言(必须 #include
+// "PcmFrame.h",不得再出现 writeU32( 手写 lambda 或字面量 headerSize = 12);payload 的实际 memcpy
+// 仍在 VstBridgeServer.cpp。JS 侧 web-preview/pcm-frame.mjs 由 web-preview/pcm-frame.test.mjs 用同一组
+// golden 字节钉死。
 
 #include "PcmFrame.h"
 #include <cstdint>
@@ -178,7 +182,7 @@ int main()
     static_assert(frameSize(512, 2) == 4108u, "frameSize 必须是 constexpr");
     static_assert(kHeaderSize == 12u, "kHeaderSize 必须为 12");
 
-    // ---- 组一整帧:头后紧跟 payload,偏移 12 起,与 VstBridgeServer 两条路径同法 ----
+    // ---- 组一整帧:头后紧跟 payload,偏移 12 起,与 VstBridgeServer 两条组帧路径同法 ----
     {
         const std::size_t numSamples = 2, channels = 2;
         const float pcm[numSamples * channels] = {1.0f, -1.0f, 0.5f, 0.0f};

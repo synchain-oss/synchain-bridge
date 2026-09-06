@@ -60,5 +60,10 @@ PORT=9430 npm run mock
 
 - `mock-server.mjs` — mock bridge #2 server (pure ESM, only dependency: `ws`).
 - `pcm-frame.mjs` — PCM binary frame builder (12-byte header `u32 sampleRate | u32 channels |
-  u32 numSamples` + `float32` interleaved), the single source of truth for the frame layout used here.
-- `package.json` — `mock` / `serve` scripts; only runtime dependency is `ws`.
+  u32 numSamples` + `float32` interleaved) used by the mock. The C++ side's single implementation
+  is `src/PcmFrame.h`; both are pinned to the **same golden bytes** (`tests/pcm_frame_selftest.cpp`
+  and `pcm-frame.test.mjs`), so a layout change turns both red.
+- `pcm-frame.test.mjs` — golden-byte test for `pcm-frame.mjs` (`node:test` + `node:assert`, zero
+  dependencies, no `npm install` needed): `npm test` or `node --test pcm-frame.test.mjs`. Also run
+  by the `compliance` workflow.
+- `package.json` — `mock` / `serve` / `test` scripts; only runtime dependency is `ws`.

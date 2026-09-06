@@ -10,7 +10,7 @@
 |---|---|---|
 | 桥 #1：插件内嵌 WebView UI | 本仓 `web/` | 编译进插件二进制，跑在插件进程里，走 JUCE 原生集成 |
 | 桥 #2：浏览器侧客户端 | Synchain 网页应用（闭源） | WebSocket 客户端 + 「DAW 音频桥」面板 + LiveKit 发布，不在本仓 |
-| 本地开发 / 演示替代品 | 本仓 [web-preview/](../web-preview/README.md) | `mock-server.mjs`（mock 桥 #2）+ `pcm-frame.mjs`（PCM 帧构造真源）+ http 托管，与真桥同契约 |
+| 本地开发 / 演示替代品 | 本仓 [web-preview/](../web-preview/README.md) | `mock-server.mjs`（mock 桥 #2）+ `pcm-frame.mjs`（mock 侧帧构造，golden 与 C++ 侧 `src/PcmFrame.h` 同源，见 `tests/pcm_frame_selftest.cpp` 与 `web-preview/pcm-frame.test.mjs`）+ http 托管，与真桥同契约 |
 
 ## 2. 与插件的耦合点
 

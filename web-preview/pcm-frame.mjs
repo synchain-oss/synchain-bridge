@@ -3,13 +3,15 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 // =============================================================================
-// Synchain Bridge — PCM 帧构造真源(桥 #2 二进制帧,严格按 BRIDGE_CONTRACT.md §二 1)
+// Synchain Bridge — mock 侧 PCM 帧构造(桥 #2 二进制帧,严格按 BRIDGE_CONTRACT.md §二 1)
 // =============================================================================
 // 帧布局(小端):
 //   12 字节头 = u32 sampleRate | u32 channels | u32 numSamples
 //   紧接 numSamples * channels 个 float32 interleaved
 //   总字节 = 12 + numSamples * channels * 4
 // 本模块只依赖 Node 内建 Buffer,纯 ESM,无第三方依赖。
+// 布局的 C++ 侧唯一实现是 src/PcmFrame.h;本文件是 JS 侧(仅供 web-preview mock)的同布局实现,
+// 由 pcm-frame.test.mjs 用与 tests/pcm_frame_selftest.cpp **同一组 golden 字节**钉死。
 // =============================================================================
 
 export const HEADER_BYTES = 12;

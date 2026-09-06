@@ -53,11 +53,19 @@ jobs:
       - name: PCM frame selftest
         # PCM 帧头 12 字节布局(BRIDGE_CONTRACT.md §二 第 1 条)的 golden 字节断言
         # (tests/pcm_frame_selftest.cpp):字段顺序 / 小端 / 偏移 / 总长逐字节钉死,改任一项即红。
-        # src/PcmFrame.h 是两条发送路径共用的唯一编码实现,零第三方依赖(纯 C++17)。
-        # 与本地 gate 5b 同源同用例,编译参数与上一步逐字同构。
+        # src/PcmFrame.h 是同步遗留路径与后台发送线程路径共用的 C++ 侧唯一编码实现,零第三方依赖
+        # (纯 C++17)。与本地 gate 5b 同源同用例,编译参数与上一步逐字同构。
         run: |
           g++ -std=c++17 -I src -o /tmp/pcm_frame_selftest tests/pcm_frame_selftest.cpp
           /tmp/pcm_frame_selftest
+      - name: PCM frame selftest (web-preview mock, node:test)
+        # JS 侧同布局实现 web-preview/pcm-frame.mjs 由 web-preview/pcm-frame.test.mjs 用与上一步
+        # **同一组 golden 字节**钉死(node:test + node:assert,零依赖,不 npm install:测试只 import
+        # pcm-frame.mjs,它只用 Node 内建 Buffer;mock-server.mjs 依赖的 ws 不在本步骤加载)。
+        # 文件路径显式给出而不是传目录:目录参数在 node 20 与 ≥21 的 --test 下语义不同(路径 vs glob),
+        # runner 镜像的 node 版本轮换时不应影响本步骤。ubuntu 镜像自带 node ≥ 20,与 web-preview/README
+        # 的「Node ≥ 18」要求兼容。
+        run: node --test web-preview/pcm-frame.test.mjs
       - name: REUSE lint
         # 与 §5.1 gate 3c 逐字同参
         run: pipx run reuse lint

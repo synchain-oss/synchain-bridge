@@ -316,8 +316,9 @@ void VstBridgeServer::sendPcmPacket(const float* interleaved, int numSamples, in
     if (!mServer)
         return;
 
-    // 帧头 12 字节(3 x u32 LE)+ float32 interleaved payload：布局由 src/PcmFrame.h 唯一定义，
-    // 与后台发送线程的 buildPcmFrame() 同源，golden 字节见 tests/pcm_frame_selftest.cpp。
+    // 同步遗留路径(无调用方,见 .h 声明处说明)。帧头 12 字节(3 x u32 LE)+ float32 interleaved
+    // payload：布局由 src/PcmFrame.h 唯一定义，与后台发送线程的 buildPcmFrame() 同源，
+    // golden 字节见 tests/pcm_frame_selftest.cpp。
     const size_t dataSize = pcm::payloadSize(static_cast<size_t>(numSamples), static_cast<size_t>(channels));
     std::string frame(pcm::kHeaderSize + dataSize, '\0');
 

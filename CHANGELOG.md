@@ -58,10 +58,14 @@
 ### 内部工程(无契约变更)
 
 - **PCM 帧头编码收敛到一处并加 golden 测试**(issue #23 第二批第 1 条):`src/VstBridgeServer.cpp` 里
-  同步路径 `sendPcmPacket()` 与后台发送线程 `buildPcmFrame()` 此前各自手写一份 12 字节帧头
+  同步遗留路径 `sendPcmPacket()`(无调用方,issue #168 后实时路径改走 `pushPcm`;保留仅为 API 兼容,
+  声明处已加注勿在音频线程调用)与后台发送线程路径 `buildPcmFrame()` 此前各自手写一份 12 字节帧头
   (`u32 LE sampleRate | u32 LE channels | u32 LE numSamples`),彼此无机器约束。现抽成新头文件
   `src/PcmFrame.h`(`synchain::pcm`,纯标准库,零 JUCE / ixwebsocket 依赖:`kHeaderSize` / `writeHeader` /
-  `readHeader` / `payloadSize` / `frameSize`),两条路径都改为调用它 —— **wire 逐字节相同,行为零变化**。
+  `readHeader` / `payloadSize` / `frameSize`,**C++ 侧唯一实现**),两条路径都改为调用它 —— **wire 逐字节相同,
+  行为零变化**。JS 侧(本地 mock)的 `web-preview/pcm-frame.mjs` 是同布局的另一份实现,新增
+  `web-preview/pcm-frame.test.mjs`(`node:test` + `node:assert`,零依赖,`npm test` / `node --test`)用
+  **同一组 golden 字节**钉死它,`compliance` workflow 加一步 `node --test`(ubuntu 自带 node,不装依赖)。
   新增 `tests/pcm_frame_selftest.cpp`:固定输入 `(48000, 2, 512)` 的帧头逐字节钉死为
   `80 BB 00 00 | 02 00 00 00 | 00 02 00 00`,另覆盖 `0` / `0xFFFFFFFF` 边界、端序、字段顺序、
   `12 + numSamples*channels*4` 总长与 payload 偏移 —— 改任一字段顺序 / 端序 / 偏移即红。

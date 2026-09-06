@@ -4,16 +4,20 @@
 
 #pragma once
 
-// 桥 #2 二进制 PCM 帧的**帧头编码**——BRIDGE_CONTRACT.md §二 第 1 条的唯一实现：
+// 桥 #2 二进制 PCM 帧的**帧头编码**——BRIDGE_CONTRACT.md §二 第 1 条的 C++ 侧唯一实现：
 //   12 字节头 = u32 sampleRate | u32 channels | u32 numSamples(全部小端),
 //   紧跟 numSamples*channels 个 float32 interleaved;总字节 = 12 + numSamples*channels*4。
 // 字段顺序 / 端序 / 偏移不可变(契约冻结)。
+// JS 侧(web-preview mock)另有一份同布局实现 web-preview/pcm-frame.mjs,两者用**同一组 golden 字节**
+// 分别钉死(tests/pcm_frame_selftest.cpp ↔ web-preview/pcm-frame.test.mjs),改布局时两处一起红。
 //
 // 只依赖标准库(无 JUCE / ixwebsocket / 任何第三方),故能被 tests/pcm_frame_selftest.cpp
 // 单独编译成一个不链接任何依赖的自测可执行文件,用 golden 字节逐字节钉死 wire 布局
-// (见 CMakeLists.txt 的 BRIDGE_BUILD_SELFTESTS 选项与 scripts/gates.ps1 的 gate 5b)。
-// src/VstBridgeServer.cpp 的两条发送路径(同步 sendPcmPacket 与后台发送线程 buildPcmFrame)
-// 都必须经本头组帧,不得再各自手写偏移。
+// (见 CMakeLists.txt 的 BRIDGE_BUILD_SELFTESTS 选项、scripts/gates.ps1 的 gate 5b 与 ci.yml 的
+// Run selftests 步骤)。
+// src/VstBridgeServer.cpp 的同步遗留路径 sendPcmPacket(无调用方,仅为 API 兼容保留)与后台发送
+// 线程路径 buildPcmFrame(实时路径,processBlock → pushPcm → ring → 这里)都必须经本头组帧,
+// 不得再各自手写偏移 —— scripts/gates.ps1 的 gate 3f 与 compliance workflow 以文本断言守住这一点。
 //
 // 样本区(payload)按宿主本机 float 字节序 memcpy,与既有行为一致;插件仅面向 x64 / arm64
 // 这两个小端平台,故 payload 与帧头同为小端。本头不负责拷 payload,只算偏移与长度。
