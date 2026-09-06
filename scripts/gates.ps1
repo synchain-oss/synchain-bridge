@@ -278,30 +278,43 @@ function Test-Version {
         # 宽正则会把它一起比进来。JSON 走 ConvertFrom-Json 取指定字段,.mjs 走常量名锚定的正则。
         $bad = @()
         $seen = @()
-        function Get-Mirror([string]$rel, [scriptblock]$reader) {
+        function Get-Mirror([string]$rel, [scriptblock]$reader, [int]$want) {
             $path = Join-Path $RepoRoot $rel
             if (-not (Test-Path $path)) { return @{ Err = ($rel + '(不存在)') } }
-            $text = Get-Content -LiteralPath $path -Raw
-            $vals = & $reader $text
-            $vals = @($vals | Where-Object { $_ })
-            if ($vals.Count -eq 0) { return @{ Err = ($rel + '(未找到版本号)') } }
+            # reader 在文件结构变化时会直接抛(package-lock.json 升版把 packages[''] 挪走、JSON 不合法……),
+            # 本脚本 $ErrorActionPreference = 'Stop',不兜住的话整个 gates 会在这里中断、后面的 gate 一个不跑、
+            # 结果表也打不出。兜成本 gate 的 FAIL 并带上可读原因(issue #23)。
+            try {
+                $text = Get-Content -LiteralPath $path -Raw
+                $vals = @(& $reader $text | Where-Object { $_ })
+            } catch {
+                return @{ Err = ($rel + '(解析失败: ' + $_.Exception.Message + ')') }
+            }
+            # try/catch 只兜得住「抛」的一半:结构变化也可能是**不抛而返回 $null**(键还在、version 字段没了,
+            # 索引 $null 在 PowerShell 里静默得 $null),被上面的 Where-Object 滤掉后就静默降级成只比剩下的
+            # 几处。故 reader 返回后再断言取值个数恰等于期望个数,少了同样记 FAIL(PR #29 review)。
+            if ($vals.Count -ne $want) {
+                return @{ Err = ($rel + '(结构变化:期望 ' + $want + ' 个版本字段,实际 ' + $vals.Count + ' 个)') }
+            }
             return @{ Vals = $vals }
         }
+        # 每处镜像:Read = 定点读取的 scriptblock;Want = 该文件里应取到的版本字段个数(lockfile 是根 version +
+        # packages[''].version 两处,其余各一处)。
         $readers = [ordered]@{
-            'web-preview/mock-server.mjs'   = { param($t) if ($t -match 'PLUGIN_VERSION\s*=\s*"([^"]+)"') { $Matches[1] } }
-            'web-preview/package.json'      = { param($t) ($t | ConvertFrom-Json).version }
-            'web-preview/package-lock.json' = { param($t)
+            'web-preview/mock-server.mjs'   = @{ Want = 1; Read = { param($t) if ($t -match 'PLUGIN_VERSION\s*=\s*"([^"]+)"') { $Matches[1] } } }
+            'web-preview/package.json'      = @{ Want = 1; Read = { param($t) ($t | ConvertFrom-Json).version } }
+            'web-preview/package-lock.json' = @{ Want = 2; Read = { param($t)
                 # lockfile v3 的根包挂在 packages 的**空字符串键**下,ConvertFrom-Json 不带
                 # -AsHashtable 时会直接报错(PSCustomObject 不支持空属性名),故这里必须用哈希表。
                 $j = $t | ConvertFrom-Json -AsHashtable
                 @($j['version'], $j['packages']['']['version'])
-            }
+            } }
             # §三是一张 markdown 表:锚定行首竖线 + 单元格恰为 VERSION,避开同表的 BRIDGE_CONTRACT_VERSION 行
             # (那是协议版本,独立于插件版本,不参与本 gate)。
-            'BRIDGE_CONTRACT.md'            = { param($t) if ($t -match '(?m)^\|\s*VERSION\s*\|\s*`([0-9]+\.[0-9]+\.[0-9]+)`') { $Matches[1] } }
+            'BRIDGE_CONTRACT.md'            = @{ Want = 1; Read = { param($t) if ($t -match '(?m)^\|\s*VERSION\s*\|\s*`([0-9]+\.[0-9]+\.[0-9]+)`') { $Matches[1] } } }
         }
         foreach ($rel in $readers.Keys) {
-            $r = Get-Mirror $rel $readers[$rel]
+            $r = Get-Mirror $rel $readers[$rel].Read $readers[$rel].Want
             if ($r.Err) { $ok = $false; $bad += $r.Err; continue }
             foreach ($v in $r.Vals) {
                 $seen += ($rel + '=' + $v)

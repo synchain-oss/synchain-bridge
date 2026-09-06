@@ -78,12 +78,16 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}   # fork PR 下也可用(只读足够)
+          # 仓名 / PR 号经 step env 间接读入,不直插 run 脚本(与 release.yml 对 tag 名的纪律一致):
+          # 这两个值当前不受外部控制,但「上下文值一律不直插脚本」是整仓统一口径,不为个别值开例外。
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           set -euo pipefail
           # 端点只调**一次**并落盘,计数与筛选读同一份快照:两次调用之间若有人 push,total 与 dco-bad.txt
           # 会来自不同的 commit 列表;且任一次失败都必须让 step 失败(fail-closed),不能各自静默。
           # --paginate 不带 --jq 时每页输出一个 JSON 数组首尾相接,jq -s add 合成一个数组。
-          gh api --paginate "/repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/commits" > "$RUNNER_TEMP/commits.raw.json"
+          gh api --paginate "/repos/$REPO/pulls/$PR_NUMBER/commits" > "$RUNNER_TEMP/commits.raw.json"
           jq -s 'add' "$RUNNER_TEMP/commits.raw.json" > "$RUNNER_TEMP/commits.json"
           # 响应体必须是数组:错误体 {"message":…} 经 `length` 得到的是键数、也是合法整数,下面两道计数
           # 守卫都会放过,只能靠更下游的 .parents 报错偶然 fail —— 在这里显式断言类型(SCVB 线 SL-317)。
@@ -136,9 +140,11 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}                        # 同 DCO 步:上下文值经 env 间接读入,不直插脚本
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           set -euo pipefail
-          gh api --paginate "/repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" > "$RUNNER_TEMP/files.raw.json"
+          gh api --paginate "/repos/$REPO/pulls/$PR_NUMBER/files" > "$RUNNER_TEMP/files.raw.json"
           jq -s 'add' "$RUNNER_TEMP/files.raw.json" > "$RUNNER_TEMP/files.json"
           # 响应体必须是数组(同 DCO 步,SCVB 线 SL-317):错误体是对象,length 得键数照样是整数。
           if ! jq -e 'type == "array"' "$RUNNER_TEMP/files.json" > /dev/null; then
@@ -182,7 +188,7 @@ jobs:
             # 与 contract-guard.yml 的分级对齐(CLAUDE.md §5)。impact 从 PR body 读:同一套 fail-closed
             # (端点失败 = step 失败,不吞成 unset);body 里可能同时出现多个 contract-impact 字面串(例如把
             # 上轮 review 的「contract-impact: none 属实」粘进 body),故收集全部匹配后取**最严**值,不依赖行序。
-            gh api "/repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}" --jq '.body // ""' > "$RUNNER_TEMP/pr-body.txt"
+            gh api "/repos/$REPO/pulls/$PR_NUMBER" --jq '.body // ""' > "$RUNNER_TEMP/pr-body.txt"
             impacts=$(grep -oE 'contract-impact:[[:space:]]*(none|minor|major)\b' "$RUNNER_TEMP/pr-body.txt" | grep -oE '(none|minor|major)$' | sort -u || true)
             impact=unset
             for level in none minor major; do

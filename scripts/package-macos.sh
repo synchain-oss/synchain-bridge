@@ -78,8 +78,15 @@ if [ "$VERSION_GIVEN" -eq 1 ] && [ -z "$VERSION" ]; then
     die "--version 传入空串:调用方未算出版本号(不回落到 CMakeLists.txt,避免产出版本对不上的资产)"
 fi
 if [ -z "$VERSION" ]; then
-    VERSION="$(sed -nE 's/.*project[[:space:]]*\([[:space:]]*[^[:space:]]+[[:space:]]+VERSION[[:space:]]+([0-9]+\.[0-9]+\.[0-9]+).*/\1/p' \
-        "$REPO_ROOT/CMakeLists.txt" | head -n 1)"
+    # 单条 sed 取首个命中即退出(`/re/{s//\1/p;q;}`:地址命中后 s 复用同一 RE),不再 `| head -n 1`:
+    # pipefail 下 head 关管道会给 sed 送 SIGPIPE(141),与本脚本第 4 步弃用 `find | head` 同一理由。
+    # 不用 GNU 专有的 `0,/re/` 地址;`q;}` 里的分号是 BSD sed(macOS)的硬要求,两端都通。
+    # 行首锚而不是 `.*` 前缀:POSIX ERE 是 leftmost-longest,`.*project` 会吃到该行**最后一个** project(——行尾注释里留一行
+    # 旧 `# project(... VERSION 1.3.0)` 就会取到旧版本;锚在行首后 s//\1/ 仍覆盖整行,行为不变(与 gates.ps1 剔行尾注释同效)。
+    version_re='^[[:space:]]*project[[:space:]]*\([[:space:]]*[^[:space:]]+[[:space:]]+VERSION[[:space:]]+([0-9]+\.[0-9]+\.[0-9]+).*'
+    # 先丢注释行(`d` 在 -n 下即丢弃并进下一轮,GNU/BSD 均通):注释里留一行旧 `project(... VERSION x.y.z)` 否则会被先命中,
+    # 本地手工发版(不传 --version 的唯一场景)会产出版本号对不上的资产 —— 与 gates.ps1 版本 gate 剔注释同口径。
+    VERSION="$(sed -nE '/^[[:space:]]*#/d; /'"$version_re"'/{s//\1/p;q;}' "$REPO_ROOT/CMakeLists.txt")"
     [ -n "$VERSION" ] || die "cannot parse VERSION from CMakeLists.txt"
 fi
 VERSION="${VERSION#v}"
@@ -271,21 +278,26 @@ RELEASE_DATE="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 
 # summary 以空行分段追加:同一个 OutDir 下可能已有别的平台(package.ps1)或本脚本上一次运行写的段落。
 # 同名 zip 的旧段落先删掉,避免重复跑脚本时越堆越长 —— 但**只删同名的那一条**。
+# 与 package.ps1 第 9 步语义与布局一致:重排后「段间恰一个空行、文件末尾恰一个换行」,两边字节布局相同。
 #
-# 切段一律按记录首行 `version:` 切,**不能按空行切**:package.ps1 用 Set-Content 写的是紧贴的 5 行、
-# 段间没有空行,本脚本首次追加时也不会补空行。若用 awk 的段落模式(RS=''),整个文件会被当成**一条**
-# 记录,只要里面含本次的 zipFileName 就连 Windows 的段落、历史版本的段落一起删光(实测:文件被清空)。
+# 切段一律按记录首行 `version:` 切,**不能按空行切**:旧文件(整文件覆盖时代的 package.ps1 写的是紧贴的
+# 5 行)段间可能没有空行。若用 awk 的段落模式(RS=''),整个文件会被当成**一条**记录,只要里面含本次的
+# zipFileName 就连 Windows 的段落、历史版本的段落一起删光(实测:文件被清空)。
 # 同时匹配改为 `zipFileName:` 整行逐字相等,不再用子串包含。首条记录之前的内容(将来若加表头)原样保留。
+# 行尾先把 CR 剥掉再比:package.ps1 现在一律写 LF,但旧文件(Set-Content 时代)是 CRLF,`$0 == z` 逐字
+# 相等读到 CR 尾会失配、同名段删不掉;两边共用一个 OutDir 时双向都得成立。
 if [ -f "$SUMMARY_PATH" ]; then
     awk -v z="zipFileName: $ZIP_NAME" '
+        function flush() { if (started && !drop) { print rec; print "" } }   # 保留段 + 段后一个空行
+        NR == 1 { sub(/^\357\273\277/, "") }                 # 旧 powershell.exe 5.1 写出的 UTF-8 BOM 只可能在首行
+        { sub(/\r$/, "") }                                  # CRLF 归一成 LF,再做下面的一切比对
         NF == 0 { next }                                    # 空行只是分隔符,重排时统一重新生成
         /^version:[[:space:]]/ {                            # 记录首行:先结算上一条
-            if (started && !drop) printf "%s\n", rec
-            rec = ""; drop = 0; started = 1
+            flush(); rec = ""; drop = 0; started = 1
         }
         !started { print; next }                            # 首条记录之前的内容原样透传
-        { rec = rec $0 "\n"; if ($0 == z) drop = 1 }
-        END { if (started && !drop) printf "%s\n", rec }
+        { rec = rec (rec == "" ? "" : "\n") $0; if ($0 == z) drop = 1 }
+        END { flush() }
     ' "$SUMMARY_PATH" > "$SUMMARY_PATH.tmp"
     mv "$SUMMARY_PATH.tmp" "$SUMMARY_PATH"
 fi
