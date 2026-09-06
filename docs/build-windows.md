@@ -12,7 +12,7 @@
 | Visual Studio 2022 | 「使用 C++ 的桌面开发」（MSVC v143 + Windows SDK） | VS2019 BuildTools（v142）亦可 |
 | CMake | ≥ 3.22 | 见 `CMakeLists.txt` 的 `cmake_minimum_required` |
 | JUCE | 8.0.8（版本真源 `.juce-version`） | `git clone --branch 8.0.8` |
-| vcpkg | `ixwebsocket:x64-windows-static` | 必须用 `x64-windows-static` triplet，与静态 CRT 对齐 |
+| vcpkg | 已 bootstrap 的 vcpkg 克隆（**manifest 模式**，无需手工 `vcpkg install`） | ixwebsocket 由仓库根 `vcpkg.json` 钉死（`builtin-baseline` 40 位 commit + `overrides` 12.0.1），CMake 配置期经 vcpkg toolchain 自动装进 `<build>/vcpkg_installed`；triplet 必须 `x64-windows-static`，与静态 CRT 对齐 |
 | NuGet CLI | `nuget.exe` 在 PATH | CMake 配置期自动拉 `Microsoft.Web.WebView2`，无需手工装 SDK |
 | WebView2 Runtime | Evergreen | Win11 已内置；Win10 缺时插件会弹原生兜底面板引导安装 |
 
@@ -21,9 +21,15 @@
 ```powershell
 git clone https://github.com/microsoft/vcpkg C:\dev\vcpkg
 C:\dev\vcpkg\bootstrap-vcpkg.bat
-C:\dev\vcpkg\vcpkg install ixwebsocket:x64-windows-static
 git clone --depth 1 --branch 8.0.8 https://github.com/juce-framework/JUCE C:\dev\JUCE
 ```
+
+**不需要 `vcpkg install ixwebsocket`**：仓库根的 `vcpkg.json` 是 manifest，下一步 `cmake` 配置时 vcpkg toolchain 会按它的
+`builtin-baseline`（microsoft/vcpkg 的 40 位 commit）自动把 `ixwebsocket` 12.0.1 及其传递依赖（mbedtls / zlib）装进
+`build/vcpkg_installed/`（首次会编译几分钟，之后走 `%LOCALAPPDATA%\vcpkg\archives` 的二进制缓存）。
+vcpkg 克隆本身**不必**停在 baseline 那个 commit ——它只需要能取到那个 commit（缺失时 vcpkg 会自行 `git fetch`）。
+要升 ixwebsocket 版本，改 `vcpkg.json`（baseline + overrides）与 `CMakeLists.txt` 的 `IXWEBSOCKET_TAG`（macOS 侧）**同一 PR 一起动**，
+并同步 `THIRD-PARTY-NOTICES.md`。
 
 ## 配置 + 构建（在仓库根目录执行）
 
@@ -94,6 +100,9 @@ new WebSocket("ws://127.0.0.1:9420").addEventListener("close", (e) => console.lo
 
 ixwebsocket 用静态 triplet 编译（内嵌 mbedtls，无需单独 OpenSSL）。动态 triplet 会与静态 CRT 冲突。
 依赖块按平台分支：**Windows 走 vcpkg 的 `find_package(ixwebsocket)`（本节），macOS 走 `FetchContent`**，两条路径互不影响。
+版本两侧都钉到内容级：Windows 由 `vcpkg.json` 的 `builtin-baseline`（40 位 commit）+ `overrides` 钉 12.0.1，macOS 由
+`IXWEBSOCKET_TAG`（40 位 commit = 上游 tag v12.0.1）钉。`-DCMAKE_TOOLCHAIN_FILE` 指向的 vcpkg 克隆若没有 `vcpkg.exe`
+（未 bootstrap），配置期会在 `Running vcpkg install` 处失败。
 
 ### 3. WebView2 是配置期 NuGet 自动拉取，不是「装 SDK」
 
@@ -119,4 +128,4 @@ ixwebsocket 用静态 triplet 编译（内嵌 mbedtls，无需单独 OpenSSL）�
 
 ## CI 对照
 
-CI（`.github/workflows/ci.yml`，job `build-and-validate`）与上述步骤同构：clone JUCE（版本读 `.juce-version`）→ vcpkg 装 ixwebsocket → 装 WebView2 Evergreen Runtime → CMake 配置 → 构建 → pluginval `--skip-gui-tests`（strictness 5）。含 WebView2 编辑器的全量 strictness-5 在真实 Win11 本地验证——无桌面的 Server runner 无法托管编辑器。
+CI（`.github/workflows/ci.yml`，job `build-and-validate`）与上述步骤同构：clone JUCE（版本读 `.juce-version`，`actions/cache` 命中时跳过）→ 装 WebView2 Evergreen Runtime → CMake 配置（vcpkg toolchain 按 `vcpkg.json` 装 ixwebsocket，二进制缓存经 `actions/cache` 复用；随后断言装进来的版本 == `vcpkg.json` 的 override）→ 构建 → pluginval `--skip-gui-tests`（strictness 5）。缓存只是加速，miss 时照常 clone / 编译。含 WebView2 编辑器的全量 strictness-5 在真实 Win11 本地验证——无桌面的 Server runner 无法托管编辑器。

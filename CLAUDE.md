@@ -71,8 +71,8 @@ required check,无 paths 过滤)的 Frozen-contract change guard 守同一组六
 
 ## 6. 环境与依赖
 
-- Windows:JUCE(版本见 `.juce-version`)、CMake ≥3.22、MSVC 2022(静态 CRT `/MT`)、WebView2 SDK(NuGet,版本常量单一真源)+ WebView2 Evergreen Runtime、pluginval(版本见 `.pluginval-version`)、ixwebsocket(vcpkg `x64-windows-static`)。
-- macOS(Apple Silicon):JUCE 同一真源、CMake ≥3.22 + **Ninja**、Xcode command line tools(clang,`-Wall -Wextra -Wpedantic`)、pluginval 同一真源 + **`auval`**(AU 唯一验收工具,以输出里的 `AU VALIDATION SUCCEEDED` 判定,退出码不可靠)、ixwebsocket 走 CMake `FetchContent`(tag 钉死,与 Windows 侧 vcpkg 同版本)。产物为 **VST3 + AU**、**arm64-only**(v1 不出 universal / x86_64),不签名不公证;CI runner = `macos-15`。构建细节见 `docs/build-macos.md`。
+- Windows:JUCE(版本见 `.juce-version`)、CMake ≥3.22、MSVC 2022(静态 CRT `/MT`)、WebView2 SDK(NuGet,版本常量单一真源)+ WebView2 Evergreen Runtime、pluginval(版本见 `.pluginval-version`)、ixwebsocket(vcpkg `x64-windows-static`,**manifest 模式**:仓库根 `vcpkg.json` 以 `builtin-baseline` 40 位 commit + `overrides` 钉死 12.0.1,configure 期自动安装,不手工 `vcpkg install`)。
+- macOS(Apple Silicon):JUCE 同一真源、CMake ≥3.22 + **Ninja**、Xcode command line tools(clang,`-Wall -Wextra -Wpedantic`)、pluginval 同一真源 + **`auval`**(AU 唯一验收工具,以输出里的 `AU VALIDATION SUCCEEDED` 判定,退出码不可靠)、ixwebsocket 走 CMake `FetchContent`(`IXWEBSOCKET_TAG` 钉 40 位 commit,与 Windows 侧 vcpkg 同版本;CI 预取源码进 `actions/cache` 后经 `FETCHCONTENT_SOURCE_DIR_IXWEBSOCKET` 喂给 configure)。产物为 **VST3 + AU**、**arm64-only**(v1 不出 universal / x86_64),不签名不公证;CI runner = `macos-15`。构建细节见 `docs/build-macos.md`。
 - 本地 gates(`scripts/gates.ps1`)目前仍是纯 Windows 实现(vswhere / VS 生成器 / nuget / `pluginval.exe`),mac 侧本地验收按 `docs/build-macos.md` 手工执行。
 - 构建流水线不需要任何 secret(06 §3.1);review bot 用 org secrets(`CLAUDE_CODE_OAUTH_TOKEN` / `DEEPSEEK_KEY`)。
 

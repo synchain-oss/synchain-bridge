@@ -73,8 +73,30 @@
   均带 `NOT DEFINED` 守卫、置于 `project()` 之前(要参与编译器探测),命令行可覆盖;`IXWEBSOCKET_TAG` 只在
   `if(APPLE)` 分支内定义。**对 Windows 构建为 no-op**:VS2019 生成器下 configure 的 cache 差异只有前两个
   变量,生成的 `.sln` / `.vcxproj` 目标列表与改动前逐项相同、无任何 `*_AU*` 目标。
+- **Windows 侧 ixwebsocket 改 vcpkg manifest 模式钉死**(issue #23 第一批第 3 条):新增仓库根 `vcpkg.json`,
+  `builtin-baseline` 钉到 microsoft/vcpkg 的 40 位 commit(该 baseline 下 `ports/ixwebsocket` = 12.0.1),再加一条
+  `overrides`(12.0.1)双保险 —— 此前 CI 用 runner 镜像自带的 vcpkg 做经典模式 `vcpkg install`,版本随镜像每月轮换漂移,
+  仓库里没有任何文件记录它。依赖由 CMake configure 期的 vcpkg toolchain 按 manifest 自动装进 `<build>/vcpkg_installed`
+  (每个 `-BuildDir` 各自一份,并行 agent 互不干扰),本地与 CI 走同一条路径,不再手工 `vcpkg install ixwebsocket`。
+  至此**两平台的 ixwebsocket 都钉到内容级**(Windows = vcpkg 仓库 commit + 版本,macOS = 上游 commit),升级时
+  `vcpkg.json` 与 `CMakeLists.txt` 的 `IXWEBSOCKET_TAG` 须同一 PR 一起动。`scripts/gates.ps1` / `scripts/build.ps1` 的
+  依赖预检检测到 `vcpkg.json` 即按 manifest 模式校验(vcpkg 已 bootstrap、声明了 ixwebsocket、baseline 是 40 位 SHA),
+  无 manifest 的旧分支仍走经典模式检查;`/W4` 零告警门的第三方排除项补 `vcpkg_installed`(manifest 模式下第三方头
+  的路径里不再出现 `\vcpkg\`)。README(双语)、`docs/build-windows.md`、`CONTRIBUTING.md`、`CLAUDE.md` §6、
+  `THIRD-PARTY-NOTICES.md`、`BEFORE_PUBLIC_CHECKLIST.md` §4.1 同步。
 
 ### 持续集成
+
+- **依赖缓存**(issue #23 第一批第 4 条,`ci.yml` 与 `release.yml` 两平台 job 同 key,发版链路直接复用 CI 攒下的缓存;
+  `actions/cache` 沿用已 pin 的 v4.3.0 SHA):① JUCE 目录按 `runner.os` + `.juce-version` 内容哈希缓存,clone 步骤按
+  「目录里没有 `CMakeLists.txt`」判定而不是只看 cache-hit,miss 与残缺命中都照常 clone;② Windows 的 vcpkg
+  **二进制缓存**(`VCPKG_DEFAULT_BINARY_CACHE` 指到 `runner.temp` 下固定目录,key 含 `vcpkg.json` 哈希 + triplet +
+  `runner.os`,带 `restore-keys` 前缀回落 —— vcpkg 按包 ABI 哈希寻址,不匹配的条目只是闲置),比缓存 installed 树稳;
+  configure 后另断言 `build/vcpkg_installed/vcpkg/status` 里的 ixwebsocket 版本 == `vcpkg.json` 的 override;
+  ③ macOS 把钉死的 ixwebsocket 源码预取到 `_deps/ixwebsocket-src`(key 含从 `CMakeLists.txt` 现读的
+  `IXWEBSOCKET_TAG`,升 pin 自动换 key),经 `FETCHCONTENT_SOURCE_DIR_IXWEBSOCKET` 交给 configure;因 FetchContent 走
+  该覆盖时不再核对 commit,workflow 自己断言 `HEAD == IXWEBSOCKET_TAG`,对不上先重拉、再对不上才红;只缓存源码,
+  不缓存 `_deps/ixwebsocket-build`。**缓存只是加速,miss 必须照常成功;不缓存 build 产物本身。**
 
 - `ci.yml` 新增与 `build-and-validate` 同级的 **`build-and-validate-macos`**(`macos-15`,arm64 原生):
   Ninja 配置 → 构建 → **clang 零警告门** → arm64-only 架构断言 → pluginval 验 VST3 + `auval` 验 AU →
