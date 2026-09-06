@@ -112,7 +112,8 @@
     `${{ github.event.pull_request.number }}` 改经 step `env`(`REPO` / `PR_NUMBER`)间接读入,
     与 `release.yml` 对 tag 名的纪律一致;逻辑不变(骨架改动,SCVB 线同步)。
   - `scripts/gates.ps1` 版本一致性 gate(3e)的 `Get-Mirror` 在 lockfile 结构变化 / JSON 不合法时不再抛异常
-    中断整个 gates,改记该 gate 的 FAIL 并给出可读原因,其余 gate 照常跑完。
+    中断整个 gates,改记该 gate 的 FAIL 并给出可读原因,其余 gate 照常跑完;reader 返回后再断言取值个数
+    恰等于期望个数(`package-lock.json` 2 个、其余 1 个),字段消失而**不抛**的结构变化不再静默降级成少比一处。
 
 ### 发布 / 分发(对下游可见)
 
