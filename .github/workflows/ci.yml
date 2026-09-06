@@ -65,12 +65,14 @@ jobs:
           path: build/packages
           key: webview2-nuget-${{ env.WEBVIEW2_NUGET_VERSION }}
 
-      # 5) Configure
+      # 5) Configure。-DBRIDGE_BUILD_SELFTESTS=ON:两个纯逻辑 selftest(tests/*.cpp)与插件一起编译,
+      #    让下一步的 /W4 零警告门真覆盖它们(此前该选项只在本地 gates.ps1 打开,CI 的零警告门从没编译过
+      #    selftest;采纳 #27 review)。release.yml 不开:发版构建不需要。
       - name: Configure CMake
         shell: pwsh
         run: |
           if (Test-Path build) { Get-ChildItem build -Exclude packages | Remove-Item -Recurse -Force }
-          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DJUCE_PATH="${{ github.workspace }}/JUCE" -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x64-windows-static
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DJUCE_PATH="${{ github.workspace }}/JUCE" -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x64-windows-static -DBRIDGE_BUILD_SELFTESTS=ON
 
       # 5b) Build + 零 warning 断言(/W4 门在 CI 侧的机器强制,06 §4.1 ⑧)
       - name: Build (fail on any MSVC warning)
@@ -90,6 +92,22 @@ jobs:
           name: SynchainBridge-build-log-${{ github.sha }}
           path: build.log
           retention-days: 7
+
+      # 5c) 跑两个 selftest(与 scripts/gates.ps1 的 gate 5b / compliance / mac job 的 Run selftests 同源同用例)。
+      #     VS 多配置生成器把 .exe 放在 build/Release/,用 Get-ChildItem -Recurse 定位并断言「恰好 1 个」:
+      #     找不到即红(静默跳过等于把断言从门禁删掉),多于 1 个说明构建目录不干净。
+      - name: Run selftests (origin allowlist + PCM frame)
+        shell: pwsh
+        run: |
+          foreach ($t in 'origin_allowlist_selftest', 'pcm_frame_selftest') {
+            $exes = @(Get-ChildItem -Path build -Recurse -File -Filter "$t.exe" | Where-Object { $_.FullName -notmatch '[\\/]_deps[\\/]' })
+            if ($exes.Count -ne 1) { Write-Error "expected exactly 1 $t.exe under build (configure must pass -DBRIDGE_BUILD_SELFTESTS=ON), found $($exes.Count)"; exit 1 }
+            Write-Host "::group::$t"
+            & $exes[0].FullName 2>&1 | Out-Host
+            $code = $LASTEXITCODE
+            Write-Host "::endgroup::"
+            if ($code -ne 0) { Write-Error "$t failed (exit $code); cases in tests/$t.cpp"; exit 1 }
+          }
 
       # 6) pluginval strictness 5 --skip-gui-tests(无头 runner 上 WebView2 editor 会崩)
       - name: Download pluginval
@@ -241,12 +259,14 @@ jobs:
           command -v ninja >/dev/null 2>&1 || brew install ninja
           ninja --version
 
-      # 4) Configure:OSX 相关参数(架构/部署目标/FORMATS)全在 CMakeLists,命令行不重复 —— 单一真源
+      # 4) Configure:OSX 相关参数(架构/部署目标/FORMATS)全在 CMakeLists,命令行不重复 —— 单一真源。
+      #    -DBRIDGE_BUILD_SELFTESTS=ON 与 windows job 同理:让下一步 clang -Wall -Wextra -Wpedantic 零警告门
+      #    真覆盖 tests/*.cpp(采纳 #27 review);release.yml 不开。
       - name: Configure CMake (Ninja)
         shell: bash
         run: |
           set -euo pipefail
-          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DJUCE_PATH="${{ github.workspace }}/JUCE"
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DJUCE_PATH="${{ github.workspace }}/JUCE" -DBRIDGE_BUILD_SELFTESTS=ON
 
       # 5) Build + clang 零警告门 —— 与 windows 的 /W4 门**同构的黑名单**(06 §4.1 ⑧):
       #    只排除第三方,其余一律算(白名单式的 `grep '/src/'` 会让 cmake/ 生成物、
@@ -273,6 +293,27 @@ jobs:
           name: SynchainBridge-macos-build-log-${{ github.sha }}
           path: build.log
           retention-days: 7
+
+      # 5b) 跑两个 selftest(与 scripts/gates.ps1 的 gate 5b / compliance / windows job 同源同用例)。
+      #     Ninja 单配置生成器把可执行文件放在 build/ 根,但仍用 find 定位,免得生成器 / 输出目录一变就
+      #     静默找不到;断言「恰好 1 个」并用 -print -quit 取路径,与下面 bundle 定位同口径(pipefail 下
+      #     `find | head` 会因 SIGPIPE 翻车)。失败也闭合 ::group::,后续日志不被吞进折叠区。
+      - name: Run selftests (origin allowlist + PCM frame)
+        shell: bash
+        run: |
+          set -euo pipefail
+          for t in origin_allowlist_selftest pcm_frame_selftest; do
+            n=$(find build -type f -name "$t" -perm -u+x -not -path '*/_deps/*' | wc -l | tr -d '[:space:]')
+            if [ "$n" != "1" ]; then
+              echo "::error::expected exactly 1 $t executable under build (configure must pass -DBRIDGE_BUILD_SELFTESTS=ON), found $n"; exit 1
+            fi
+            exe=$(find build -type f -name "$t" -perm -u+x -not -path '*/_deps/*' -print -quit)
+            echo "::group::$t"
+            rc=0
+            "$exe" || rc=$?
+            echo "::endgroup::"
+            if [ "$rc" -ne 0 ]; then echo "::error::$t failed (exit $rc); cases in tests/$t.cpp"; exit "$rc"; fi
+          done
 
       # 6) 定位产物 + 架构断言:必须是 arm64 单架构(U13 决定 v1 不出 universal/x86_64)。
       #    数量断言写死「恰好 1 个」而不是「取第一个」:build 下真冒出第 2 个同类 bundle 说明构建

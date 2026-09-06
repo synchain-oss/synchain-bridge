@@ -55,7 +55,7 @@
 
 本次所有插件改动**只增不改**协议，对浏览器客户端零破坏。
 
-1. **二进制 PCM 帧**：小端；12 字节头 = `u32 sampleRate | u32 channels | u32 numSamples`，紧跟 `numSamples*channels` 个 `float32` interleaved。总字节 = `12 + numSamples*channels*4`。字段顺序/端序/偏移不可变。主音量增益作用在**样本值**，帧格式完全不变。
+1. **二进制 PCM 帧**：小端；12 字节头 = `u32 sampleRate | u32 channels | u32 numSamples`，紧跟 `numSamples*channels` 个 `float32` interleaved。总字节 = `12 + numSamples*channels*4`。字段顺序/端序/偏移不可变。主音量增益作用在**样本值**，帧格式完全不变。实现与 golden 测试：C++ 侧唯一帧头编码 = `src/PcmFrame.h`（同步遗留路径 `sendPcmPacket()` 与后台发送线程路径 `buildPcmFrame()` 共用），由 `tests/pcm_frame_selftest.cpp` 逐字节钉死本条布局；JS 侧（本地 mock）实现 = `web-preview/pcm-frame.mjs`，由 `web-preview/pcm-frame.test.mjs` 用**同一组 golden 字节**钉死。
 2. **客户端校验边界**（`handleBinaryFrame`）：帧 `<12` 丢；`numSamples===0 || >16384` 丢；`channels===0 || >16` 丢；`byteLength < 12+numSamples*channels*4` 丢。
 3. **JSON 文本帧**含 `type` 字段，精确 snake_case：
    - plugin→browser：`status` / `meter` / `settings` / `volume` / `error` / `ping`
@@ -114,6 +114,6 @@
 | **minor** | 只增可选字段 / 新增消息类型（旧客户端忽略即可正常工作） | Bridge 仓 PR 合并 → 主仓开跟进 issue，可异步落地；插件先发布不破坏线上 |
 | **major** | 改字段名/类型/字节布局/删消息/改必填语义 | **禁止直接做**。必须：①先在 Bridge 仓提 RFC PR（只改 `BRIDGE_CONTRACT.md`）②主仓同步 PR 实现新旧双读 ③两侧都上线后 Bridge 才移除旧路径。兼容窗口 ≥1 个插件 minor 版本 |
 
-**机器护栏**：PR 若改动 `BRIDGE_CONTRACT.md`、`src/WebSocketProtocol.*`、`src/VstBridgeServer.*`、`src/BridgeApi.h` 任一，`.github/workflows/contract-guard.yml` 会要求 PR body 含一行 `contract-impact: none|minor|major`，缺则 fail。该字段由作者显式声明本次改动的协议影响级别。
+**机器护栏**：PR 若改动 `BRIDGE_CONTRACT.md`、`src/WebSocketProtocol.*`、`src/VstBridgeServer.*`、`src/BridgeApi.h`、`src/PcmFrame.h` 任一，`.github/workflows/contract-guard.yml` 会要求 PR body 含一行 `contract-impact: none|minor|major`，缺则 fail；`branch-gate` 的 Frozen-contract change guard 再按 strict / loose 两档要求 `docs/contract-changes/` 变更说明（见 `CLAUDE.md` §5）。该字段由作者显式声明本次改动的协议影响级别。
 
 **每次协议变更还必须**：① 写兼容性说明（旧客户端遇到新插件、新客户端遇到旧插件各自的行为）；② 在本仓 `CHANGELOG.md` 的「契约变更」小节记录；③ 在 PR 描述里 @ 主仓维护者同步（本仓为公开仓，另一端为闭源 Synchain 网页应用）。
