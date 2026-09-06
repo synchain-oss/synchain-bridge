@@ -454,7 +454,8 @@ jobs:
         run: |
           set -euo pipefail
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DJUCE_PATH="${{ github.workspace }}/JUCE" \
-            -DFETCHCONTENT_SOURCE_DIR_IXWEBSOCKET="${{ github.workspace }}/_deps/ixwebsocket-src" \n            -DBRIDGE_BUILD_SELFTESTS=ON
+            -DFETCHCONTENT_SOURCE_DIR_IXWEBSOCKET="${{ github.workspace }}/_deps/ixwebsocket-src" \
+            -DBRIDGE_BUILD_SELFTESTS=ON
 
       # 5) Build + clang 零警告门 —— 与 windows 的 /W4 门**同构的黑名单**(06 §4.1 ⑧):
       #    只排除第三方,其余一律算(白名单式的 `grep '/src/'` 会让 cmake/ 生成物、

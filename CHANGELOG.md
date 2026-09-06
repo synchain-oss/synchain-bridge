@@ -131,9 +131,10 @@
   该覆盖时不再核对 commit,workflow 自己断言 `HEAD == IXWEBSOCKET_TAG`,对不上先重拉、再对不上才红;只缓存源码,
   不缓存 `_deps/ixwebsocket-build`;`GIT_REPOSITORY` 的读取绑定到 ixwebsocket 的 `FetchContent_Declare` 段内,不会误拿
   将来别的 FetchContent 依赖的 URL。**缓存只是加速,miss 必须照常成功;不缓存 build 产物本身。**
-  **验证状态**:本 PR 是子 PR(base = `feature/extraction`),按 `CLAUDE.md` §1 只跑 review bot、不跑完整 CI,以上
-  workflow 改动在本 PR 上**跑不到**,首次在主支线 push 时真跑;本地能覆盖的部分(status 断言脚本、gate 3g / 4b)已在
-  Windows 本地 gates 跑通。断言脚本另做**闭包完整性**:本 triplet 下 `install ok installed` 的非 feature 段集合不得超出
+  **验证状态**(2026-09-06,主支线 `feature/eng-debt-23` 真跑):首跑 run 34017204091 双平台绿,manifest 装入
+  ixwebsocket=12.0.1#0 / mbedtls=3.6.5#0 / zlib=1.3.2#2、闭包恰三包、JUCE 身份断言通过、四个缓存条目保存;第二跑
+  run 34017563395 四类缓存全部命中(vcpkg 恢复 5 个包,Windows job 7 → 5 min);`v0.0.0-test` 冒烟 run 34017566444
+  四段绿、draft 四资产齐整。断言脚本另做**闭包完整性**:本 triplet 下 `install ok installed` 的非 feature 段集合不得超出
   ixwebsocket + 期望表(升 baseline 冒出第四个包时 `THIRD-PARTY-NOTICES.md` 不再静默漏登记),并把实际闭包打进日志;
   status 先把 CRLF 归一再分段与匹配。gate 3g 与 compliance 的 pin 一致性在无 `vcpkg.json` 时 SKIP(经典模式向后兼容,
   与 gate 1 / 4b 同口径)。已知边界:被污染的 JUCE 缓存条目不会自愈(`actions/cache` 对已存在的 exact key 不重存),
