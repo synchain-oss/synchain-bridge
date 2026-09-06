@@ -55,7 +55,7 @@
 
 本次所有插件改动**只增不改**协议，对浏览器客户端零破坏。
 
-1. **二进制 PCM 帧**：小端；12 字节头 = `u32 sampleRate | u32 channels | u32 numSamples`，紧跟 `numSamples*channels` 个 `float32` interleaved。总字节 = `12 + numSamples*channels*4`。字段顺序/端序/偏移不可变。主音量增益作用在**样本值**，帧格式完全不变。
+1. **二进制 PCM 帧**：小端；12 字节头 = `u32 sampleRate | u32 channels | u32 numSamples`，紧跟 `numSamples*channels` 个 `float32` interleaved。总字节 = `12 + numSamples*channels*4`。字段顺序/端序/偏移不可变。主音量增益作用在**样本值**，帧格式完全不变。实现与 golden 测试：`src/PcmFrame.h`（两条发送路径共用的唯一帧头编码）/ `tests/pcm_frame_selftest.cpp`（逐字节钉死本条布局）。
 2. **客户端校验边界**（`handleBinaryFrame`）：帧 `<12` 丢；`numSamples===0 || >16384` 丢；`channels===0 || >16` 丢；`byteLength < 12+numSamples*channels*4` 丢。
 3. **JSON 文本帧**含 `type` 字段，精确 snake_case：
    - plugin→browser：`status` / `meter` / `settings` / `volume` / `error` / `ping`
