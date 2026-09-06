@@ -133,16 +133,18 @@ jobs:
           # 大写 hex / 带路径前缀都要到打 tag 那一刻才会在 publish 炸出来(与 mac 侧同构,issue #23)。
           foreach ($v in '0.0.0-ci', '0.0.0-ci2') {
             $zip  = "SynchainBridge-VST3-v$v-win64.zip"
-            # 读原始字节而不是 Get-Content(它会剥行尾,测不出 CR):与 mac 侧 `cat` + 逐字等式同强度,
-            # 断言恰为 `<hash>  <zip>\n`(LF、无 BOM),package.ps1 回退到 Set-Content 就在这里红。
-            $raw = [System.IO.File]::ReadAllText((Join-Path $out "$zip.sha256"))
-            if ($raw -cnotmatch "^[0-9a-f]{64}  $([regex]::Escape($zip))`n$") {
-              Write-Error "$zip.sha256 is not exactly '<64 hex>  $zip' + LF (no CR / BOM): $([BitConverter]::ToString([System.Text.Encoding]::UTF8.GetBytes($raw)))"; exit 1
+            # 读**原始字节**:Get-Content 会剥行尾测不出 CR,ReadAllText 会按 BOM 探测吃掉 preamble 测不出 BOM。
+            # 与 mac 侧 `cat` + 逐字等式同强度:断言字节串恰为 `<hash>  <zip>\n`(LF、无 CR、无 BOM、无多余空行,
+            # 用 \z 而不是 $ —— .NET 的 $ 在末尾 \n 之前也匹配,会放过结尾双换行),package.ps1 回退到 Set-Content 就在这里红。
+            $bytes = [System.IO.File]::ReadAllBytes((Join-Path $out "$zip.sha256"))
+            $raw = [System.Text.Encoding]::ASCII.GetString($bytes)
+            if ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) {
+              Write-Error "$zip.sha256 starts with a UTF-8 BOM"; exit 1
+            }
+            if ($raw -cnotmatch "^[0-9a-f]{64}  $([regex]::Escape($zip))`n\z") {
+              Write-Error "$zip.sha256 is not exactly '<64 hex>  $zip' + one LF (no CR / no trailing blank line): $([BitConverter]::ToString($bytes))"; exit 1
             }
             $line = @($raw.TrimEnd("`n"))
-            if ($line.Count -ne 1 -or $line[0] -cnotmatch "^[0-9a-f]{64}  $([regex]::Escape($zip))$") {
-              Write-Error "$zip.sha256 is not exactly one '<64 hex>  $zip' line: $($line -join ' | ')"; exit 1
-            }
             $want = (Get-FileHash -LiteralPath (Join-Path $out $zip) -Algorithm SHA256).Hash.ToLowerInvariant()
             if ($line[0] -cne "$want  $zip") { Write-Error "$zip.sha256 says '$($line[0])' but the zip hashes to $want"; exit 1 }
           }
@@ -443,7 +445,7 @@ jobs:
           # 断言 DryRun 输出里的 Version 行与之逐字相等,不只看退出码。
           # `|| true`:set -e 下赋值语句的退出码就是命令替换的退出码,grep 无命中会当场终止 step,下一行的 ::error 守卫
           # 成了死代码。对照值同样先剔 `#` 行注释(与 gates.ps1 版本 gate 同口径),否则注释里留一行旧 project() 两边同错同过。
-          cmake_ver="$(grep -vE '^[[:space:]]*#' CMakeLists.txt | grep -m1 -oE 'project[[:space:]]*\([[:space:]]*[^[:space:]]+[[:space:]]+VERSION[[:space:]]+[0-9]+\.[0-9]+\.[0-9]+' || true)"
+          cmake_ver="$(sed -E 's/#.*$//' CMakeLists.txt | grep -m1 -oE '^[[:space:]]*project[[:space:]]*\([[:space:]]*[^[:space:]]+[[:space:]]+VERSION[[:space:]]+[0-9]+\.[0-9]+\.[0-9]+' || true)"
           cmake_ver="${cmake_ver##*[[:space:]]}"
           [ -n "$cmake_ver" ] || { echo "::error::cannot read project(... VERSION) from CMakeLists.txt"; exit 1; }
           dry="$(bash scripts/package-macos.sh --dry-run --build-dir build --out-dir "$smoke")"

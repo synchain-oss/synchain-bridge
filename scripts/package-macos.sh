@@ -81,7 +81,9 @@ if [ -z "$VERSION" ]; then
     # 单条 sed 取首个命中即退出(`/re/{s//\1/p;q;}`:地址命中后 s 复用同一 RE),不再 `| head -n 1`:
     # pipefail 下 head 关管道会给 sed 送 SIGPIPE(141),与本脚本第 4 步弃用 `find | head` 同一理由。
     # 不用 GNU 专有的 `0,/re/` 地址;`q;}` 里的分号是 BSD sed(macOS)的硬要求,两端都通。
-    version_re='.*project[[:space:]]*\([[:space:]]*[^[:space:]]+[[:space:]]+VERSION[[:space:]]+([0-9]+\.[0-9]+\.[0-9]+).*'
+    # 行首锚而不是 `.*` 前缀:POSIX ERE 是 leftmost-longest,`.*project` 会吃到该行**最后一个** project(——行尾注释里留一行
+    # 旧 `# project(... VERSION 1.3.0)` 就会取到旧版本;锚在行首后 s//\1/ 仍覆盖整行,行为不变(与 gates.ps1 剔行尾注释同效)。
+    version_re='^[[:space:]]*project[[:space:]]*\([[:space:]]*[^[:space:]]+[[:space:]]+VERSION[[:space:]]+([0-9]+\.[0-9]+\.[0-9]+).*'
     # 先丢注释行(`d` 在 -n 下即丢弃并进下一轮,GNU/BSD 均通):注释里留一行旧 `project(... VERSION x.y.z)` 否则会被先命中,
     # 本地手工发版(不传 --version 的唯一场景)会产出版本号对不上的资产 —— 与 gates.ps1 版本 gate 剔注释同口径。
     VERSION="$(sed -nE '/^[[:space:]]*#/d; /'"$version_re"'/{s//\1/p;q;}' "$REPO_ROOT/CMakeLists.txt")"

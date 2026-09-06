@@ -102,7 +102,14 @@
     五条字段行断言由 `-notmatch` 改 **`-cnotmatch`**(pwsh 默认大小写不敏感,`Version:` 漂移会静默走通)。
   - 两平台 Package smoke 增加 **`.sha256` 内容形态断言**:恰好一行、匹配 `^[0-9a-f]{64}  <zip 基名>$`
     (两个空格,`sha256sum -c` 认的格式),且 hash 与现算(`Get-FileHash` / `shasum -a 256`)一致 ——
-    此前只断言文件存在,分隔符写错要到打 tag 那一刻才在 `publish` 炸出来。
+    此前只断言文件存在,分隔符写错要到打 tag 那一刻才在 `publish` 炸出来。`package.ps1` 的 `.sha256`
+    改为 **LF、无 BOM** 落盘(`WriteAllText`),Windows 侧断言读原始字节(`ReadAllBytes`,显式查 BOM、
+    `\z` 锚定不放过结尾空行),`release.yml` 的 `tr -d '\r'` 兜底升级为「含 CR 即红」;
+    `files:` 改为四个精确文件名与资产等式同口径。
+  - `package-macos.sh` 从 `CMakeLists.txt` 回落读版本的 sed 先丢 `#` 整行注释、RE 改行首锚(POSIX ERE
+    leftmost-longest 会让 `.*project` 吃到行尾注释里的旧 `project()`),`ci.yml` 的对照 grep 先剔行尾注释并加
+    `|| true` 让 `::error` 守卫在 `set -e` 下真能执行;summary 重排的 awk 首行剥 UTF-8 BOM
+    (旧 powershell.exe 5.1 产物)。
   - mac 侧 Package smoke 开头加跑一次**不传 `--version`** 的 `--dry-run`,断言输出里的 Version 行与
     `grep` 另取的 `CMakeLists.txt` 版本逐字相等:`release.yml` 与三次真跑全部显式传版本,脚本里从 CMake
     回落读版本的那条 BSD sed 否则在 CI 上永远不执行。
