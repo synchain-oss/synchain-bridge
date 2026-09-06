@@ -50,6 +50,14 @@ jobs:
         run: |
           g++ -std=c++17 -I src -o /tmp/origin_allowlist_selftest tests/origin_allowlist_selftest.cpp
           /tmp/origin_allowlist_selftest
+      - name: PCM frame selftest
+        # PCM 帧头 12 字节布局(BRIDGE_CONTRACT.md §二 第 1 条)的 golden 字节断言
+        # (tests/pcm_frame_selftest.cpp):字段顺序 / 小端 / 偏移 / 总长逐字节钉死,改任一项即红。
+        # src/PcmFrame.h 是两条发送路径共用的唯一编码实现,零第三方依赖(纯 C++17)。
+        # 与本地 gate 5b 同源同用例,编译参数与上一步逐字同构。
+        run: |
+          g++ -std=c++17 -I src -o /tmp/pcm_frame_selftest tests/pcm_frame_selftest.cpp
+          /tmp/pcm_frame_selftest
       - name: REUSE lint
         # 与 §5.1 gate 3c 逐字同参
         run: pipx run reuse lint

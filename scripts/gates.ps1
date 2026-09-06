@@ -5,7 +5,8 @@
   端口 9420 一致性检查(gate 3d:src/BridgeApi.h ↔ web/bridge.js ↔ web-preview/mock-server.mjs)、
   版本一致性检查(gate 3e:CMakeLists.txt project(VERSION) ↔ web-preview 的 mock-server.mjs /
   package.json / package-lock.json ↔ BRIDGE_CONTRACT.md §三 VERSION 行)、
-  字体 name 表 RFN 断言(gate 3b2,与 compliance.yml 同参)与 Origin 白名单纯函数自测(gate 5b)。
+  字体 name 表 RFN 断言(gate 3b2,与 compliance.yml 同参)与零依赖纯逻辑自测(gate 5b:Origin 白名单 +
+  PCM 帧头 golden,与 compliance.yml 同源同用例)。
   任一 gate FAIL 即以非零码退出,最后打印一张可直接粘进 PR 描述的表格。
 .EXAMPLE   pwsh scripts/gates.ps1                         # 全量(含 GUI pluginval)
 .EXAMPLE   pwsh scripts/gates.ps1 -PluginOnly             # 跳过 GUI pluginval(与 CI 等价)
@@ -330,7 +331,7 @@ function Test-Configure {
         ('-DJUCE_PATH=' + ($JucePath -replace '\\', '/')),
         ('-DCMAKE_TOOLCHAIN_FILE=' + ($toolchain -replace '\\', '/')),
         '-DVCPKG_TARGET_TRIPLET=x64-windows-static',
-        '-DBRIDGE_BUILD_SELFTESTS=ON' # 供 gate 5b 的 origin selftest;默认 OFF,不影响发布构建
+        '-DBRIDGE_BUILD_SELFTESTS=ON' # 供 gate 5b 的两个纯逻辑 selftest;默认 OFF,不影响发布构建
     )
     & cmake @cmakeArgs 2>&1 | ForEach-Object { Write-Host $_ }
     if ($LASTEXITCODE -ne 0) { $ok = $false; $detail = ('cmake configure 失败 (exit ' + $LASTEXITCODE + ')') }
@@ -359,26 +360,39 @@ function Test-Build {
     return $ok
 }
 
-# ---- gate 5b:origin allowlist selftest ----
-# Origin 白名单的纯字符串逻辑(src/OriginAllowlist.h)断言,由 Test-Configure 的
-# -DBRIDGE_BUILD_SELFTESTS=ON 产出;秒级,不依赖 DAW/GUI。
-function Test-OriginSelftest {
+# ---- gate 5b:纯逻辑 selftest(origin allowlist + PCM 帧头 golden)----
+# 两个零依赖自测可执行文件,由 Test-Configure 的 -DBRIDGE_BUILD_SELFTESTS=ON 产出;秒级,不依赖 DAW/GUI:
+#   origin_allowlist_selftest —— Origin 白名单的纯字符串逻辑(src/OriginAllowlist.h);
+#   pcm_frame_selftest        —— PCM 帧头 12 字节布局的 golden 字节(src/PcmFrame.h,契约 §二 第 1 条)。
+# 与 compliance workflow 同源同用例(那边用 g++ 直接编译同一份 tests/*.cpp)。
+$script:Selftests = @(
+    [pscustomobject]@{ Exe = 'origin_allowlist_selftest'; Label = 'origin selftest (Origin 白名单纯函数断言)' },
+    [pscustomobject]@{ Exe = 'pcm_frame_selftest';        Label = 'pcm frame selftest (PCM 帧头 golden 断言)' }
+)
+
+function Test-Selftest([string]$exeName, [string]$label) {
     $ok = $true
     $detail = ''
-    $exe = Get-ChildItem -Path $BuildDir -Recurse -Filter 'origin_allowlist_selftest.exe' -ErrorAction SilentlyContinue |
+    $exe = Get-ChildItem -Path $BuildDir -Recurse -Filter ($exeName + '.exe') -ErrorAction SilentlyContinue |
         Select-Object -First 1
     if (-not $exe) {
         $ok = $false
-        $detail = ('未找到 origin_allowlist_selftest.exe(configure 须带 -DBRIDGE_BUILD_SELFTESTS=ON): ' + $BuildDir)
+        $detail = ('未找到 ' + $exeName + '.exe(configure 须带 -DBRIDGE_BUILD_SELFTESTS=ON): ' + $BuildDir)
     } else {
         & $exe.FullName 2>&1 | ForEach-Object { Write-Host $_ }
         if ($LASTEXITCODE -ne 0) {
             $ok = $false
-            $detail = ('origin selftest 失败 (exit ' + $LASTEXITCODE + '),用例见 tests/origin_allowlist_selftest.cpp')
+            $detail = ($exeName + ' 失败 (exit ' + $LASTEXITCODE + '),用例见 tests/' + $exeName + '.cpp')
         }
     }
-    Add-Result 'origin selftest (Origin 白名单纯函数断言)' ($(if ($ok) { 'PASS' } else { 'FAIL' })) $detail
+    Add-Result $label ($(if ($ok) { 'PASS' } else { 'FAIL' })) $detail
     return $ok
+}
+
+function Test-Selftests {
+    $all = $true
+    foreach ($t in $script:Selftests) { $all = (Test-Selftest $t.Exe $t.Label) -and $all }
+    return $all
 }
 
 # ---- gate 6/7:pluginval(single bundle) ----
@@ -437,7 +451,7 @@ $roOk = (Test-Version) -and $roOk
 if (-not $roOk) {
     Add-Result 'cmake 配置' 'SKIP' '只读 gate 失败,跳过'
     Add-Result 'build (/W4, 0 warning)' 'SKIP' '只读 gate 失败,跳过'
-    Add-Result 'origin selftest (Origin 白名单纯函数断言)' 'SKIP' '只读 gate 失败,跳过'
+    foreach ($t in $script:Selftests) { Add-Result $t.Label 'SKIP' '只读 gate 失败,跳过' }
     Add-Result 'pluginval 非 GUI (strict 5)' 'SKIP' '只读 gate 失败,跳过'
     Add-Result 'pluginval 全量含 GUI (本地真机)' 'SKIP' '只读 gate 失败,跳过'
 } else {
@@ -447,9 +461,9 @@ if (-not $roOk) {
         Add-Result 'build (/W4, 0 warning)' 'SKIP' 'cmake 配置失败,跳过'
     }
     if ($cfgOk -and $buildOk) {
-        $null = Test-OriginSelftest
+        $null = Test-Selftests
     } else {
-        Add-Result 'origin selftest (Origin 白名单纯函数断言)' 'SKIP' '构建失败,跳过'
+        foreach ($t in $script:Selftests) { Add-Result $t.Label 'SKIP' '构建失败,跳过' }
     }
     if ($cfgOk -and $buildOk) {
         if ($Quick) {
