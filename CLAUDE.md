@@ -33,7 +33,7 @@
 
 ## 2. 提 PR 前的本地 Gates
 
-- 一律经 `pwsh scripts/gates.ps1`(06 §5.1 的 gate 结构,单 bundle;含 vcpkg `ixwebsocket` 预检与默认端口 9420 一致性检查:`src/BridgeApi.h` ↔ `web/bridge.js` ↔ `web-preview/mock-server.mjs`)。
+- 一律经 `pwsh scripts/gates.ps1`(06 §5.1 的 gate 结构,单 bundle;含 vcpkg `ixwebsocket` 预检、configure 后的 vcpkg 安装版本断言(`scripts/assert-vcpkg-installed.ps1`,与 CI 同一份)、ixwebsocket 两平台版本一致性(`vcpkg.json` override ↔ `CMakeLists.txt` `IXWEBSOCKET_TAG` 注释,与 `compliance` 同参)与默认端口 9420 一致性检查:`src/BridgeApi.h` ↔ `web/bridge.js` ↔ `web-preview/mock-server.mjs`)。
 - 并行 agent 必须各用独立 git worktree 与 `-BuildDir`;GUI pluginval 全局串行。
 - **子 PR 不触发完整 CI 是设计,不是缺陷;不要为了让它跑 CI 去改 workflow 触发规则。**
 

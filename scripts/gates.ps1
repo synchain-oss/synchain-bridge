@@ -6,6 +6,9 @@
   端口 9420 一致性检查(gate 3d:src/BridgeApi.h ↔ web/bridge.js ↔ web-preview/mock-server.mjs)、
   版本一致性检查(gate 3e:CMakeLists.txt project(VERSION) ↔ web-preview 的 mock-server.mjs /
   package.json / package-lock.json ↔ BRIDGE_CONTRACT.md §三 VERSION 行)、
+  ixwebsocket 两平台版本一致性(gate 3g:vcpkg.json override ↔ CMakeLists.txt IXWEBSOCKET_TAG 注释,与 compliance.yml 同参)、
+  vcpkg 安装版本断言(gate 4b:configure 后 <BuildDir>/vcpkg_installed/vcpkg/status ↔ vcpkg.json override 与
+  THIRD-PARTY-NOTICES.md,经 scripts/assert-vcpkg-installed.ps1 与 ci.yml / release.yml 共用同一份逻辑)、
   字体 name 表 RFN 断言(gate 3b2,与 compliance.yml 同参)与 Origin 白名单纯函数自测(gate 5b)。
   任一 gate FAIL 即以非零码退出,最后打印一张可直接粘进 PR 描述的表格。
 .EXAMPLE   pwsh scripts/gates.ps1                         # 全量(含 GUI pluginval)
@@ -340,6 +343,40 @@ function Test-Version {
     return $ok
 }
 
+# ---- gate 3g:ixwebsocket 两平台版本一致性(vcpkg.json override ↔ CMakeLists.txt IXWEBSOCKET_TAG 注释) ----
+# Windows 侧真源 = vcpkg.json 的 override(version-semver + 显式 port-version),macOS 侧真源 = CMakeLists.txt 的
+# IXWEBSOCKET_TAG(40 位 SHA,机器不可能反推出版本号),故断言那一行的注释必须标注 `(= tag v<override 版本>)`:
+# 升级时忘了动任何一侧,这里就红。与 compliance.yml 的 "ixwebsocket cross-platform pin consistency" 同参。
+function Test-IxwebsocketPin {
+    $ok = $true
+    $detail = ''
+    try {
+        $m = Get-Content -LiteralPath (Join-Path $RepoRoot 'vcpkg.json') -Raw | ConvertFrom-Json
+        $ov = @($m.overrides | Where-Object name -eq 'ixwebsocket') | Select-Object -First 1
+        $ver = $ov.'version-semver'
+        if (-not $ver) {
+            $ok = $false; $detail = 'vcpkg.json 无 ixwebsocket override 的 version-semver'
+        } elseif ($null -eq $ov.'port-version') {
+            $ok = $false; $detail = 'vcpkg.json 的 ixwebsocket override 未显式写 port-version(baseline 下为 #0 也要写 0)'
+        } else {
+            $lines = @(Get-Content -LiteralPath (Join-Path $RepoRoot 'CMakeLists.txt') |
+                Where-Object { $_ -match '^\s*set\(IXWEBSOCKET_TAG\s+"[0-9a-f]{40}"' })
+            $tagNote = '(= tag v' + $ver + ')'
+            if ($lines.Count -ne 1) {
+                $ok = $false; $detail = 'CMakeLists.txt 应恰有 1 处 set(IXWEBSOCKET_TAG "<40 位 SHA>" ...),实际 ' + $lines.Count + ' 处'
+            } elseif (-not $lines[0].Contains($tagNote)) {
+                $ok = $false; $detail = 'CMakeLists.txt 的 IXWEBSOCKET_TAG 行未标注 ' + $tagNote + '(vcpkg.json 钉 ' + $ver + '): ' + $lines[0].Trim()
+            } else {
+                $detail = 'vcpkg.json override ' + $ver + '#' + $ov.'port-version' + ' ↔ IXWEBSOCKET_TAG 注释 ' + $tagNote
+            }
+        }
+    } catch {
+        $ok = $false; $detail = ('解析失败: ' + $_.Exception.Message)
+    }
+    Add-Result 'ixwebsocket 版本一致性 (vcpkg.json ↔ CMakeLists IXWEBSOCKET_TAG)' ($(if ($ok) { 'PASS' } else { 'FAIL' })) $detail
+    return $ok
+}
+
 # ---- gate 4:cmake 配置 ----
 function Test-Configure {
     $ok = $true
@@ -359,6 +396,28 @@ function Test-Configure {
     & cmake @cmakeArgs 2>&1 | ForEach-Object { Write-Host $_ }
     if ($LASTEXITCODE -ne 0) { $ok = $false; $detail = ('cmake configure 失败 (exit ' + $LASTEXITCODE + ')') }
     Add-Result 'cmake 配置' ($(if ($ok) { 'PASS' } else { 'FAIL' })) $detail
+    return $ok
+}
+
+# ---- gate 4b:vcpkg 安装版本断言(manifest 模式;与 ci.yml / release.yml 共用 scripts/assert-vcpkg-installed.ps1) ----
+# configure 期 vcpkg toolchain 按 vcpkg.json 装进 <BuildDir>/vcpkg_installed 后,断言 status 文件里 ixwebsocket 核心段的
+# Version / Port-Version == override、Status 为 install ok installed,传递依赖 mbedtls / zlib == THIRD-PARTY-NOTICES.md
+# 登记版本 —— 本地与 CI 同一份脚本、同一口径,不会出现「本地绿 / CI 红」。无 vcpkg.json 的旧分支(经典模式)SKIP。
+function Test-VcpkgInstalled {
+    $label = 'vcpkg 安装版本 (status ↔ vcpkg.json override / THIRD-PARTY-NOTICES)'
+    if (-not (Test-Path (Join-Path $RepoRoot 'vcpkg.json'))) {
+        Add-Result $label 'SKIP' '无 vcpkg.json(经典模式)'
+        return $true
+    }
+    $ok = $true
+    $detail = ''
+    try {
+        & (Join-Path $PSScriptRoot 'assert-vcpkg-installed.ps1') -BuildDir $BuildDir 2>&1 | ForEach-Object { Write-Host $_ }
+        if ($LASTEXITCODE -ne 0) { $ok = $false; $detail = ('assert-vcpkg-installed.ps1 失败 (exit ' + $LASTEXITCODE + '),见上方 ::error:: 行') }
+    } catch {
+        $ok = $false; $detail = ('assert-vcpkg-installed.ps1 异常: ' + $_.Exception.Message)
+    }
+    Add-Result $label ($(if ($ok) { 'PASS' } else { 'FAIL' })) $detail
     return $ok
 }
 
@@ -449,7 +508,7 @@ Write-Host ('  BuildDir: ' + $BuildDir)
 Write-Host ('  Mode    : ' + $(if ($Quick) { 'Quick(跳过 pluginval)' } elseif ($PluginOnly) { 'PluginOnly(跳过 GUI pluginval)' } else { '全量(含 GUI pluginval)' }))
 Write-Host ''
 
-# 只读 gate(1,2,3,3b,3b2,3c,3d,3e)恒跑,互不依赖
+# 只读 gate(1,2,3,3b,3b2,3c,3d,3e,3g)恒跑,互不依赖
 $roOk = $true
 $roOk = (Test-Deps) -and $roOk
 $roOk = (Test-ClangFormat) -and $roOk
@@ -459,15 +518,22 @@ $roOk = (Test-FontNames) -and $roOk
 $roOk = (Test-Reuse) -and $roOk
 $roOk = (Test-Port) -and $roOk
 $roOk = (Test-Version) -and $roOk
+$roOk = (Test-IxwebsocketPin) -and $roOk
 
 if (-not $roOk) {
     Add-Result 'cmake 配置' 'SKIP' '只读 gate 失败,跳过'
+    Add-Result 'vcpkg 安装版本 (status ↔ vcpkg.json override / THIRD-PARTY-NOTICES)' 'SKIP' '只读 gate 失败,跳过'
     Add-Result 'build (/W4, 0 warning)' 'SKIP' '只读 gate 失败,跳过'
     Add-Result 'origin selftest (Origin 白名单纯函数断言)' 'SKIP' '只读 gate 失败,跳过'
     Add-Result 'pluginval 非 GUI (strict 5)' 'SKIP' '只读 gate 失败,跳过'
     Add-Result 'pluginval 全量含 GUI (本地真机)' 'SKIP' '只读 gate 失败,跳过'
 } else {
     $cfgOk = Test-Configure
+    # gate 4b 只在 configure 成功后有意义(status 文件由 configure 期的 vcpkg toolchain 落盘);断言失败视同配置失败,
+    # 后续构建 / pluginval 一律 SKIP —— 绝不用一份漂了的依赖往下跑。
+    if ($cfgOk) { $cfgOk = Test-VcpkgInstalled } else {
+        Add-Result 'vcpkg 安装版本 (status ↔ vcpkg.json override / THIRD-PARTY-NOTICES)' 'SKIP' 'cmake 配置失败,跳过'
+    }
     if ($cfgOk) { $buildOk = Test-Build } else {
         $buildOk = $false
         Add-Result 'build (/W4, 0 warning)' 'SKIP' 'cmake 配置失败,跳过'

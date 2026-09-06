@@ -28,8 +28,10 @@ git clone --depth 1 --branch 8.0.8 https://github.com/juce-framework/JUCE C:\dev
 `builtin-baseline`（microsoft/vcpkg 的 40 位 commit）自动把 `ixwebsocket` 12.0.1 及其传递依赖（mbedtls / zlib）装进
 `build/vcpkg_installed/`（首次会编译几分钟，之后走 `%LOCALAPPDATA%\vcpkg\archives` 的二进制缓存）。
 vcpkg 克隆本身**不必**停在 baseline 那个 commit ——它只需要能取到那个 commit（缺失时 vcpkg 会自行 `git fetch`）。
-要升 ixwebsocket 版本，改 `vcpkg.json`（baseline + overrides）与 `CMakeLists.txt` 的 `IXWEBSOCKET_TAG`（macOS 侧）**同一 PR 一起动**，
-并同步 `THIRD-PARTY-NOTICES.md`。
+要升 ixwebsocket 版本，改 `vcpkg.json`（baseline + overrides 的 `version-semver` **与 `port-version`**）与 `CMakeLists.txt` 的
+`IXWEBSOCKET_TAG`（macOS 侧；同一行注释里的 `(= tag vX.Y.Z)` 也要改，本地 gate 3g 与 `compliance` 会拿它和 override 比）
+**同一 PR 一起动**，并同步 `THIRD-PARTY-NOTICES.md` 与 `scripts/assert-vcpkg-installed.ps1` 里的传递依赖（mbedtls / zlib）期望版本表
+——该脚本在 configure 之后（本地 gate 4b 与 CI 同一份）断言 `build/vcpkg_installed/vcpkg/status` 里实际装进来的版本。
 
 ## 配置 + 构建（在仓库根目录执行）
 

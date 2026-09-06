@@ -105,11 +105,15 @@ Windows 侧不受影响（走 vcpkg port，版本由 vcpkg 的 baseline 钉住�
 自带的 vcpkg 做经典模式 `vcpkg install`，版本随镜像每月轮换漂移，没有任何入库文件记录它。现已改为 **manifest 模式**：
 仓库根 `vcpkg.json` 以 `builtin-baseline`（microsoft/vcpkg 的 40 位 commit，该 baseline 下 `ports/ixwebsocket` = 12.0.1）
 加 `overrides`（12.0.1）双保险钉死；`ci.yml` / `release.yml` 的 windows job 不再显式 `vcpkg install`，依赖由 configure 期
-vcpkg toolchain 按 manifest 安装，并在 configure 后断言 `build/vcpkg_installed/vcpkg/status` 里的 ixwebsocket 版本 ==
-manifest 的 override。至此**两平台的 ixwebsocket 都钉到内容级**（Windows = vcpkg 仓库 commit + 版本，macOS = 上游 commit）。
-升级 ixwebsocket 时 `vcpkg.json`（baseline + overrides）与 `CMakeLists.txt` 的 `IXWEBSOCKET_TAG` 必须同一 PR 一起动，
-并同步 `THIRD-PARTY-NOTICES.md`；本地 `scripts/gates.ps1` 的依赖预检在检测到 `vcpkg.json` 时按 manifest 模式校验
-（baseline 是 40 位 SHA、声明了 ixwebsocket），无 manifest 的旧分支仍走经典模式检查（向后兼容）。
+vcpkg toolchain 按 manifest 安装，并在 configure 后经 `scripts/assert-vcpkg-installed.ps1` 断言 `build/vcpkg_installed/vcpkg/status`
+里的 ixwebsocket 版本 + port-version == manifest 的 override（显式 `"port-version": 0`）、传递依赖 mbedtls / zlib ==
+`THIRD-PARTY-NOTICES.md` 登记版本。至此**两平台的 ixwebsocket 都钉到内容级**（Windows = vcpkg 仓库 commit + 版本#port-version，
+macOS = 上游 commit），且两侧版本一致由机器强制：`compliance` workflow 与本地 gate 3g 都要求 `CMakeLists.txt` 的
+`IXWEBSOCKET_TAG` 行注释标注 `(= tag v<override 版本>)`。升级 ixwebsocket 时 `vcpkg.json`（baseline + overrides 的
+version-semver / port-version）与 `CMakeLists.txt` 的 `IXWEBSOCKET_TAG`（含注释）必须同一 PR 一起动，并同步
+`THIRD-PARTY-NOTICES.md` 与 `scripts/assert-vcpkg-installed.ps1` 的传递依赖表；本地 `scripts/gates.ps1` 的依赖预检在检测到
+`vcpkg.json` 时按 manifest 模式校验（baseline 是 40 位 SHA、声明了 ixwebsocket），configure 后另跑同一份 status 断言（gate 4b），
+无 manifest 的旧分支仍走经典模式检查（向后兼容）。
 
 ## 5. 历史清扫（原转 public 硬门禁 —— **✅ 已完成（2026-09-01）**）
 
