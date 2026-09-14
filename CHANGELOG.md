@@ -6,6 +6,36 @@
 
 ## [未发布]
 
+> 版本号由 1.5.0 升至 **1.5.1**(唯一真源 `CMakeLists.txt` 的 `project(... VERSION)`,四镜像同步:
+> web-preview 的 mock-server.mjs / package.json / package-lock.json 与 `BRIDGE_CONTRACT.md` §三)。
+> **不涉及契约变更**(wire 协议零改动;`__bridge__firstFrame` 时序信号为非契约面,判定与兼容性
+> 承诺见 `docs/contract-changes/20260914-sl386-reveal-gate.md`)。
+
+### 修复
+
+- **开窗白闪改成与 SCVB 同一套遮挡闸(SL-386)**:开窗序列里 WebView2 那几帧白不受我方任何
+  一层底色控制(WebView2 宿主 HWND 合成首帧前画什么,插件侧没有 API 管得到)。移植 SCVB
+  的成熟方案(`WebViewRevealGate.h` @ 76ffb04,SL-370/376/378):
+  1. **挪窗不隐藏** —— 导航开始(WebView2 控制器已建好)后把 WebView 子窗口整块挪出宿主
+     可视区(尺寸一字不改,不 `setVisible(false)`、不零尺寸 —— 隐藏会把页面顶成
+     `about:blank`),宿主 `paint()` 自绘占位;**只认首帧放行**,`navigationFinished` 只记账
+     不放行(它不保证任何一帧已合成);前端 `DOMContentLoaded` 后嵌套两层 rAF 发
+     `__bridge__firstFrame` 信号,信号后再压一拍(tick 数 ∧ 32 ms 毫秒下界,回绕安全)才挪回;
+     3 s 超时兜底(绝不允许「永远不放行」)。
+  2. **占位与成品底同形** —— 占位不是单一中点色,而是与成品可见底(玻璃拟态卡片)同一个
+     渐变 `linear-gradient(157deg, #b5acc9/#ccbfd5/#e3d2e0/#fde8ed)`,占位切内容不跳阶;
+     三处同源:css token(`styles.css` 的 `--vb-card-surface`,卡片消费它)/ `<head>` 内联
+     html 底(取代浏览器默认白)/ C++ 色标(`WebViewRevealGate.h`),由
+     `web-preview/reveal-first-frame.test.mjs` 钉三处相等。
+  3. **平台与既有机制** —— 挪窗激活只在 Windows(`#if JUCE_WINDOWS`);mac 路径保持现状
+     (WKWebView 不挪窗、不铺占位)。看门狗(5s)/ 兜底面板 / 运行时探测 / 缩放机制行为不变;
+     闸门 3s < 看门狗 5s 由 `static_assert` 在每次编译上守。
+  判据:`tests/reveal_gate_selftest.cpp`(纯逻辑删除式断言,接入 gate 5b / ci 两平台 /
+  compliance)+ `web-preview/reveal-first-frame.test.mjs`(三处同源与接线源钉)+ 真机
+  pluginval `--repeat 10` 放行分布数表(firstFrame 10/10、navFinished 0、timeout 0)。
+
+## [1.5.0]
+
 > 本段含两批改动:① 转 public 前的合规/安全整备(本身不改版本号);② **macOS 支持**,版本号随之由 1.4.0
 > 升至 **1.5.0**(`CMakeLists.txt` 的 `project(... VERSION)` 是唯一真源)。两批**均不涉及契约变更**
 > (wire 协议零改动)。

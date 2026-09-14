@@ -499,14 +499,18 @@ function Test-Build {
     return $ok
 }
 
-# ---- gate 5b:纯逻辑 selftest(origin allowlist + PCM 帧头 golden)----
-# 两个零依赖自测可执行文件,由 Test-Configure 的 -DBRIDGE_BUILD_SELFTESTS=ON 产出;秒级,不依赖 DAW/GUI:
+# ---- gate 5b:纯逻辑 selftest(origin allowlist + PCM 帧头 golden + SL-386 遮挡闸)----
+# 三个零依赖自测可执行文件,由 Test-Configure 的 -DBRIDGE_BUILD_SELFTESTS=ON 产出;秒级,不依赖 DAW/GUI:
 #   origin_allowlist_selftest —— Origin 白名单的纯字符串逻辑(src/OriginAllowlist.h);
-#   pcm_frame_selftest        —— PCM 帧头 12 字节布局的 golden 字节(src/PcmFrame.h,契约 §二 第 1 条)。
+#   pcm_frame_selftest        —— PCM 帧头 12 字节布局的 golden 字节(src/PcmFrame.h,契约 §二 第 1 条);
+#   reveal_gate_selftest      —— SL-386 开窗遮挡闸(src/WebViewRevealGate.h):只认首帧放行 /
+#                                navFinished 只记账 / settle 双条件(回绕安全)/ 3s 兜底 /
+#                                挪窗几何 / 占位渐变 golden。
 # 与 compliance workflow 同源同用例(那边用 g++ 直接编译同一份 tests/*.cpp)。
 $script:Selftests = @(
     [pscustomobject]@{ Exe = 'origin_allowlist_selftest'; Label = 'origin selftest (Origin 白名单纯函数断言)' },
-    [pscustomobject]@{ Exe = 'pcm_frame_selftest';        Label = 'pcm frame selftest (PCM 帧头 golden 断言)' }
+    [pscustomobject]@{ Exe = 'pcm_frame_selftest';        Label = 'pcm frame selftest (PCM 帧头 golden 断言)' },
+    [pscustomobject]@{ Exe = 'reveal_gate_selftest';      Label = 'reveal gate selftest (SL-386 遮挡闸纯逻辑断言)' }
 )
 
 function Test-Selftest([string]$exeName, [string]$label) {

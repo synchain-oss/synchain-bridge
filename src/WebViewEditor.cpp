@@ -6,7 +6,9 @@
 #include "BinaryData.h" // 由 juce_add_binary_data(SynchainBridgeWebAssets) 生成
 
 #include <cmath>
+#include <cstdint>
 #include <functional>
+#include <type_traits>
 #include <vector>
 
 #if JUCE_WINDOWS
@@ -31,6 +33,18 @@ namespace
 // 卡片按 space-between 铺满该盒；改这两个数即整体改窗口比例（web 常量需同步，见 index.html DESIGN_W/H）。
 constexpr int kDesignW = 460;
 constexpr int kDesignH = 560;
+
+// [SL-386] 遮挡期间 WebView 子窗口该占的矩形：几何真源在 WebViewRevealGate.h 的
+// parkedRect（零依赖、有 selftest），这里只做 juce::Rectangle 的壳。JUCE 把它换算成
+// 宿主 HWND 客户区坐标喂给 ICoreWebView2Controller::put_Bounds，子窗口恒被 Windows 裁到
+// 父窗口客户区内 ⇒ 屏上看不见。⚠ 这依赖「JUCE 把一次只改 x 的 setBounds 也转发到
+// put_Bounds」——读 JUCE 实现核过成立（ComponentMovementWatcher 按顶层坐标重算 wasMoved,
+// 纯位移即真;WebView2 后端覆写不看标志一律 setControlBounds）。
+juce::Rectangle<int> parkedBounds(juce::Rectangle<int> visible) noexcept
+{
+    const auto r = webview::parkedRect(visible.getX(), visible.getY(), visible.getWidth(), visible.getHeight());
+    return {r.x, r.y, r.width, r.height};
+}
 
 // -----------------------------------------------------------------------------
 // FallbackPanel — WebView 起不来时的最小原生兜底面板。
@@ -159,13 +173,79 @@ private:
 } // namespace
 
 // =============================================================================
+// BridgeWebView —— 为「开窗遮挡闸 + 导航时序回调」而存在的薄子类（[SL-386] 移植 SCVB 的
+// HostWebView；机理与理由只写在 src/WebViewRevealGate.h 一处，这里不复述）。
+// -----------------------------------------------------------------------------
+//   • pageAboutToLoad / pageFinishedLoading：JUCE 唯一暴露导航时序的两个虚函数。闸门靠
+//     「导航开始」（= WebView2 控制器已建好）才知道何时可以挪窗；navFinished 只记账不放行。
+//   • paint：**先调基类，再整块盖上占位底**。基类 = WebView2 后端的 fallbackPaint：每帧
+//     无条件 fillAll(Colours::white) —— 开窗白闪的白的来源就是它；它尾巴上的
+//     checkWindowAssociation 又是 WebView2 控制器的重试泵，所以**必须**调基类（拆掉泵是
+//     真机开窗风险），白由下一句盖掉。两次 fillAll 落在同一次 paint 里，先白后占位、
+//     中间不上屏（Windows 侧两条渲染路都是整帧画完才出），上屏的只有后盖的那层。
+//     mac（#else 路径）：保持现状，只走基类 paint —— 不铺占位（SL-386 派工口径）。
+// =============================================================================
+class SynchainBridgeWebEditor::BridgeWebView final : public juce::WebBrowserComponent
+{
+public:
+    BridgeWebView(SynchainBridgeWebEditor& owner, juce::WebBrowserComponent::Options options)
+        : juce::WebBrowserComponent(std::move(options)), mOwner(owner)
+    {
+    }
+
+    void paint(juce::Graphics& g) override
+    {
+        // 基类 = fallbackPaint：WebView2 后端的 fillAll(Colours::white) + 控制器重试泵。
+        // 这一句**必须在前**：它画的白由下面整块盖掉，而泵要的是「每帧都被调到」。
+        juce::WebBrowserComponent::paint(g);
+
+#if JUCE_WINDOWS
+        // [SL-386] 占位底 = 成品可见底（web/styles.css --vb-card-surface 的玻璃拟态渐变，
+        // 同形同渐变；三处同源判据 = web-preview/reveal-first-frame.test.mjs）。
+        const auto e = webview::placeholderGradientEndpoints(getWidth(), getHeight());
+        const auto p0 = juce::Point<float>(static_cast<float>(e.x0), static_cast<float>(e.y0));
+        const auto p1 = juce::Point<float>(static_cast<float>(e.x1), static_cast<float>(e.y1));
+        auto grad = juce::ColourGradient(
+            juce::Colour(webview::kPlaceholderStops[0].argb), p0,
+            juce::Colour(webview::kPlaceholderStops[webview::kPlaceholderStopCount - 1].argb), p1, false);
+        for (int i = 1; i < webview::kPlaceholderStopCount - 1; ++i)
+            grad.addColour(webview::kPlaceholderStops[i].position, juce::Colour(webview::kPlaceholderStops[i].argb));
+        g.setGradientFill(grad);
+        g.fillAll();
+#endif
+    }
+
+    bool pageAboutToLoad(const juce::String& url) override
+    {
+        mOwner.onNavigationStarted(url);
+        return true; // 本插件只导航到 resource provider 根，不拦
+    }
+
+    void pageFinishedLoading(const juce::String& url) override { mOwner.onNavigationFinished(url); }
+
+    // [SL-386] 删除式判据。paint 一旦不再由本类覆写，decltype 经名字查找落到基类签名，
+    // 本断言当场编译红（gate 5 / CI 都会拦下）。放在类体内与 SCVB 的 HostWebView 同款：
+    // 注入类名在此可见，且类体外够不着这个私有嵌套类。它守的是「paint 由本类覆写」这件事
+    // 本身；函数体里那句基类调用删没删，它守不到 —— 那半边靠上面的注释与真机验收兜。
+    static_assert(std::is_same_v<decltype(&BridgeWebView::paint), void (BridgeWebView::*)(juce::Graphics&)>,
+                  "[SL-386] BridgeWebView::paint 必须由本类覆写:少了它,JUCE WebView2 后端的 fallbackPaint "
+                  "每帧 fillAll(Colours::white),开窗白闪回归。");
+
+private:
+    SynchainBridgeWebEditor& mOwner;
+
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(BridgeWebView)
+};
+
+// =============================================================================
 // SynchainBridgeWebEditor
 // =============================================================================
 
 SynchainBridgeWebEditor::SynchainBridgeWebEditor(SynchainBridgeAudioProcessor& p)
-    : juce::AudioProcessorEditor(&p), mProcessor(p), mWebView(makeOptions())
+    : juce::AudioProcessorEditor(&p), mProcessor(p)
 {
-    addAndMakeVisible(mWebView);
+    mWebView = std::make_unique<BridgeWebView>(*this, makeOptions());
+    addAndMakeVisible(*mWebView);
 
     setResizable(false, false); // 仅经缩放档位下拉（setUiScale）编程改尺寸，不开自由拖角
     {
@@ -174,19 +254,9 @@ SynchainBridgeWebEditor::SynchainBridgeWebEditor(SynchainBridgeAudioProcessor& p
     }
 
     // 先探测 WebView2 运行时：有则正常加载（看门狗容忍冷启动）；无则直接给可操作的兜底面板，
-    // 并引导一次性安装，不做无意义等待。
-    if (webView2RuntimeAvailable())
-    {
-        // 必须在任何 emit 之前完成首个 goToURL（前端脚本随后加载并注册监听）。
-        mWebView.goToURL(WBC::getResourceProviderRoot());
-        mStartMs = juce::Time::getMillisecondCounter();
-        startTimerHz(25);
-    }
-    else
-    {
-        mWebView.setVisible(false);
-        showFallback(FallbackReason::MissingRuntime);
-    }
+    // 并引导一次性安装，不做无意义等待。加载路径收进 beginLoadAttempt（构造 / retry 共用，
+    // [SL-386] 含遮挡闸重新武装），missing 分支里 showFallback 自己会 setVisible(false)。
+    beginLoadAttempt();
 }
 
 SynchainBridgeWebEditor::~SynchainBridgeWebEditor()
@@ -212,7 +282,13 @@ void SynchainBridgeWebEditor::showFallback(FallbackReason reason)
 {
     if (mFallback != nullptr)
         return;
-    mWebView.setVisible(false);
+    // [SL-386] 面板自己铺满本组件，闸门不该再按住 WebView 的位置（否则 retry 回来时
+    // bounds 还停在可视区外，而那条路上不一定再有导航事件把它推回来）；noteRevealed 在
+    // 这里调：走到兜底的典型场景恰恰是首帧信号不会来，`webview revealed (fallback)` 这行
+    // 只可能在此处打出来。missing 那条路闸门从未 parked ⇒ 该行不打（reason 留空）。
+    mRevealGate.onFallbackShown();
+    noteRevealed();
+    mWebView->setVisible(false);
     const bool missing = (reason == FallbackReason::MissingRuntime);
     mFallback = std::make_unique<FallbackPanel>(
         mProcessor, missing,
@@ -230,29 +306,127 @@ void SynchainBridgeWebEditor::showFallback(FallbackReason reason)
 void SynchainBridgeWebEditor::retryWebView()
 {
     mFallback.reset();
-    if (!webView2RuntimeAvailable())
-    {
-        mWebView.setVisible(false);
-        showFallback(FallbackReason::MissingRuntime);
-        return;
-    }
-    mBridgeReady = false;
     // 回到 WebView：恢复按 uiScale 的窗口尺寸（切兜底时可能已把窗口放大到基准尺寸）。
     {
         const float s = mProcessor.getUiScale();
         setSize(juce::roundToInt(kDesignW * s), juce::roundToInt(kDesignH * s));
     }
-    mWebView.setVisible(true);
-    mWebView.goToURL(WBC::getResourceProviderRoot());
+    beginLoadAttempt(); // 重探运行时 + 重置看门狗与遮挡闸；若又是 missing 会就地再切兜底
+    resized();
+}
+
+// [SL-386] 一次新的加载尝试（构造 / retry 共用）：重置看门狗与遮挡闸后重新 goToURL。
+// 起算前提（WebViewEditor.h static_assert 的另一半）：看门狗 kWatchdogBudgetMs 与遮挡闸
+// kRevealFallbackMs 都以**本次 beginLoadAttempt 落下的 mStartMs** 一侧为共同参照 —— 看门狗
+// 直接从 mStartMs 起算，闸门 3s 从导航开始（≥ mStartMs）起算，故「导航开始不晚于 mStartMs+2s」
+// 时闸门必然先到期；导航开始更晚（冷启动 >2s）时看门狗先到，形态是切兜底面板（不是白），
+// 那是「兜底顶替」路，见 showFallback 处注释。本仓看门狗不分冷/热预算，无顺延复位缺口。
+void SynchainBridgeWebEditor::beginLoadAttempt()
+{
+    mBridgeReady = false;
+    mRevealGate.beginLoadAttempt(); // 重新武装：下一次导航开始时再挪一次
+    mRevealLogged = false;
     mStartMs = juce::Time::getMillisecondCounter();
+
+    if (!webView2RuntimeAvailable())
+    {
+        showFallback(FallbackReason::MissingRuntime); // 面板里会 setVisible(false)，不进看门狗
+        return;
+    }
+
+    // 必须在任何 emit 之前完成首个 goToURL（前端脚本随后加载并注册监听）。
+    mWebView->setVisible(true);
+    mWebView->goToURL(WBC::getResourceProviderRoot());
     if (!isTimerRunning())
         startTimerHz(25);
+}
+
+// -----------------------------------------------------------------------------
+// [SL-386] 开窗遮挡闸的动作面（message 线程）。判定全在 mRevealGate（纯逻辑、可单测），
+// 这几个函数只负责把判定落到组件几何上并写诊断行；机理与理由只写在 WebViewRevealGate.h。
+// -----------------------------------------------------------------------------
+void SynchainBridgeWebEditor::onNavigationStarted(const juce::String& url)
+{
+    logDiag("navigation started: " + url);
+
+#if JUCE_WINDOWS
+    // 导航开始 = WebView2 控制器已建好 ⇒ 基类 paint 里的重试泵已是空调用，此刻才可以把
+    // WebView 挪出可视区（挪走之后 JUCE 不再画它）。mac：路径保持现状，不挪窗、不铺占位
+    // （闸门保持未武装，纯逻辑其余调用点照常记账）。
+    mRevealGate.onNavigationStarted(juce::Time::getMillisecondCounter());
+    applyRevealGate();
+#endif
+}
+
+void SynchainBridgeWebEditor::onNavigationFinished(const juce::String& url)
+{
+    // [SL-376] **这一条不放行，只记账**：pageFinishedLoading 只说明文档下载完，不保证任何
+    // 一帧已合成；记下的这一位只进 timeout 行诊断。这里也不调 applyRevealGate/noteRevealed
+    // —— 本函数不改闸门状态，那两句无论闸门开着还是关着都是空调用。
+    mRevealGate.onNavigationFinished();
+    logDiag("navigation finished: " + url);
+}
+
+void SynchainBridgeWebEditor::handleFirstFrame()
+{
+    // 先记「信号到了」，再谈放行 —— 两件事分开数：信号可能在 3s 兜底或兜底面板之后才到，
+    // 只看放行行会把「信号来晚了」误读成「信号没来」。真机/pluginval 验收数的就是这一行
+    // 与 noteRevealed() 放行行的条数比（开 N 次窗应有 N 行 first-frame signal）。
+    logDiag(juce::String("first-frame signal after ") +
+            juce::String(static_cast<int>(juce::Time::getMillisecondCounter() - mStartMs)) + " ms" +
+            (mRevealGate.parked() ? juce::String(" (still parked)") : juce::String(" (already revealed)")));
+    // onFirstFrame 只武装不放行（tick ∧ 32ms 一拍在 timerCallback 的 onTick 里结算）；
+    // 传 nowMs 是因为毫秒下界要从信号到达那一刻起算。
+    mRevealGate.onFirstFrame(juce::Time::getMillisecondCounter());
+    applyRevealGate();
+    noteRevealed();
+}
+
+// 把闸门的判定落到组件几何上。**只经这一个函数改 mWebView 的 bounds**，别在各个触发点
+// 各写一次 setBounds —— 那样闸门就有了第二个真源。
+void SynchainBridgeWebEditor::applyRevealGate()
+{
+    if (mWebView == nullptr)
+        return;
     resized();
+    repaint(); // 挪走的那一刻要让占位底色立刻补上，别等下一次自然重绘
+}
+
+// 放行诊断行。reason 有三种：firstFrame = 正常路；timeout = 首帧信号没来、3s 兜底（**必须
+// 当异常读**，自带 navFinished seen|not seen 分诊后缀）；fallback = 被兜底面板顶掉（不是
+// 「放行」，数表时单列）。`after` 一律从 mStartMs（本次加载尝试起点）算，而闸门的 3s 从
+// 导航开始算 —— 所以 timeout 行打出来是「3000 + 导航前耗时」，两个起点不同是有意的。
+void SynchainBridgeWebEditor::noteRevealed()
+{
+    // lastRevealReason() 为空 = 这一轮从来没挪走过（例如运行时缺失直接切了兜底面板），
+    // 那就没有「放行」这回事，别写一行原因是空串的诊断。
+    if (mRevealLogged || mRevealGate.parked() || juce::String(mRevealGate.lastRevealReason()).isEmpty())
+        return;
+    mRevealLogged = true;
+    const juce::String reason(mRevealGate.lastRevealReason());
+    juce::String line = "webview revealed (" + reason + ") after " +
+                        juce::String(static_cast<int>(juce::Time::getMillisecondCounter() - mStartMs)) + " ms";
+    if (reason == "timeout")
+        line << " -- no first-frame signal before the 3s deadline (navFinished "
+             << (mRevealGate.navigationFinishedSeen() ? "seen" : "not seen") << ")";
+    logDiag(line);
+}
+
+void SynchainBridgeWebEditor::logDiag(const juce::String& line) const
+{
+    // 既有日志通道：juce::Logger。pluginval 不设 Logger ⇒ writeToLog 落 OutputDebugString
+    // （DebugView / DBWin 捕获可见），宿主设了 Logger 则进宿主日志 —— 诊断不能只活在
+    // Debug 构建里。文案一律 ASCII（printf 族拼接非 ASCII 字面量会触发 MSVC C4819）。
+    juce::Logger::writeToLog("SynchainBridge: " + line);
 }
 
 void SynchainBridgeWebEditor::resized()
 {
-    mWebView.setBounds(getLocalBounds());
+    // [SL-386] WebView 的落点由遮挡闸决定：遮挡期间整块挪到可视区之外（尺寸不变），
+    // 那块地方由 BridgeWebView::paint 铺占位渐变。几何与理由见 WebViewRevealGate.h。
+    // mac 上闸门从不 parked，恒走原位分支（行为与改动前一致）。
+    if (mWebView != nullptr)
+        mWebView->setBounds(mRevealGate.parked() ? parkedBounds(getLocalBounds()) : getLocalBounds());
     if (mFallback != nullptr)
         mFallback->setBounds(getLocalBounds());
 }
@@ -316,7 +490,12 @@ juce::WebBrowserComponent::Options SynchainBridgeWebEditor::makeOptions()
         .withNativeFunction(juce::Identifier(bridge::Fn::CommitUiScale),
                             [this](const juce::Array<juce::var>& a, WBC::NativeFunctionCompletion c) {
                                 handleCommitUiScale(a, std::move(c));
-                            });
+                            })
+        // [SL-386] 时序面（非契约）：前端「首帧已绘」上行 —— 遮挡闸唯一的正常放行路。
+        // 通道选择与「为何不进 Fn:: 契约名表」见 BridgeApi.h timing::FirstFrameSignal 处注释。
+        // 载荷不看：这条信号只有「到了」这一个信息量，前端也只发一次。
+        .withEventListener(juce::Identifier(bridge::timing::FirstFrameSignal),
+                           [this](const juce::var&) { handleFirstFrame(); });
 }
 
 std::optional<juce::WebBrowserComponent::Resource>
@@ -499,9 +678,28 @@ juce::var SynchainBridgeWebEditor::buildSnapshot() const
 // -----------------------------------------------------------------------------
 void SynchainBridgeWebEditor::timerCallback()
 {
-    // WebView2 看门狗：5s。后端选对（withBackend webview2）后前端确实走 WebView2 加载，
-    // 正常冷启动远快于此；超时即判定加载失败，切兜底面板（可重试 / 重开窗口），文案不误报"运行时缺失"。
-    if (!mBridgeReady && mFallback == nullptr && juce::Time::getMillisecondCounter() - mStartMs > 5000)
+    // [SL-386] 遮挡闸在这个 tick 上做两件事，都收在 mRevealGate.onTick 里：
+    //   · 首帧信号已到时结算那一拍（tick 数 ∧ 32ms 毫秒下界）——「信号 = 帧已提交」，
+    //     提交到上屏还差一拍，所以放行落在这里而不是 handleFirstFrame 里；
+    //   · 信号没来时到点强制放行（kRevealFallbackMs），绝不允许「永远挪在外面」——
+    //     那会是一块彻底不动的占位板，比白闪坏得多。
+    // 放行只可能发生在这个 tick 上（fallback 那条除外）；判定与几何的落点见 applyRevealGate。
+    if (mRevealGate.parked())
+    {
+        mRevealGate.onTick(juce::Time::getMillisecondCounter());
+        if (!mRevealGate.parked())
+        {
+            applyRevealGate();
+            noteRevealed();
+        }
+    }
+
+    // WebView2 看门狗：kWatchdogBudgetMs（5s，行为不变）。后端选对（withBackend webview2）后
+    // 前端确实走 WebView2 加载，正常冷启动远快于此；超时即判定加载失败，切兜底面板
+    // （可重试 / 重开窗口），文案不误报"运行时缺失"。比较走 uint32 差值再转 int32：
+    // getMillisecondCounter 每 ~49 天回绕，直接比大小会在回绕点把「还没到点」算成「早就超时」。
+    if (!mBridgeReady && mFallback == nullptr &&
+        static_cast<juce::int32>(juce::Time::getMillisecondCounter() - mStartMs) > kWatchdogBudgetMs)
     {
         showFallback(FallbackReason::LoadTimeout);
         return;
@@ -530,7 +728,7 @@ void SynchainBridgeWebEditor::timerCallback()
         m->setProperty("ldb", ldb);
         m->setProperty("rdb", rdb);
         m->setProperty("peak", peak);
-        mWebView.emitEventIfBrowserIsVisible(juce::Identifier(bridge::Event::Meter), juce::var(m));
+        mWebView->emitEventIfBrowserIsVisible(juce::Identifier(bridge::Event::Meter), juce::var(m));
         mLastLdb = ldb;
         mLastRdb = rdb;
     }
@@ -543,7 +741,7 @@ void SynchainBridgeWebEditor::timerCallback()
         s->setProperty("running", running);
         s->setProperty("clients", clients);
         s->setProperty("port", running && server.getPort() > 0 ? server.getPort() : mProcessor.getPort());
-        mWebView.emitEventIfBrowserIsVisible(juce::Identifier(bridge::Event::State), juce::var(s));
+        mWebView->emitEventIfBrowserIsVisible(juce::Identifier(bridge::Event::State), juce::var(s));
         mLastRunning = running;
         mLastClients = clients;
     }
@@ -557,7 +755,7 @@ void SynchainBridgeWebEditor::timerCallback()
         a->setProperty("sampleRate", sampleRate);
         a->setProperty("channels", channels);
         a->setProperty("latencyMs", mProcessor.latencyMs());
-        mWebView.emitEventIfBrowserIsVisible(juce::Identifier(bridge::Event::Audio), juce::var(a));
+        mWebView->emitEventIfBrowserIsVisible(juce::Identifier(bridge::Event::Audio), juce::var(a));
         mLastSampleRate = sampleRate;
         mLastChannels = channels;
     }

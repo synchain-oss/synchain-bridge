@@ -58,6 +58,19 @@ inline constexpr const char* SetUiScale = "setUiScale";
 inline constexpr const char* CommitUiScale = "commitUiScale";
 } // namespace Fn
 
+// --- 时序/诊断面（**非契约**）：JUCE 内建 __JUCE__.postMessage ←→ withEventListener 通道 ---
+// [SL-386] 前端「首帧已绘」上行信号名。**不进**上面的 Fn:: 契约名表：它是插件内嵌前端与编辑器
+// 之间的一次性时序信号 —— 前端随插件同一 artifact 分发，不存在「新旧两端各自部署」的兼容面；
+// 走 JUCE 内建通道（window.__JUCE__.postMessage ←→ Options::withEventListener），不经 bridge.js、
+// 不占 Fn:: 名表（同 JUCE 自己 __juce__ 前缀的惯例；与 SCVB 的 __scvb__firstFrame 同口径）。
+// 判定为非协议面的完整理由与兼容性承诺见 docs/contract-changes/ 下 SL-386 的变更文档；
+// 机理与判据只写在 src/WebViewRevealGate.h 一处。web/index.html 的 <head> 内联脚本逐字引用
+// 这里的字面量（web-preview/reveal-first-frame.test.mjs 钉两处相等）。
+namespace timing
+{
+inline constexpr const char* FirstFrameSignal = "__bridge__firstFrame";
+} // namespace timing
+
 // --- withInitialisationData 预置键（首帧同步可读，无需往返）----------------
 namespace Init
 {
