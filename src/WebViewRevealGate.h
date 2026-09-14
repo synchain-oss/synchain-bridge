@@ -12,8 +12,13 @@
 // 无条件 fillAll(Colours::white),控制器建好前的白由它画;DefaultBackgroundColor 只在
 // 控制器建好之后才生效)。修法(移植自 SCVB 的 SL-370/376/378 方案,参考实现
 // scvb @ feature/v1 76ffb04 src/plugin-common/WebViewRevealGate.h):**根本不让它上屏** ——
-// 导航开始到「页面首帧已绘」之间,把 WebView 子窗口挪出宿主客户区之外,那块地方由宿主
-// paint 自绘占位底色(与页面成品可见底同形,见本文件下半段)。
+// 导航开始到「页面首帧已绘」之间,把 WebView 子窗口挪出宿主客户区之外,那块地方由**宿主**
+// (SynchainBridgeWebEditor::paint)自绘占位底色(与页面成品可见底同形,见本文件下半段)。
+// 占位共两层,各守一段、共用同一组色标(WebViewEditor.cpp 的 paintPlaceholderGradient):
+//   • 宿主 paint —— 遮挡窗口内唯一会跑的一层(挪走的子组件与可视区零交集,JUCE 按 bounds
+//     裁剪会整个跳过它的 paint;没有宿主这一层,屏上就是 wrapper 残留像素——bot 第 1 轮
+//     【重要】的定谳);
+//   • BridgeWebView::paint —— 未遮挡时子窗口自己的 fallbackPaint 白(导航开始前/放行之后)。
 //
 // 【为什么挪走而不是 setVisible(false) / 零尺寸】
 //   • setVisible(false) 走 JUCE componentVisibilityChanged → checkWindowAssociation,

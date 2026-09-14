@@ -30,9 +30,13 @@ namespace synchain
 // （含安装引导 + 重试）；运行时在但加载超时（看门狗）亦切兜底。
 //
 // [SL-386] 开窗遮挡闸（机理/理由只写在 src/WebViewRevealGate.h 一处）：导航开始后把
-// WebView 子窗口挪出可视区（不 setVisible(false)、不零尺寸），由 BridgeWebView::paint
-// 铺与成品可见底同形的占位渐变；前端 DOMContentLoaded 后两层 rAF 发首帧信号
-// （timing::FirstFrameSignal），**只认首帧放行**（navFinished 只记账），信号后再压
+// WebView 子窗口挪出可视区（不 setVisible(false)、不零尺寸），占位渐变分两层铺：
+//   • 宿主本类 paint() —— 遮挡窗口内唯一会跑的一层（BridgeWebView 被挪到 x=2W、与可视区
+//     零交集，JUCE 整个跳过它的 paint）；
+//   • BridgeWebView::paint —— 守「导航开始前 / 已放行」时自己表面上的白（fallbackPaint），
+//     未遮挡时被 WebView2 表面盖住。
+// 两层用同一组 kPlaceholderStops（成品可见底同形）。前端 DOMContentLoaded 后两层 rAF 发
+// 首帧信号（timing::FirstFrameSignal），**只认首帧放行**（navFinished 只记账），信号后再压
 // tick ∧ 32ms 一拍才挪回；3s 超时兜底，兜底面板逻辑不变。挪窗激活只在 Windows
 // （#if JUCE_WINDOWS）；mac 路径保持现状。
 // =============================================================================
@@ -44,6 +48,7 @@ public:
     ~SynchainBridgeWebEditor() override;
 
     void resized() override;
+    void paint(juce::Graphics&) override;
 
 private:
     void timerCallback() override;

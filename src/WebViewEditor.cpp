@@ -46,6 +46,26 @@ juce::Rectangle<int> parkedBounds(juce::Rectangle<int> visible) noexcept
     return {r.x, r.y, r.width, r.height};
 }
 
+#if JUCE_WINDOWS
+// [SL-386] 占位渐变的**唯一绘制实现**,两个调用点共用(不许各写一份——三处同源的 C++ 侧
+// 只有一个消费者入口):① 宿主 SynchainBridgeWebEditor::paint(遮挡窗口内唯一会跑的一层);
+// ② BridgeWebView::paint(守导航开始前/已放行时自己表面上的 fallbackPaint 白)。
+// 色标与几何真源 = webview::kPlaceholderStops / placeholderGradientEndpoints。
+void paintPlaceholderGradient(juce::Graphics& g, int width, int height)
+{
+    const auto e = webview::placeholderGradientEndpoints(width, height);
+    const auto p0 = juce::Point<float>(static_cast<float>(e.x0), static_cast<float>(e.y0));
+    const auto p1 = juce::Point<float>(static_cast<float>(e.x1), static_cast<float>(e.y1));
+    auto grad = juce::ColourGradient(juce::Colour(webview::kPlaceholderStops[0].argb), p0,
+                                     juce::Colour(webview::kPlaceholderStops[webview::kPlaceholderStopCount - 1].argb),
+                                     p1, false);
+    for (int i = 1; i < webview::kPlaceholderStopCount - 1; ++i)
+        grad.addColour(webview::kPlaceholderStops[i].position, juce::Colour(webview::kPlaceholderStops[i].argb));
+    g.setGradientFill(grad);
+    g.fillAll();
+}
+#endif
+
 // -----------------------------------------------------------------------------
 // FallbackPanel — WebView 起不来时的最小原生兜底面板。
 // 仅提供 Start/Stop + 端口 + 状态，保证 UI 加载失败时仍可控制桥 #2。
@@ -200,18 +220,13 @@ public:
         juce::WebBrowserComponent::paint(g);
 
 #if JUCE_WINDOWS
-        // [SL-386] 占位底 = 成品可见底（web/styles.css --vb-card-surface 的玻璃拟态渐变，
-        // 同形同渐变；三处同源判据 = web-preview/reveal-first-frame.test.mjs）。
-        const auto e = webview::placeholderGradientEndpoints(getWidth(), getHeight());
-        const auto p0 = juce::Point<float>(static_cast<float>(e.x0), static_cast<float>(e.y0));
-        const auto p1 = juce::Point<float>(static_cast<float>(e.x1), static_cast<float>(e.y1));
-        auto grad = juce::ColourGradient(
-            juce::Colour(webview::kPlaceholderStops[0].argb), p0,
-            juce::Colour(webview::kPlaceholderStops[webview::kPlaceholderStopCount - 1].argb), p1, false);
-        for (int i = 1; i < webview::kPlaceholderStopCount - 1; ++i)
-            grad.addColour(webview::kPlaceholderStops[i].position, juce::Colour(webview::kPlaceholderStops[i].argb));
-        g.setGradientFill(grad);
-        g.fillAll();
+        // [SL-386] 这一层守的是「**没被挪走时**自己表面上的白」：控制器已建好但导航尚未开始
+        // （闸门还没 parked）、以及放行之后的稳态过渡。⚠ 遮挡窗口内它**不被绘制**——本组件被
+        // 挪到 x=2W、与可视区零交集，JUCE 按 bounds 裁剪整个跳过它的 paint（bot 第 1 轮
+        // 【重要】抓到的正是这一点）；遮挡窗口的占位由宿主 paint() 铺，见本文件
+        // SynchainBridgeWebEditor::paint。占位底 = 成品可见底（web/styles.css
+        // --vb-card-surface 的玻璃拟态渐变，三处同源判据 = web-preview/reveal-first-frame.test.mjs）。
+        paintPlaceholderGradient(g, getWidth(), getHeight());
 #endif
     }
 
@@ -423,12 +438,26 @@ void SynchainBridgeWebEditor::logDiag(const juce::String& line) const
 void SynchainBridgeWebEditor::resized()
 {
     // [SL-386] WebView 的落点由遮挡闸决定：遮挡期间整块挪到可视区之外（尺寸不变），
-    // 那块地方由 BridgeWebView::paint 铺占位渐变。几何与理由见 WebViewRevealGate.h。
+    // 那块地方由下面的 paint()（宿主层）铺占位渐变。几何与理由见 WebViewRevealGate.h。
     // mac 上闸门从不 parked，恒走原位分支（行为与改动前一致）。
     if (mWebView != nullptr)
         mWebView->setBounds(mRevealGate.parked() ? parkedBounds(getLocalBounds()) : getLocalBounds());
     if (mFallback != nullptr)
         mFallback->setBounds(getLocalBounds());
+}
+
+// [SL-386] 宿主层的占位 paint —— **遮挡窗口内唯一会跑的一层**：BridgeWebView 被挪到
+// x=2W、与本组件可视区零交集，JUCE 的 paintComponentAndChildren 按子组件 bounds 裁剪,
+// 整个跳过它的 paint（bot 第 1 轮【重要】:没有这一层,屏上就是 wrapper 残留像素）。
+// 未遮挡时本组件被 WebView2 表面（不透明子组件）盖住,这一层净效果为零——留着它没有代价。
+// 与 BridgeWebView::paint 共用 paintPlaceholderGradient(同一组色标真源,不许各写一份)。
+// mac:保持现状,不铺占位(与改动前一致,Component::paint 默认空实现)。
+void SynchainBridgeWebEditor::paint(juce::Graphics& g)
+{
+    juce::ignoreUnused(g);
+#if JUCE_WINDOWS
+    paintPlaceholderGradient(g, getWidth(), getHeight());
+#endif
 }
 
 // -----------------------------------------------------------------------------

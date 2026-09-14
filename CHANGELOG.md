@@ -18,7 +18,9 @@
   的成熟方案(`WebViewRevealGate.h` @ 76ffb04,SL-370/376/378):
   1. **挪窗不隐藏** —— 导航开始(WebView2 控制器已建好)后把 WebView 子窗口整块挪出宿主
      可视区(尺寸一字不改,不 `setVisible(false)`、不零尺寸 —— 隐藏会把页面顶成
-     `about:blank`),宿主 `paint()` 自绘占位;**只认首帧放行**,`navigationFinished` 只记账
+     `about:blank`),**宿主 `paint()` 自绘占位**(遮挡窗口内唯一会跑的一层;挪走的子组件
+     与可视区零交集、JUCE 不再画它,`BridgeWebView::paint` 那层只守未遮挡时的
+     fallbackPaint 白 —— 两层共用同一组色标);**只认首帧放行**,`navigationFinished` 只记账
      不放行(它不保证任何一帧已合成);前端 `DOMContentLoaded` 后嵌套两层 rAF 发
      `__bridge__firstFrame` 信号,信号后再压一拍(tick 数 ∧ 32 ms 毫秒下界,回绕安全)才挪回;
      3 s 超时兜底(绝不允许「永远不放行」)。

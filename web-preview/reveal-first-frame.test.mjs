@@ -222,4 +222,20 @@ test("③ 接线源钉:webView 的 setVisible(false) 只许在 showFallback(兜�
     /timing::FirstFrameSignal/,
     "事件监听应按 BridgeApi.h timing::FirstFrameSignal 注册(不占 Fn:: 契约名表)",
   );
+
+  // [第 1 推 R2 源钉] 宿主 paint 必须在场且经共享实现铺占位。
+  // 遮挡窗口内 BridgeWebView 被挪到 x=2W、与可视区零交集,JUCE 整个跳过它的 paint ——
+  // 没有宿主这一层,屏上就是 wrapper 残留像素(bot 第 1 轮【重要】)。
+  // 删除式:删掉宿主 paint() ⇒ 本格红;复原 ⇒ 绿。
+  const paintAt = code.search(/void\s+SynchainBridgeWebEditor::paint\s*\(/);
+  assert.ok(
+    paintAt >= 0,
+    "SynchainBridgeWebEditor::paint 必须在场:它是遮挡窗口内唯一会跑的占位层(宿主层)",
+  );
+  const paintBody = code.slice(paintAt, paintAt + 900);
+  assert.match(
+    paintBody,
+    /paintPlaceholderGradient\(/,
+    "宿主 paint 必须经 paintPlaceholderGradient 铺占位(与 BridgeWebView 共用唯一实现)",
+  );
 });
