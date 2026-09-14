@@ -10,7 +10,7 @@
 | 项 | 值 |
 |---|---|
 | 日期 | `2026-09-14` |
-| PR | `#<本 PR>`(SL-386;PR 开出后首个跟进 commit 回填) |
+| PR | #34(fix/SL-386-reveal-gate → dev) |
 | 级别（`contract-impact`） | `none`（无 wire 变化；strict 级因触碰 `src/BridgeApi.h` 而新增本文档登记，`none` 申报不免检 —— 即本文档） |
 | 契约版本 | `BRIDGE_CONTRACT_VERSION`：`2.0` → `2.0`（不变） |
 | 主仓跟进 | 不需要：本变更无 wire 变化、不涉桥 #2，闭源网页端零感知（见下「兼容性说明」） |
