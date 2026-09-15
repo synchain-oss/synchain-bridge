@@ -36,7 +36,7 @@
   compliance)+ `web-preview/reveal-first-frame.test.mjs`(三处同源与接线源钉)+ 真机
   pluginval `--repeat 10` 放行分布数表(firstFrame 10/10、navFinished 0、timeout 0)。
 
-## [1.5.0]
+## [1.5.0] — 2026-09-05
 
 > 本段含两批改动:① 转 public 前的合规/安全整备(本身不改版本号);② **macOS 支持**,版本号随之由 1.4.0
 > 升至 **1.5.0**(`CMakeLists.txt` 的 `project(... VERSION)` 是唯一真源)。两批**均不涉及契约变更**

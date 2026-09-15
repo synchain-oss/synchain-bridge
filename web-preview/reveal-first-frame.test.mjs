@@ -152,8 +152,14 @@ test("② 首帧信号名同源 + 内联脚本时序结构(DOMContentLoaded + �
 test("③ 接线源钉:webView 的 setVisible(false) 只许在 showFallback(兜底路径)", () => {
   const src = read("src/WebViewEditor.cpp");
 
-  // 先剥注释再分析:注释里可能提到 setVisible(false) 等字面量,不应参与源钉。
-  const code = src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+  // 先把字符串字面量整体换成占位、**再**剥注释(第 2 推 R6):反过来的话,代码字符串里的
+  // `//`(如 "https://...")会被剥注释正则吃掉,把该行截成两半 —— 截点之后的
+  // setVisible(false) 就逃出源钉,判据假绿。
+  const code = src
+    .replace(/"(?:[^"\\]|\\.)*"/g, '""')
+    .replace(/'(?:[^'\\]|\\.)*'/g, "''")
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/\/\/[^\n]*/g, "");
 
   // 按成员函数定义切分,找出每个 setVisible(false) 的宿主函数。
   const fnRe = /void\s+SynchainBridgeWebEditor::(\w+)\s*\(/g;
@@ -237,5 +243,37 @@ test("③ 接线源钉:webView 的 setVisible(false) 只许在 showFallback(兜�
     paintBody,
     /paintPlaceholderGradient\(/,
     "宿主 paint 必须经 paintPlaceholderGradient 铺占位(与 BridgeWebView 共用唯一实现)",
+  );
+});
+
+test("④ 插件路径关掉卡片入场动画,且早于首帧信号生效(源钉,fail-closed)", () => {
+  const html = read("web/index.html");
+
+  // layoutForMode() 的 isPlugin 分支必须有关掉入场动画的那一句(第 2 推 R4):占位对齐的是
+  // 成品稳态,放行瞬间卡片若还在 vbUp 0.6s 淡入,就是「浅占位→深 root→浅卡片」的明暗跳变。
+  // 删除式:去掉 layoutForMode 里那句 animation: "none" ⇒ 本格红;复原 ⇒ 绿。
+  const fnAt = html.search(/function\s+layoutForMode\s*\(/);
+  assert.ok(fnAt >= 0, "index.html 应有 layoutForMode()(模式布局入口)");
+  const fnBody = html.slice(fnAt, html.indexOf("function", fnAt + 10));
+  assert.match(
+    fnBody,
+    /animation:\s*"none"/,
+    "layoutForMode() 的 isPlugin 分支必须关掉卡片入场动画(animation: none)",
+  );
+
+  // 时序:该句生效必须早于首帧信号 —— layoutForMode 由 boot() 在 DOMContentLoaded 派发中
+  // **同步**执行;而首帧信号要等两层 rAF,rAF 回调只能落在 DOMContentLoaded 派发**完成之后**
+  // 的下一个渲染帧(渲染不会打断事件派发),故「先关动画、后发信号」由构造保证。源钉钉住
+  // 「boot 在 DOMContentLoaded 同步调用 layoutForMode」这一事实(两层 rAF 已由 ② 钉住)。
+  const bootAt = html.search(/function\s+boot\s*\(/);
+  assert.ok(bootAt >= 0, "index.html 应有 boot()");
+  const bootBody = html.slice(
+    bootAt,
+    html.indexOf("}", html.indexOf("layoutForMode()", bootAt)),
+  );
+  assert.match(
+    bootBody,
+    /layoutForMode\(\)/,
+    "boot()(DOMContentLoaded 同步执行)必须先调 layoutForMode()",
   );
 });

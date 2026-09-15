@@ -43,6 +43,7 @@
 - 首帧用 `withInitialisationData`（`version/port/volume/lang`）同步 seed，再由 `requestInitialState` 拉活快照。
 - 沿用核对过的 API：`Options.withBackend/withNativeIntegrationEnabled/withNativeFunction/withResourceProvider/withWinWebView2Options/withInitialisationData`；`WebBrowserComponent.goToURL/emitEventIfBrowserIsVisible/getResourceProviderRoot`。**Windows 必须显式 `withBackend(Options::Backend::webview2)`**——否则 `getBackend()==defaultBackend`，JUCE 回退旧 IE ActiveX 控件（`Win32WebView`，不支持 resource provider / native 集成，会把 `https://juce.backend/` 当真实网址导航失败）。编译宏 `JUCE_USE_WIN_WEBVIEW2` / `NEEDS_WEBVIEW2` 只让 WebView2 代码路径存在 + 链接 loader，**不切换后端**。
 - 前端引入 JUCE 官方 helper `web/js/juce/index.js`（`import { getNativeFunction } from "./js/juce/index.js"`）。
+- 时序/诊断面信号（现有 `__bridge__firstFrame`）不进本表、不进 `Fn::` 名表：走 JUCE 内建 `__JUCE__.postMessage ←→ withEventListener` 通道，前端随插件同一 artifact 分发，不存在跨部署版本组合。判定与兼容性承诺见 `docs/contract-changes/20260914-sl386-reveal-gate.md`，字面量真源 `BridgeApi.h` `timing::` 命名空间。
 
 ### 主音量语义（决策 #4）
 - `masterGain` 是 APVTS `AudioParameterFloat`，`NormalisableRange{0,2}`，默认 `1.0`；获 DAW 自动化 + 状态持久化。

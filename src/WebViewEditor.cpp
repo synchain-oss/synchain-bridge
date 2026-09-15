@@ -449,9 +449,11 @@ void SynchainBridgeWebEditor::resized()
 // [SL-386] 宿主层的占位 paint —— **遮挡窗口内唯一会跑的一层**：BridgeWebView 被挪到
 // x=2W、与本组件可视区零交集，JUCE 的 paintComponentAndChildren 按子组件 bounds 裁剪,
 // 整个跳过它的 paint（bot 第 1 轮【重要】:没有这一层,屏上就是 wrapper 残留像素）。
-// 未遮挡时本组件被 WebView2 表面（不透明子组件）盖住,这一层净效果为零——留着它没有代价。
-// 与 BridgeWebView::paint 共用 paintPlaceholderGradient(同一组色标真源,不许各写一份)。
-// mac:保持现状,不铺占位(与改动前一致,Component::paint 默认空实现)。
+// 未遮挡时它仍会整块 fill —— WebBrowserComponent 不是 JUCE 意义上的 opaque 组件,JUCE
+// 不会把它的矩形从父层裁掉 —— 只是绘制结果被 WebView2 自己的 HWND 盖住;频次为一次开窗
+// 2–3 次,可忽略。刻意**不加**「未遮挡就 return」的早退:放行路径本轮不动,别为省一次
+// fill 引入新分支面。与 BridgeWebView::paint 共用 paintPlaceholderGradient(同一组色标
+// 真源,不许各写一份)。mac:保持现状,不铺占位(Component::paint 默认空实现)。
 void SynchainBridgeWebEditor::paint(juce::Graphics& g)
 {
     juce::ignoreUnused(g);
