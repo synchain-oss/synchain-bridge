@@ -170,10 +170,10 @@ jobs:
       # 5c) 跑两个 selftest(与 scripts/gates.ps1 的 gate 5b / compliance / mac job 的 Run selftests 同源同用例)。
       #     VS 多配置生成器把 .exe 放在 build/Release/,用 Get-ChildItem -Recurse 定位并断言「恰好 1 个」:
       #     找不到即红(静默跳过等于把断言从门禁删掉),多于 1 个说明构建目录不干净。
-      - name: Run selftests (origin allowlist + PCM frame)
+      - name: Run selftests (origin allowlist + PCM frame + reveal gate)
         shell: pwsh
         run: |
-          foreach ($t in 'origin_allowlist_selftest', 'pcm_frame_selftest') {
+          foreach ($t in 'origin_allowlist_selftest', 'pcm_frame_selftest', 'reveal_gate_selftest') {
             $exes = @(Get-ChildItem -Path build -Recurse -File -Filter "$t.exe" | Where-Object { $_.FullName -notmatch '[\\/]_deps[\\/]' })
             if ($exes.Count -ne 1) { Write-Error "expected exactly 1 $t.exe under build (configure must pass -DBRIDGE_BUILD_SELFTESTS=ON), found $($exes.Count)"; exit 1 }
             Write-Host "::group::$t"
@@ -487,11 +487,11 @@ jobs:
       #     Ninja 单配置生成器把可执行文件放在 build/ 根,但仍用 find 定位,免得生成器 / 输出目录一变就
       #     静默找不到;断言「恰好 1 个」并用 -print -quit 取路径,与下面 bundle 定位同口径(pipefail 下
       #     `find | head` 会因 SIGPIPE 翻车)。失败也闭合 ::group::,后续日志不被吞进折叠区。
-      - name: Run selftests (origin allowlist + PCM frame)
+      - name: Run selftests (origin allowlist + PCM frame + reveal gate)
         shell: bash
         run: |
           set -euo pipefail
-          for t in origin_allowlist_selftest pcm_frame_selftest; do
+          for t in origin_allowlist_selftest pcm_frame_selftest reveal_gate_selftest; do
             n=$(find build -type f -name "$t" -perm -u+x -not -path '*/_deps/*' | wc -l | tr -d '[:space:]')
             if [ "$n" != "1" ]; then
               echo "::error::expected exactly 1 $t executable under build (configure must pass -DBRIDGE_BUILD_SELFTESTS=ON), found $n"; exit 1

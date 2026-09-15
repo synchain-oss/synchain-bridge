@@ -18,7 +18,7 @@
 
 本仓三处锁死 **9420**：
 
-- `src/BridgeApi.h:95` —— `synchain::plugin::DefaultPort = 9420`
+- `src/BridgeApi.h` 的 `synchain::plugin::DefaultPort = 9420`（符号定位；行号随文件头部时序注释增删漂移）
 - `web/bridge.js:22` —— `const DEFAULT_PORT = 9420`
 - `web-preview/mock-server.mjs:42` —— `PORT_BASE`（默认 9420）
 
@@ -32,7 +32,7 @@
 
 抽取后，C++ 端（本仓 `src/WebSocketProtocol.*` / `src/VstBridgeServer.*`）与 web 端（闭源网页应用）**分处两个仓库**，协议演进失去「同一 PR 原子改两端」的能力。靠两件事维系：
 
-1. **协议版本号** `BRIDGE_CONTRACT_VERSION = "2.0"`（独立于插件版本，semver；真源 `src/BridgeApi.h:76-79`，经 `status` 帧可选字段 `contract` 上报，只增不改）。
+1. **协议版本号** `BRIDGE_CONTRACT_VERSION = "2.0"`（独立于插件版本，semver；真源 `src/BridgeApi.h` 的 `synchain::contract::ContractVersion`，经 `status` 帧可选字段 `contract` 上报，只增不改）。
 2. **三级变更流程**（`BRIDGE_CONTRACT.md` §五）：patch（纯文档澄清，单仓 PR）/ minor（只增可选字段，Bridge 仓合并后主仓异步跟进）/ major（改字段名/布局/删消息/改必填语义，必须先 RFC PR → 主仓新旧双读 → 两侧上线后才移除旧路径，兼容窗口 ≥ 1 个插件 minor 版本）。
 
 ## 3. 契约治理与护栏

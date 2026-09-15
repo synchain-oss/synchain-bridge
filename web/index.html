@@ -9,6 +9,58 @@
       rel="icon"
       href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%2321212a'/%3E%3C/svg%3E"
     />
+    <!-- [SL-386] 开窗遮挡闸的首帧前底色：html 画布直接铺「成品可见底」的同形渐变
+         （= styles.css --vb-card-surface 的玻璃拟态底），取代浏览器默认白。内联必须排在
+         <link rel="stylesheet"> 之前（外链 css 未到时它就是屏上唯一的底）；外链到达后
+         #vst-root 与卡片稳态盖过 html 画布，稳态零差异。三处同源（本内联 / styles.css
+         token / C++ WebViewRevealGate.h kPlaceholderStops）由
+         web-preview/reveal-first-frame.test.mjs 钉三处相等。 -->
+    <style>
+      html {
+        background: linear-gradient(
+          157deg,
+          #b5acc9 0%,
+          #ccbfd5 32%,
+          #e3d2e0 64%,
+          #fde8ed 100%
+        );
+      }
+    </style>
+    <!-- [SL-386] 「首帧已绘」上行信号 —— 开窗遮挡闸唯一的正常放行路（3s 超时兜底除外）。
+         机理/为什么挪窗/为什么只认首帧，只写在 src/WebViewRevealGate.h 一处，别在这里复述。
+         通道：JUCE 内建 __JUCE__.postMessage ←→ withEventListener（不经 bridge.js、不占
+         BridgeApi.h Fn:: 契约名表）；事件名真源 = src/BridgeApi.h timing::FirstFrameSignal，
+         此处逐字引用（判据 = web-preview/reveal-first-frame.test.mjs）。
+         **必须嵌套两层 requestAnimationFrame**：单层 rAF 的回调跑在这一帧提交**之前**，
+         只有在它里面再要一帧，回调触发时前一帧才确实已经合成。浏览器预览下没有
+         __JUCE__，静默返回；发不出去也不许卡住 —— C++ 侧还有 3s 超时兜底。 -->
+    <script>
+      (function () {
+        function signal() {
+          try {
+            var juce = window.__JUCE__;
+            if (!juce || typeof juce.postMessage !== "function") return;
+            juce.postMessage(
+              JSON.stringify({ eventId: "__bridge__firstFrame", payload: {} }),
+            );
+          } catch {
+            // 发不出去也不许卡住:C++ 侧还有 3s 超时兜底。
+          }
+        }
+        function arm() {
+          if (typeof window.requestAnimationFrame !== "function") {
+            signal();
+            return;
+          }
+          window.requestAnimationFrame(function () {
+            window.requestAnimationFrame(signal);
+          });
+        }
+        if (document.readyState === "loading")
+          document.addEventListener("DOMContentLoaded", arm);
+        else arm();
+      })();
+    </script>
     <!-- 离线自包含：无 Google Fonts / CDN。样式与字体见 styles.css，逻辑走 ES module。 -->
     <link rel="stylesheet" href="./styles.css" />
   </head>
@@ -48,13 +100,9 @@
           max-width: 100%;
           border-radius: 20px;
           overflow: hidden;
-          background: linear-gradient(
-            157deg,
-            #b5acc9 0%,
-            #ccbfd5 32%,
-            #e3d2e0 64%,
-            #fde8ed 100%
-          );
+          /* [SL-386] 成品可见底 token 化：--vb-card-surface 定义在 styles.css（外链 css 未到的
+             极短窗口内回退到 <head> 内联的 html 底，同一渐变，无跳阶）。 */
+          background: var(--vb-card-surface);
           box-shadow:
             0 44px 92px rgba(0, 0, 0, 0.5),
             0 8px 22px rgba(0, 0, 0, 0.32);
@@ -1039,6 +1087,11 @@
         if (isPlugin) {
           // #vst-root 已是 fixed;inset:0;overflow:hidden（= 视口裁剪框）；卡片 = 固定设计盒、绝对定位于左上，
           // 由 applyScale 的 zoom:F 缩放到铺满编辑器窗口（尺寸不依赖视口，稳健）。
+          // [SL-386 第 2 推 R4 + 第 3 推 R1 时序改准] 插件路径关掉卡片入场动画 vbUp(0.6s 透明淡入)：
+          // 占位对齐的是成品稳态，放行瞬间卡片不能还在淡入（浅占位→深 root→浅卡片的明暗跳变）。
+          // 时序：主脚本 type="module"，boot() 在模块求值时（readyState === "interactive"）已执行、
+          // 早于 DOMContentLoaded 派发；首帧信号在 DOMContentLoaded 之后还要等两层 rAF ——
+          // 「先关动画、后发信号」由构造保证。浏览器预览路径（else 分支）动画照旧。
           Object.assign(root.style, {
             display: "block",
             alignItems: "",
@@ -1051,6 +1104,7 @@
             width: DESIGN_W + "px",
             height: DESIGN_H + "px",
             maxWidth: "none",
+            animation: "none",
           });
         } else {
           // 纯浏览器预览：卡片固定设计盒 + 按视口等比缩小演示（resize 重算 fit）。去掉 max-width:100%，

@@ -18,7 +18,7 @@ if(NOT DEFINED CMAKE_OSX_DEPLOYMENT_TARGET)
   set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0" CACHE STRING "Minimum macOS version")
 endif()
 
-project(SynchainBridgeVST VERSION 1.5.0)
+project(SynchainBridgeVST VERSION 1.5.1)
 
 # Export compile_commands.json for clangd / clang-tidy (08 §3.2)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
@@ -264,21 +264,25 @@ configure_file(cmake/BridgeOriginConfig.h.in
 target_include_directories(SynchainBridgeVST PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
 
 # --- Optional: pure-logic selftests ---
-# Two dependency-free executables, one per pure header under src/:
+# Three dependency-free executables, one per pure header under src/:
 #   origin_allowlist_selftest — src/OriginAllowlist.h (normalisation, injected-pattern
 #                               usability, pattern matching);
 #   pcm_frame_selftest        — src/PcmFrame.h (12-byte PCM frame header, golden bytes per
 #                               BRIDGE_CONTRACT.md §二 1; the legacy synchronous path and
 #                               the sender-thread path in src/VstBridgeServer.cpp both
-#                               encode through it).
+#                               encode through it);
+#   reveal_gate_selftest      — src/WebViewRevealGate.h (SL-386 reveal gate: first-frame-only
+#                               release, navFinished bookkeeping only, settle ticks ∧ 32 ms
+#                               floor with wrap safety, 3s timeout, parked geometry, placeholder
+#                               gradient golden).
 # Standard library only: no JUCE, no ixwebsocket, no link against the plugin target — so
 # they build and run in seconds. OFF by default; the local gate script (scripts/gates.ps1)
-# and both ci.yml build jobs configure with -DBRIDGE_BUILD_SELFTESTS=ON and run both, so
+# and both ci.yml build jobs configure with -DBRIDGE_BUILD_SELFTESTS=ON and run all three, so
 # the /W4 and clang -Wall -Wextra -Wpedantic zero-warning gates cover the selftests too;
 # the compliance workflow compiles the same sources with plain g++ on ubuntu.
-option(BRIDGE_BUILD_SELFTESTS "Build pure-logic selftests (origin allowlist + PCM frame)" OFF)
+option(BRIDGE_BUILD_SELFTESTS "Build pure-logic selftests (origin allowlist + PCM frame + reveal gate)" OFF)
 if(BRIDGE_BUILD_SELFTESTS)
-  foreach(_selftest IN ITEMS origin_allowlist_selftest pcm_frame_selftest)
+  foreach(_selftest IN ITEMS origin_allowlist_selftest pcm_frame_selftest reveal_gate_selftest)
     add_executable(${_selftest} tests/${_selftest}.cpp)
     target_compile_features(${_selftest} PRIVATE cxx_std_17)
     target_include_directories(${_selftest} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)

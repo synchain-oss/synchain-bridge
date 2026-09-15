@@ -58,6 +58,14 @@ jobs:
         run: |
           g++ -std=c++17 -I src -o /tmp/pcm_frame_selftest tests/pcm_frame_selftest.cpp
           /tmp/pcm_frame_selftest
+      - name: Reveal gate selftest
+        # [SL-386] 开窗遮挡闸纯逻辑断言(tests/reveal_gate_selftest.cpp):只认首帧放行 /
+        # navFinished 只记账 / settle 双条件(tick ∧ 32ms 下界,回绕安全)/ 3s 超时兜底 /
+        # 挪窗几何 / 占位渐变 golden。src/WebViewRevealGate.h 零第三方依赖(纯 C++17)。
+        # 与本地 gate 5b 同源同用例,编译参数与上两步逐字同构。
+        run: |
+          g++ -std=c++17 -I src -o /tmp/reveal_gate_selftest tests/reveal_gate_selftest.cpp
+          /tmp/reveal_gate_selftest
       - name: PCM frame selftest (web-preview mock, node:test)
         # JS 侧同布局实现 web-preview/pcm-frame.mjs 由 web-preview/pcm-frame.test.mjs 用与上一步
         # **同一组 golden 字节**钉死(node:test + node:assert,零依赖,不 npm install:测试只 import
@@ -66,6 +74,12 @@ jobs:
         # runner 镜像的 node 版本轮换时不应影响本步骤。ubuntu 镜像自带 node ≥ 20,与 web-preview/README
         # 的「Node ≥ 18」要求兼容。
         run: node --test web-preview/pcm-frame.test.mjs
+      - name: Reveal gate cross-language criteria (node:test)
+        # [SL-386] 占位底三处同源(styles.css token ↔ index.html 内联 html 底 ↔ C++ 色标)、
+        # 首帧信号名两处同源(BridgeApi.h ↔ index.html)与接线删除式源钉
+        # (web-preview/reveal-first-frame.test.mjs;C++ 行为半边由 reveal_gate_selftest 钉)。
+        # 零依赖,不 npm install;文件路径显式给出(与上一步同一口径,兼容 node 20/≥21)。
+        run: node --test web-preview/reveal-first-frame.test.mjs
       - name: PCM frame wiring (VstBridgeServer.cpp must encode via PcmFrame.h)
         # 与本地 gate 3f 同构:上面的 golden selftest 钉不住「VstBridgeServer.cpp 真的经 PcmFrame.h 组帧」
         # (那要链 JUCE 才测得到),故用文本断言 —— 必须 #include "PcmFrame.h",且不得再出现抽取前两份
