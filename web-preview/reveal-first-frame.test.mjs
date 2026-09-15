@@ -272,6 +272,11 @@ test("④ 插件路径关掉卡片入场动画,且早于首帧信号生效(源�
       '"module"' +
       "(boot() 在模块求值时执行,早于 DOMContentLoaded 派发)",
   );
+  // [第 4 推 R2] 含 boot() 的脚本必须是那个 module 脚本(boot 定义在 module 开标签之后)。
+  assert.ok(
+    html.search(/function\s+boot\s*\(/) > moduleAt,
+    "boot() 必须定义在 type=module 脚本内(时序保证的前半句)",
+  );
 
   // [第 3 推 R1 改准] 时序:boot() 在**模块求值时**(readyState === "interactive")已执行、
   // 早于 DOMContentLoaded 派发 —— 不是「DOMContentLoaded 派发中同步执行」(module 脚本在
@@ -286,10 +291,12 @@ test("④ 插件路径关掉卡片入场动画,且早于首帧信号生效(源�
   assert.ok(ifAt >= 0, "layoutForMode() 应有 isPlugin 分支");
   const elseAt = html.indexOf("} else {", ifAt);
   assert.ok(elseAt > ifAt, "layoutForMode() 应有 else(预览)分支");
-  const pluginSeg = html.slice(ifAt, elseAt);
+  // [第 4 推 R2] pluginSeg 匹配前先剥 `//` 行注释:否则 isPlugin 段注释里写出
+  // animation: "none" 字面量、真句删掉,本格照样绿(改前绿已实测)。
+  const pluginSeg = html.slice(ifAt, elseAt).replace(/\/\/[^\n]*/g, "");
   assert.match(
     pluginSeg,
     /animation:\s*"none"/,
-    "layoutForMode() 的 **isPlugin 段**必须关掉卡片入场动画(挪去 else 或删掉 ⇒ 红)",
+    "layoutForMode() 的 **isPlugin 段**必须关掉卡片入场动画(挪去 else、删掉、或只写在注释里 ⇒ 红)",
   );
 });

@@ -392,9 +392,10 @@ void SynchainBridgeWebEditor::handleFirstFrame()
             (mRevealGate.parked() ? juce::String(" (still parked)") : juce::String(" (already revealed)")));
     // onFirstFrame 只武装不放行（tick ∧ 32ms 一拍在 timerCallback 的 onTick 里结算）；
     // 传 nowMs 是因为毫秒下界要从信号到达那一刻起算。
-    // 防御性保留，可达性为零（理由同 onNavigationFinished() 的省略说明）：此刻闸门必在
-    // settling 态，noteRevealed() 的早退条件恒命中 —— 留它们只为「闸门状态一变就落地」
-    // 这条不变式只有 applyRevealGate 一个出口。
+    // 防御性保留，效果为零 —— 信号在 settling 期到达时 noteRevealed() 的 parked() 条件早退；
+    // 信号在兜底/超时放行之后才到（onFirstFrame 的 !parked_ 分支）时 mRevealLogged 已置位。
+    // applyRevealGate() 留着是为了保住「闸门状态一变就落地」只有一个出口这条不变式，
+    // 代价是一次多余的 repaint()。
     mRevealGate.onFirstFrame(juce::Time::getMillisecondCounter());
     applyRevealGate();
     noteRevealed();
