@@ -1087,6 +1087,11 @@
         if (isPlugin) {
           // #vst-root 已是 fixed;inset:0;overflow:hidden（= 视口裁剪框）；卡片 = 固定设计盒、绝对定位于左上，
           // 由 applyScale 的 zoom:F 缩放到铺满编辑器窗口（尺寸不依赖视口，稳健）。
+          // [SL-386 第 2 推 R4 + 第 3 推 R1 时序改准] 插件路径关掉卡片入场动画 vbUp(0.6s 透明淡入)：
+          // 占位对齐的是成品稳态，放行瞬间卡片不能还在淡入（浅占位→深 root→浅卡片的明暗跳变）。
+          // 时序：主脚本 type="module"，boot() 在模块求值时（readyState === "interactive"）已执行、
+          // 早于 DOMContentLoaded 派发；首帧信号在 DOMContentLoaded 之后还要等两层 rAF ——
+          // 「先关动画、后发信号」由构造保证。浏览器预览路径（else 分支）动画照旧。
           Object.assign(root.style, {
             display: "block",
             alignItems: "",

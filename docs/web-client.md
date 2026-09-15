@@ -18,7 +18,7 @@
 
 本仓三处锁死 **9420**：
 
-- `src/BridgeApi.h:95` —— `synchain::plugin::DefaultPort = 9420`
+- `src/BridgeApi.h` 的 `synchain::plugin::DefaultPort = 9420`（符号定位；行号随文件头部时序注释增删漂移）
 - `web/bridge.js:22` —— `const DEFAULT_PORT = 9420`
 - `web-preview/mock-server.mjs:42` —— `PORT_BASE`（默认 9420）
 

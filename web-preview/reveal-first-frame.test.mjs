@@ -155,6 +155,9 @@ test("③ 接线源钉:webView 的 setVisible(false) 只许在 showFallback(兜�
   // 先把字符串字面量整体换成占位、**再**剥注释(第 2 推 R6):反过来的话,代码字符串里的
   // `//`(如 "https://...")会被剥注释正则吃掉,把该行截成两半 —— 截点之后的
   // setVisible(false) 就逃出源钉,判据假绿。
+  // ⚠ 残余局限(第 3 推):这仍是**词法近似** —— 若将来注释/字符串里出现落单的引号,
+  // 占位正则可能与真实代码的引号错误配对,把中间段落(连同其中的 setVisible(false))整体
+  // 吞掉,本格静默假绿。该方向由下方的**独立原始源码绷线**(不经词法器,逐字计数)兜住。
   const code = src
     .replace(/"(?:[^"\\]|\\.)*"/g, '""')
     .replace(/'(?:[^'\\]|\\.)*'/g, "''")
@@ -186,6 +189,16 @@ test("③ 接线源钉:webView 的 setVisible(false) 只许在 showFallback(兜�
       `setVisible(false) 只允许出现在 showFallback,发现在 ${o} —— 遮挡闸不许隐藏 WebView` +
         `(keepPageLoadedWhenBrowserIsHidden 默认 false,隐藏会把页面顶成 about:blank)`,
     );
+
+  // [第 3 推 R2 独立绷线] 不经词法器,直接数**原始源码**:带成员访问前缀的
+  // setVisible(false) 必须恰好一处(showFallback)。注释里的两处提及都是裸
+  // setVisible(false)、无 mWebView-> 前缀,不会误计;上方词法近似(字符串占位)的
+  // 残余假绿方向由这条独立兜住。删除式:任意位置加一行 mWebView->setVisible(false); ⇒ 红。
+  assert.equal(
+    (src.match(/mWebView\s*->\s*setVisible\(\s*false\s*\)/g) ?? []).length,
+    1,
+    "原始源码里 mWebView->setVisible(false) 必须恰好一处(showFallback 之外不许隐藏 WebView)",
+  );
 
   // 放行链调用点在场(删接线即红;行为那半边由 reveal_gate_selftest + pluginval 数表兜)。
   assert.match(
@@ -249,31 +262,34 @@ test("③ 接线源钉:webView 的 setVisible(false) 只许在 showFallback(兜�
 test("④ 插件路径关掉卡片入场动画,且早于首帧信号生效(源钉,fail-closed)", () => {
   const html = read("web/index.html");
 
-  // layoutForMode() 的 isPlugin 分支必须有关掉入场动画的那一句(第 2 推 R4):占位对齐的是
-  // 成品稳态,放行瞬间卡片若还在 vbUp 0.6s 淡入,就是「浅占位→深 root→浅卡片」的明暗跳变。
-  // 删除式:去掉 layoutForMode 里那句 animation: "none" ⇒ 本格红;复原 ⇒ 绿。
-  const fnAt = html.search(/function\s+layoutForMode\s*\(/);
-  assert.ok(fnAt >= 0, "index.html 应有 layoutForMode()(模式布局入口)");
-  const fnBody = html.slice(fnAt, html.indexOf("function", fnAt + 10));
-  assert.match(
-    fnBody,
-    /animation:\s*"none"/,
-    "layoutForMode() 的 isPlugin 分支必须关掉卡片入场动画(animation: none)",
+  // 主脚本必须是 type="module":整条时序保证依赖它 —— module 脚本在文档解析完
+  // (readyState === "interactive")时求值,早于 DOMContentLoaded 派发。删除式:去掉
+  // type="module" ⇒ 本格红(module 求值点变了,boot() 的执行时机不再由构造保证)。
+  const moduleAt = html.search(/<script\s+type="module">/);
+  assert.ok(
+    moduleAt >= 0,
+    "主脚本必须 type=" +
+      '"module"' +
+      "(boot() 在模块求值时执行,早于 DOMContentLoaded 派发)",
   );
 
-  // 时序:该句生效必须早于首帧信号 —— layoutForMode 由 boot() 在 DOMContentLoaded 派发中
-  // **同步**执行;而首帧信号要等两层 rAF,rAF 回调只能落在 DOMContentLoaded 派发**完成之后**
-  // 的下一个渲染帧(渲染不会打断事件派发),故「先关动画、后发信号」由构造保证。源钉钉住
-  // 「boot 在 DOMContentLoaded 同步调用 layoutForMode」这一事实(两层 rAF 已由 ② 钉住)。
-  const bootAt = html.search(/function\s+boot\s*\(/);
-  assert.ok(bootAt >= 0, "index.html 应有 boot()");
-  const bootBody = html.slice(
-    bootAt,
-    html.indexOf("}", html.indexOf("layoutForMode()", bootAt)),
-  );
+  // [第 3 推 R1 改准] 时序:boot() 在**模块求值时**(readyState === "interactive")已执行、
+  // 早于 DOMContentLoaded 派发 —— 不是「DOMContentLoaded 派发中同步执行」(module 脚本在
+  // 解析完、DOMContentLoaded 事件之前求值,此刻 readyState 已是 interactive,走的是
+  // readyState !== "loading" 的立即分支)。首帧信号则在 DOMContentLoaded 之后等两层 rAF,
+  // 故「先关动画、后发信号」由构造保证。删除式双向:
+  //   · 去掉 isPlugin 段里的 animation: "none" ⇒ 本格红;
+  //   · 把那句搬到 else(预览)分支 ⇒ 本格红(第 1/2 推的整函数断言对搬家假绿,已实测)。
+  const fnAt = html.search(/function\s+layoutForMode\s*\(/);
+  assert.ok(fnAt >= 0, "index.html 应有 layoutForMode()(模式布局入口)");
+  const ifAt = html.indexOf("if (isPlugin)", fnAt);
+  assert.ok(ifAt >= 0, "layoutForMode() 应有 isPlugin 分支");
+  const elseAt = html.indexOf("} else {", ifAt);
+  assert.ok(elseAt > ifAt, "layoutForMode() 应有 else(预览)分支");
+  const pluginSeg = html.slice(ifAt, elseAt);
   assert.match(
-    bootBody,
-    /layoutForMode\(\)/,
-    "boot()(DOMContentLoaded 同步执行)必须先调 layoutForMode()",
+    pluginSeg,
+    /animation:\s*"none"/,
+    "layoutForMode() 的 **isPlugin 段**必须关掉卡片入场动画(挪去 else 或删掉 ⇒ 红)",
   );
 });
