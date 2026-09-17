@@ -23,6 +23,24 @@
 
 > 本仓已含**开窗遮挡闸**（SL-386，占位 + 首帧信号放行），纯逻辑与判据见 `src/WebViewRevealGate.h`
 > 与 `web-preview/reveal-first-frame.test.mjs`；SCVB 是这套机制的上游（SL-370/376/378），勿重复实现。
+>
+> ⚠ **照搬时最容易漏的一件（SL-421 实际漏过一轮）**：开窗那几帧的白是**三层**，遮挡闸只是
+> 其中一层；缺任何一层都还是会看到白，而且**没有任何一格判据会自动红**。
+>
+> - **①-a 控制器建好之前** —— `BridgeWebView::paint`：先调基类（fallbackPaint 的白 + 控制器
+>   重试泵，**必须**调），再整块盖占位。
+> - **①-b 控制器已建好、页面还没画出来** —— `makeOptions()` 里的 `wv2.withBackgroundColour(...)`
+>   （= WebView2 的 `DefaultBackgroundColor`）。**不设就是全透明**（JUCE 把默认构造的
+>   `juce::Colour` 原样 put 进去）⇒ 露窗口的白。遮挡闸盖不到它（park 落在 `pageAboutToLoad`，
+>   而控制器在 `Navigate` 之前就建好并上屏），①-c 也不替它顶班。取值必须与占位渐变同源、
+>   且只能是纯色（这个属性没有渐变形态）⇒ 取渐变轴中点色**现算**，别另写字面量。
+> - **①-c 页面已开画、外链 css 还没到** —— `web/index.html` `<head>` 内联的 `html` 底。
+>   ⚠ 正常路径上 `<link rel="stylesheet">` 是**渲染阻塞**的，那一段屏上其实是 ①-b；它确定
+>   兜住的只有「外链取不到 / 加载失败」那条路。
+>
+> 另：JUCE 对 `QueryInterface(ICoreWebView2Controller2)` 取不到是**静默跳过**（没有 else、
+> 没有日志、不看 HRESULT），所以 ①-b 必须配一行诊断（`webview2 default background: ...`），
+> 否则「设了没生效」与「压根没设」在真机上分不开。
 
 ### 1. 设计盒常量 `kDesignW/kDesignH`
 - **复制来源**：`src/WebViewEditor.cpp` 的 `kDesignW` / `kDesignH`（匿名命名空间常量）
