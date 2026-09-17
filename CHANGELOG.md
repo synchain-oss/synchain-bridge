@@ -6,12 +6,44 @@
 
 ## [未发布]
 
-> 版本号由 1.5.0 升至 **1.5.1**(唯一真源 `CMakeLists.txt` 的 `project(... VERSION)`,四镜像同步:
+> 版本号由 1.5.0 升至 **1.5.2**(唯一真源 `CMakeLists.txt` 的 `project(... VERSION)`,四镜像同步:
 > web-preview 的 mock-server.mjs / package.json / package-lock.json 与 `BRIDGE_CONTRACT.md` §三)。
-> **不涉及契约变更**(wire 协议零改动;`__bridge__firstFrame` 时序信号为非契约面,判定与兼容性
-> 承诺见 `docs/contract-changes/20260914-sl386-reveal-gate.md`)。
+> 1.5.1 与 1.5.2 两批改动都在本段:1.5.1 **没有发过 tag / Release**,只出过一个内部测试包。
+> **两批都不涉及契约变更**(wire 协议零改动;`__bridge__firstFrame` 时序信号为非契约面,判定与
+> 兼容性承诺见 `docs/contract-changes/20260914-sl386-reveal-gate.md`)。
 
 ### 修复
+
+- **补上遮挡闸盖不到的那一段白:WebView2 的 `DefaultBackgroundColor`(SL-421,1.5.2)**:
+  用户报开窗仍是「白 → 背景色 → 白 → 正常」的四段跳。SL-386 的遮挡闸、三处同源占位与插件内
+  关入场动画**都已在位**,缺的是 SCVB 三层白里的 **①-b** —— WebView2 在**任何** web 内容之下
+  铺的那一层。`makeOptions()` 此前从不调 `withBackgroundColour`,于是 JUCE 把默认构造的
+  `juce::Colour`(ARGB `0x00000000`,**全透明**)原样 put 进 `put_DefaultBackgroundColor`:
+  从控制器建好到页面画出来为止,这一层什么都不挡,露的就是窗口的白。
+  - **遮挡闸为什么盖不到它**:park 落在 `pageAboutToLoad`,而 WebView2 控制器是在 `Navigate`
+    **之前**就建好并上屏的;`<head>` 内联底(①-c)管的是外链 css 未到那一段,正常路径上
+    `<link rel="stylesheet">` 渲染阻塞期间屏上是 ①-b,它并不替 ①-b 顶班。
+  - **改法(照搬 SCVB `PlatformWebView.cpp` 的 `withBackgroundColour(shellBackdropMid())`)**:
+    取占位渐变沿轴 50% 的插值色(`DefaultBackgroundColor` 只收纯色,没有渐变形态),由
+    `WebViewRevealGate.h` 新增的 `placeholderMidArgb()` 从 `kPlaceholderStops` **现算** ——
+    不另写色值字面量,占位色仍只有一个真源。
+  - **可观测性**:JUCE 对 `QueryInterface(ICoreWebView2Controller2)` 取不到是**静默跳过**
+    (没有 else、没有日志、不看 HRESULT),故同时补上诊断行
+    `webview2 default background: available|UNAVAILABLE|unknown ...`(打在 `goToURL` 之前)。
+    ⚠ 它证的是**运行时有没有这个接口**,不是「JUCE 那次 QueryInterface 真成功了」,更不是
+    「那一帧屏上真是这个颜色」—— 行里自带 `inferred / not directly observed`,别读过头。
+  - 一并与 SCVB 形态对齐:编辑器构造里补 `setOpaque(true)`(SCVB 自己注明它**不治**开窗白闪,
+    管的是兜底面板路径那块底)。
+  - **平台面**:`withBackgroundColour`、`setOpaque(true)` 与诊断行调用点**三处都在
+    `#if JUCE_WINDOWS` 内**,mac / Linux 行为与改动前逐字一致。⚠ `setOpaque` 必须与 `paint()`
+    同条件 —— `paint()` 的绘制体本就只在 Windows,若 `setOpaque` 无条件生效,mac 上就成了
+    「声明自己不透明、却一个像素都不画」;诊断行同理,非 Windows 上那个哨兵版本串会让它打出
+    三句全假的一行(`UNAVAILABLE` / `inferred absent` / `JUCE drops argb ... silently`)。
+  判据:`tests/reveal_gate_selftest.cpp` 新增两组(中点色 golden `0xffd9cadb` 独立算出、
+  全不透明、必须是插值而非某个停靠点;版本串解析与支持三态的边界两侧各一格)+
+  `web-preview/reveal-first-frame.test.mjs` 新增第 ⑤ 格源钉(接线在场 / 取值不许写字面量 /
+  诊断行先于 `goToURL`)。⚠ **这一层缺席是静默的**:删掉那一句编译照过、C++ 自测照样全绿
+  (删除式对照格实测),第 ⑤ 格是它唯一的机检。
 
 - **开窗白闪改成与 SCVB 同一套遮挡闸(SL-386)**:开窗序列里 WebView2 那几帧白不受我方任何
   一层底色控制(WebView2 宿主 HWND 合成首帧前画什么,插件侧没有 API 管得到)。移植 SCVB

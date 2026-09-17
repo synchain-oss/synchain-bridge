@@ -194,6 +194,8 @@ private:
 //   ② web/styles.css 的 --vb-card-surface(css token,卡片背景消费它);
 //   ③ web/index.html <head> 内联的 html 底(外链 css 未到时的第一层底)。
 // 三处相等由 web-preview/reveal-first-frame.test.mjs 钉死(删除式:改任一处即红)。
+// [SL-421] 还有第 ④ 个消费者,但它**不是第四份拷贝**:WebView2 的 DefaultBackgroundColor
+// 只收纯色,取值由下面的 placeholderMidArgb() 从 ① 现算,没有独立字面量可漂。
 // -----------------------------------------------------------------------------
 
 struct PlaceholderStop
@@ -212,6 +214,122 @@ inline constexpr PlaceholderStop kPlaceholderStops[] = {
 inline constexpr int kPlaceholderStopCount = static_cast<int>(sizeof(kPlaceholderStops) / sizeof(kPlaceholderStops[0]));
 
 inline constexpr double kPlaceholderGradientDeg = 157.0; // 同 --vb-card-surface 的角度
+
+// -----------------------------------------------------------------------------
+// [SL-421] 占位渐变沿轴 50% 的插值色 —— 第 ④ 个消费者,给 WebView2 的
+// `DefaultBackgroundColor`(makeOptions 里的 withBackgroundColour)。
+//
+// 【为什么要有这一层】它是 WebView2 在**任何** web 内容之下铺的那一层,管的是
+// 「控制器已建好、文档还没画出来」这一段(SCVB 白闪分层图里的 ①-b;遮挡闸守的是 ①-a
+// 的 fallbackPaint、<head> 内联底守的是 ①-c 的外链 css 未到)。**不设它**的话 JUCE 会把
+// 默认构造的 juce::Colour = ARGB 0x00000000(全透明)原样 put 进 put_DefaultBackgroundColor
+// —— 这一层什么都不挡,露的是窗口的白。移植自 SCVB
+// src/plugin-common/PlatformWebView.cpp 的 withBackgroundColour(shellBackdropMid())。
+//
+// 【为什么是中点色而不是渐变】WebView2 的 DefaultBackgroundColor **只收纯色**,没有渐变
+// 形态。取占位渐变轴上 50% 的插值色,与渐变占位相邻处不跳阶。真源仍是上面那一组
+// kPlaceholderStops —— 这里算出来,不另写一个字面量。
+//
+// 相邻停靠点写成同一 position(CSS 里合法的硬边界写法)时 b-a == 0 ⇒ t 为 inf/NaN,
+// 故命中条件带 `b.position > a.position`;解析不出段时 fail-closed 取首色,不算 NaN。
+// alpha 通道同样插值:四个停靠点全不透明 ⇒ 结果恒 0xff,顺带守住「全不透明」这个前提
+// (JUCE 的 withBackgroundColour 只接受全不透明或全透明)。
+// -----------------------------------------------------------------------------
+inline std::uint32_t placeholderMidArgb() noexcept
+{
+    for (int i = 0; i + 1 < kPlaceholderStopCount; ++i)
+    {
+        const PlaceholderStop& a = kPlaceholderStops[i];
+        const PlaceholderStop& b = kPlaceholderStops[i + 1];
+        if (a.position <= 0.5 && 0.5 <= b.position && b.position > a.position)
+        {
+            const double t = (0.5 - a.position) / (b.position - a.position);
+            std::uint32_t out = 0;
+            for (int shift = 0; shift <= 24; shift += 8)
+            {
+                const double va = static_cast<double>((a.argb >> shift) & 0xffu);
+                const double vb = static_cast<double>((b.argb >> shift) & 0xffu);
+                const double mix = std::floor(va + t * (vb - va) + 0.5); // 四舍五入(值域恒非负)
+                out |= static_cast<std::uint32_t>(mix) << shift;
+            }
+            return out;
+        }
+    }
+    return kPlaceholderStops[0].argb; // 解析不出段时 fail-closed 取首色
+}
+
+// -----------------------------------------------------------------------------
+// [SL-421] `DefaultBackgroundColor` 这一层到底在不在(移植自 SCVB
+// src/plugin-common/PlatformWebView.h 的 BackgroundColourSupport)。
+//
+// 【为什么需要判】上面那句 withBackgroundColour 最终落到 JUCE 的
+// `WebView2::setWebViewPreferences`:它先 `QueryInterface(ICoreWebView2Controller2)`,
+// **取不到就静默跳过** put_DefaultBackgroundColor —— 那个 `if (controller2 != nullptr)`
+// 没有 else、没有日志、HRESULT 也不看。于是「我方到底铺没铺上这一层」在真机上完全
+// 不可观测。本函数把它变成 WebViewEditor 里一行可抓的诊断。
+//
+// 【它证到哪一步 —— 别读过头】判的是**运行时有没有这个接口**,不是「JUCE 那次
+// QueryInterface 真的成功了」,更不是「那一帧屏上真是这个颜色」。接口在场是
+// QueryInterface 成功的**必要条件**,反向不成立。
+//
+// 纯函数,只吃版本串,便于离线单测(真 loader 与真 WebView2 都够不着)。
+// -----------------------------------------------------------------------------
+
+// ICoreWebView2Controller2(即 DefaultBackgroundColor)的运行时主版本下限。
+// ⚠ **这个数字是本条判定里唯一没有机检、也无法离线核实的一环**:它来自该接口首发的
+// WebView2 SDK 1.0.774.44 所对应的 Edge 通道(87),仓里没有任何东西能把这条映射钉住。
+// 判错只影响诊断行的措辞,不改变任何行为(Evergreen Runtime 会自动升级,现实中不存在
+// 停在这一档的机器)。
+inline constexpr int kDefaultBackgroundMinRuntimeMajor = 87;
+
+// 版本串 → 主版本号;解析不出返回 -1。loader 可能返回 "137.0.3296.83",也可能带通道后缀
+// 写成 "137.0.3296.83 dev",只取首段数字;首段含任何非数字字符即判解析不出(**不猜**)。
+//
+// ⚠ 首段位数有上界 kMaxMajorDigits:超过就**拒绝**,既不截断也不继续乘。
+// 理由不是「现实中会发生」(WebView2 的 loader 给不出 10 位以上的主版本),而是**与本函数
+// 自己的既定口径一致** —— 它对一切解析不出的输入都回 -1「不猜」,那就不该在一个它同样
+// 判不了的输入上悄悄算出个数来。没有上界时 `value * 10 + …` 对 11 位以上首段是**有符号
+// 溢出 = UB**;而这是个取外部字符串的 noexcept 纯函数,UB 留着迟早被人当成「已验证过的
+// 输入路径」。9 位足够容下任何真实主版本(现值 152)还有五个数量级余量。
+inline constexpr int kMaxMajorDigits = 9;
+
+inline int majorVersionOf(const char* version) noexcept
+{
+    if (version == nullptr)
+        return -1;
+    const char* p = version;
+    while (*p == ' ' || *p == '\t')
+        ++p;
+    int value = 0;
+    int digits = 0;
+    for (; *p != '\0' && *p != '.'; ++p)
+    {
+        if (*p < '0' || *p > '9')
+            return -1; // 首段混进非数字:不猜
+        if (digits >= kMaxMajorDigits)
+            return -1; // 首段过长:同样不猜(挡在 int 溢出之前)
+        value = value * 10 + (*p - '0');
+        ++digits;
+    }
+    return digits > 0 ? value : -1;
+}
+
+enum class DefaultBackgroundSupport
+{
+    available, // 运行时够新 ⇒ ICoreWebView2Controller2 在 ⇒ JUCE 那句不会静默跳过
+    unavailable, // 运行时太旧 ⇒ 接口不在 ⇒ 这一层整层缺席,控制器建好到首帧之间露的是白
+    unknown // 没探到运行时 / 版本串解析不出 ⇒ 不猜,如实说不知道
+};
+
+// version == nullptr / 空串 = 没探到运行时;首段解析不出同样归 unknown。
+inline DefaultBackgroundSupport defaultBackgroundSupport(const char* version) noexcept
+{
+    const int major = majorVersionOf(version);
+    if (major < 0)
+        return DefaultBackgroundSupport::unknown;
+    return major >= kDefaultBackgroundMinRuntimeMajor ? DefaultBackgroundSupport::available
+                                                      : DefaultBackgroundSupport::unavailable;
+}
 
 struct PlaceholderGradientEndpoints
 {

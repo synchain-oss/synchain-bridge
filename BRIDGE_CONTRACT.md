@@ -84,7 +84,7 @@
 |---|---|
 | PRODUCT_NAME | `Synchain Bridge` |
 | COMPANY_NAME | `Synchain` |
-| VERSION | `1.5.1`（单一真源：`CMakeLists.txt` `project(VERSION)` → `JucePlugin_VersionString`；status 上报与插件 WebView UI 统一取此宏，`BridgeApi.h` 不再手写版本常量） |
+| VERSION | `1.5.2`（单一真源：`CMakeLists.txt` `project(VERSION)` → `JucePlugin_VersionString`；status 上报与插件 WebView UI 统一取此宏，`BridgeApi.h` 不再手写版本常量） |
 | BRIDGE_CONTRACT_VERSION | `2.0`（单一真源：`BridgeApi.h` `synchain::contract::ContractVersion`；独立于插件 VERSION，semver；status 帧可选字段 `contract` 上报；变更分级见 §五） |
 | BUNDLE_ID | `com.synchain.bridge` |
 | PLUGIN_MANUFACTURER_CODE | `Snch` |

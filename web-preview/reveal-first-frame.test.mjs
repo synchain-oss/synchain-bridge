@@ -5,7 +5,8 @@
 // =============================================================================
 // [SL-386] 开窗遮挡闸的跨语言同源判据(node:test + node:assert,零依赖,不需要 npm install)
 // =============================================================================
-// 钉三类「删一处就红」的事实:
+// 钉五格「删一处就红」的事实(①②③ 来自 SL-386 各推,④ 来自 SL-386 第 2/3 推,
+// ⑤ 来自 [SL-421];格数与下面的 test() 一一对应,改动时两边一起改):
 //   ① 占位底三处同源:web/styles.css 的 --vb-card-surface(css token,卡片消费它)
 //      == web/index.html <head> 内联 html 底(外链 css 未到时的第一层底)
 //      == src/WebViewRevealGate.h kPlaceholderStops/kPlaceholderGradientDeg(C++ 占位色标)。
@@ -15,6 +16,12 @@
 //      (DOMContentLoaded 武装 + 嵌套两层 rAF + __JUCE__ 在场守卫)。
 //   ③ 接线删除式源钉(src/WebViewEditor.cpp):webView 的 setVisible(false) 只允许出现在
 //      showFallback(兜底面板路径,SL-386 保留);遮挡闸放行链的调用点必须在场。
+//   ④ 插件路径关掉卡片入场动画(layoutForMode 的 isPlugin 段 animation:"none"),
+//      且它早于首帧信号生效。
+//   ⑤ [SL-421] WebView2 的 DefaultBackgroundColor 那一层接上了(makeOptions 的
+//      withBackgroundColour),取值经 placeholderMidArgb() 从 kPlaceholderStops 现算、
+//      不另写色值字面量,且「这一层在不在」的诊断行打在 goToURL 之前。
+//      ⚠ 这一层缺席是**静默**的:编译过、其余判据全绿,屏上却是白 —— 本格是它唯一的机检。
 //      纯文本断言钉不住运行期行为(那半边由 tests/reveal_gate_selftest.cpp 与真机
 //      pluginval 数表兜),这里钉的是「同源与接线」这一层。
 //
@@ -56,6 +63,37 @@ function parseCppPlaceholder(src) {
   }));
   assert.ok(stops.length > 0, "应能解析出 kPlaceholderStops 色标");
   return { deg: Number(deg[1]), stops };
+}
+
+/**
+ * [SL-421 第 2 推 · 裁定 7] 取某个函数定义的**函数体**(含首尾大括号)。
+ *
+ * 取代此前的「起点 + 魔法偏移」(`mkAt + 2600` / `blAt + 1600`):那种窗口一旦被注释写长
+ * 或函数挪动就会滑出目标 ⇒ **假红**。这里改成从函数头后的第一个 `{` 起做**大括号配对**,
+ * 切出的正好是函数体,长度自适应、不依赖任何常数。
+ *
+ * ⚠ 只能喂**已剥掉字符串与注释**的源码(调用方负责):否则字符串/注释里的大括号会把配对带偏。
+ * ⚠ **fail-closed 是本函数的硬性质**(裁定 7 明确要求保住):函数头找不到、`{` 找不到、
+ *   大括号到文件尾都没配平 —— 三种情况**一律 assert 红**,绝不 `return ""` 或跳过。
+ *   「找不到就跳过」会让删掉被守对象的那一刻静默变绿,正是本格要防的事。
+ */
+function functionBodyAt(code, headRe, label) {
+  const at = code.search(headRe);
+  assert.ok(
+    at >= 0,
+    `src/WebViewEditor.cpp 应有 ${label} 定义(源钉找不到函数头即判红)`,
+  );
+  const open = code.indexOf("{", at);
+  assert.ok(open >= 0, `${label} 的函数头之后应有 '{'`);
+  let depth = 0;
+  for (let i = open; i < code.length; i++) {
+    if (code[i] === "{") depth++;
+    else if (code[i] === "}") {
+      depth--;
+      if (depth === 0) return code.slice(open, i + 1);
+    }
+  }
+  assert.fail(`${label} 的大括号到文件尾都没配平(源钉不许在这里静默放过)`);
 }
 
 function assertSameGradient(a, b, label) {
@@ -298,5 +336,78 @@ test("④ 插件路径关掉卡片入场动画,且早于首帧信号生效(源�
     pluginSeg,
     /animation:\s*"none"/,
     "layoutForMode() 的 **isPlugin 段**必须关掉卡片入场动画(挪去 else、删掉、或只写在注释里 ⇒ 红)",
+  );
+});
+
+test("⑤ WebView2 DefaultBackgroundColor 那一层必须接上,且取值不许另写字面量(源钉)", () => {
+  const src = read("src/WebViewEditor.cpp");
+
+  // 与 ③ 同一套词法近似:先把字符串字面量整体换成占位、再剥注释。本格尤其需要它 ——
+  // 下面几处的名字在注释里都出现过,不剥注释的话「把真句删掉只留注释」照样绿。
+  const code = src
+    .replace(/"(?:[^"\\]|\\.)*"/g, '""')
+    .replace(/'(?:[^'\\]|\\.)*'/g, "''")
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/\/\/[^\n]*/g, "");
+
+  // --- (a) makeOptions 里必须有 withBackgroundColour,**且把结果赋值回去** ---
+  // 删除式两格:删掉整句 ⇒ 本格红;**只删 `wv2 = ` 半句、保留调用 ⇒ 本格同样红**。
+  // 后一格是第 3 推补的:JUCE 的 Options::WinWebView2::withXxx 是 **by-value 返回的
+  // builder**(它返回一份改过的副本,不改原对象)—— 少写 `wv2 = ` 在语义上就是**这一层
+  // 根本没设**,而屏上照样是白。第 2 推为了「不绑死 wv2 这个变量名」把断言放宽成
+  // /\.withBackgroundColour\(/ 时,顺手把赋值这一半也丢了,实测「只删赋值」⑤ 仍然全绿 ——
+  // 那正是本仓 CTRL 对照格描述的形态(屏上是白、判据面一片绿),所以这里必须把赋值钉回来。
+  // ⚠ 不要指望 [[nodiscard]] 兜底:那是 MSVC C4834 **警告不是错误**,而 gates 对
+  // `warning C` 是**计数不判红**。
+  // 变量名仍然不绑死(两侧都用 \w+),改名不会假红。
+  const mkBody = functionBodyAt(
+    code,
+    /juce::WebBrowserComponent::Options\s+SynchainBridgeWebEditor::makeOptions\s*\(/,
+    "makeOptions()",
+  );
+  assert.match(
+    mkBody,
+    /\w+\s*=\s*\w+\.withBackgroundColour\(/,
+    "makeOptions() 必须给 WinWebView2 选项设 withBackgroundColour**并把结果赋值回去**" +
+      "(withXxx 是 by-value builder,不赋值 = 这一层没设)—— 不设的话 JUCE 把默认构造的" +
+      " juce::Colour(ARGB 0x00000000,全透明)原样 put 进 put_DefaultBackgroundColor,控制器建好到" +
+      "页面画出来之间那一层什么都不挡,露的是窗口的白(遮挡闸与 <head> 内联底都盖不到这一段)",
+  );
+
+  // --- (b) 取值必须现算,不许另写一个色值字面量 ---
+  // 删除式:把参数换成 juce::Colour(0xffd9cadb) 之类的字面量 ⇒ 本格红(那就成了占位色的
+  // 第二个真源,改 kPlaceholderStops 时它不会跟着变,而没有任何东西会红)。
+  const arg = mkBody.match(/withBackgroundColour\(([^;]*?)\)\s*;/);
+  assert.ok(arg, "应能取到 withBackgroundColour 的实参");
+  assert.match(
+    arg[1],
+    /webview::placeholderMidArgb\(\s*\)/,
+    "withBackgroundColour 的取值必须经 webview::placeholderMidArgb() 从 kPlaceholderStops 现算",
+  );
+  assert.doesNotMatch(
+    arg[1],
+    /0x[0-9a-fA-F]{6,8}/,
+    "withBackgroundColour 的实参里不许出现色值字面量(占位色只有 kPlaceholderStops 一个真源)",
+  );
+
+  // --- (c) 「这一层在不在」的诊断行必须接上,且打在 goToURL 之前 ---
+  // JUCE 对 QueryInterface(ICoreWebView2Controller2) 取不到是静默跳过(没有 else、没有日志、
+  // 不看 HRESULT),不打这行就分不出「设了没生效」与「压根没设」。
+  // 删除式:删掉 beginLoadAttempt 里那次调用 ⇒ 本格红;把它挪到 goToURL 之后 ⇒ 也红。
+  const blBody = functionBodyAt(
+    code,
+    /void\s+SynchainBridgeWebEditor::beginLoadAttempt\s*\(/,
+    "beginLoadAttempt()",
+  );
+  const logAt = blBody.search(/logDefaultBackgroundSupport\(/);
+  const navAt = blBody.search(/goToURL\(/);
+  assert.ok(
+    logAt >= 0,
+    "beginLoadAttempt() 必须调 logDefaultBackgroundSupport()(否则这一层在不在完全不可观测)",
+  );
+  assert.ok(navAt >= 0, "beginLoadAttempt() 应有 goToURL()");
+  assert.ok(
+    logAt < navAt,
+    "诊断行必须打在 goToURL() 之前:控制器一建好 JUCE 就 put 那个颜色,打在后面会让读表的人分不清先后",
   );
 });
