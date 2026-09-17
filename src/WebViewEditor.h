@@ -39,6 +39,20 @@ namespace synchain
 // 首帧信号（timing::FirstFrameSignal），**只认首帧放行**（navFinished 只记账），信号后再压
 // tick ∧ 32ms 一拍才挪回；3s 超时兜底，兜底面板逻辑不变。挪窗激活只在 Windows
 // （#if JUCE_WINDOWS）；mac 路径保持现状。
+//
+// [SL-421] 开窗那几帧的**分层地图**（SCVB 三层，本仓此前只有其中两层）：
+//   ①-a 控制器建好**之前** —— JUCE 的 fallbackPaint 每帧无条件 fillAll(Colours::white)，
+//        由 BridgeWebView::paint「先调基类再整块盖占位」压住（[SL-386] 已有）；
+//   ①-b 控制器已建好、页面还没画出来 —— WebView2 的 DefaultBackgroundColor，由
+//        makeOptions 的 withBackgroundColour(placeholderMidArgb()) 铺上（[SL-421] 本卡补，
+//        此前整层缺席 ⇒ JUCE put 进去的是全透明 ⇒ 露白）。**遮挡闸盖不到这一节**：
+//        park 落在 pageAboutToLoad，而控制器是在 Navigate 之前就建好并上屏的；
+//   ①-c 页面已开画、外链 styles.css 还没到 —— web/index.html <head> 内联的 html 底
+//        （[SL-386] 已有）。⚠ 它**确定**兜住的只有「外链取不到/加载失败」那条路：
+//        Chromium 对 <head> 里的 <link rel="stylesheet"> 是渲染阻塞的，正常路径上那一段
+//        屏上是 ①-b。也就是说 ①-b 缺席时 ①-c 并不替它顶班。
+// 还有一节在我们的 API 之外：宿主自己的插件窗容器，在我方 HWND 上屏之前就在那儿，
+// 插件侧无从覆盖（各 DAW 底色不同）——**只有真机能判**它是不是残留那一段的来源。
 // =============================================================================
 
 class SynchainBridgeWebEditor final : public juce::AudioProcessorEditor, private juce::Timer
@@ -74,9 +88,15 @@ private:
         MissingRuntime,
         LoadTimeout
     };
-    static bool webView2RuntimeAvailable();
+    static juce::String webView2RuntimeVersion(); // [SL-421] 空 = 没探到运行时
+    static bool webView2RuntimeAvailable(); // == webView2RuntimeVersion().isNotEmpty()
     void showFallback(FallbackReason reason);
     void retryWebView();
+
+    // [SL-421] 「WebView2 的 DefaultBackgroundColor 这一层在不在」的诊断行（JUCE 对
+    // QueryInterface(ICoreWebView2Controller2) 取不到是静默跳过，不打这行就不可观测）。
+    // 判定是纯函数，在 WebViewRevealGate.h 的 defaultBackgroundSupport；这里只管措辞与落点。
+    void logDefaultBackgroundSupport(const juce::String& runtimeVersion) const;
 
     // --- [SL-386] 加载时序与开窗遮挡闸（message 线程）---
     void beginLoadAttempt(); // 构造 / retry 共用：重置看门狗与闸门，重新 goToURL

@@ -18,7 +18,7 @@ if(NOT DEFINED CMAKE_OSX_DEPLOYMENT_TARGET)
   set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0" CACHE STRING "Minimum macOS version")
 endif()
 
-project(SynchainBridgeVST VERSION 1.5.1)
+project(SynchainBridgeVST VERSION 1.5.2)
 
 # Export compile_commands.json for clangd / clang-tidy (08 §3.2)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)

@@ -259,6 +259,12 @@ private:
 SynchainBridgeWebEditor::SynchainBridgeWebEditor(SynchainBridgeAudioProcessor& p)
     : juce::AudioProcessorEditor(&p), mProcessor(p)
 {
+    // [SL-421] 声明本组件完全不透明：JUCE 因此不会去画它下面的东西（宿主给的编辑器容器）。
+    // ⚠ 它**不治**开窗白闪 —— 白闪那几段里本组件的 paint 要么被 WebView2 表面盖住、要么
+    // 画的就是占位（见下面 paint()）。它管的是兜底面板路径下这块底。与 SCVB
+    // WebViewHost 构造里那一句同形、同理由，一并搬过来免得两仓形态分家。
+    setOpaque(true);
+
     mWebView = std::make_unique<BridgeWebView>(*this, makeOptions());
     addAndMakeVisible(*mWebView);
 
@@ -279,18 +285,61 @@ SynchainBridgeWebEditor::~SynchainBridgeWebEditor()
     stopTimer();
 }
 
-bool SynchainBridgeWebEditor::webView2RuntimeAvailable()
+// [SL-421] 运行时版本串（空 = 没探到运行时）。原先这里只回一个 bool，把 loader 给的版本串
+// 丢掉了；DefaultBackgroundColor 那一层在不在只能从主版本号推（见 WebViewRevealGate.h 的
+// defaultBackgroundSupport 头注），所以把版本串留下来。「在不在」的判定仍是**同一个**
+// GetAvailableCoreWebView2BrowserVersionString 调用，webView2RuntimeAvailable 的语义不变。
+juce::String SynchainBridgeWebEditor::webView2RuntimeVersion()
 {
 #if JUCE_WINDOWS
     wchar_t* version = nullptr;
     const long hr = GetAvailableCoreWebView2BrowserVersionString(nullptr, &version);
-    const bool ok = hr >= 0 && version != nullptr && version[0] != L'\0';
+    juce::String out;
+    if (hr >= 0 && version != nullptr && version[0] != L'\0')
+        out = juce::String(version);
     if (version != nullptr)
         CoTaskMemFree(version);
-    return ok;
+    return out;
 #else
-    return true; // macOS(WKWebView)/Linux(WebKitGTK)：系统 WebView 恒可用
+    return "0"; // macOS(WKWebView)/Linux(WebKitGTK)：系统 WebView 恒可用，非空即「在」
 #endif
+}
+
+bool SynchainBridgeWebEditor::webView2RuntimeAvailable()
+{
+    return webView2RuntimeVersion().isNotEmpty();
+}
+
+// [SL-421] 把「DefaultBackgroundColor 这一层在不在」变成一行可抓的诊断 —— JUCE 对
+// QueryInterface(ICoreWebView2Controller2) 取不到是**静默跳过**（没有 else、没有日志、
+// 不看 HRESULT），不打这行就分不出「设了没生效」和「压根没设」（判例：JUCE 吞掉 WebView2
+// 的 HRESULT）。⚠ 行里必须自带「inferred / not directly observed」：它证的是运行时有没有
+// 这个接口，**不是** JUCE 那次 QueryInterface 真成功了，更不是那一帧屏上真是这个颜色；
+// 贴 DebugView 片段回来的人多半不会同时读头注，所以这句写在**行里**而不是只写在注释里。
+// 文案一律 ASCII（运行期字面量走 printf 族拼接时，含非 ASCII 的相邻窄字面量触发 MSVC C4819）。
+void SynchainBridgeWebEditor::logDefaultBackgroundSupport(const juce::String& runtimeVersion) const
+{
+    using Support = webview::DefaultBackgroundSupport;
+
+    const auto utf8 = runtimeVersion.toStdString();
+    const auto support = webview::defaultBackgroundSupport(utf8.empty() ? nullptr : utf8.c_str());
+    const juce::String shown = runtimeVersion.isNotEmpty() ? runtimeVersion : juce::String("unknown");
+    const juce::String argb =
+        juce::String::toHexString(static_cast<int>(webview::placeholderMidArgb())).paddedLeft('0', 8);
+    const juce::String floor = juce::String(webview::kDefaultBackgroundMinRuntimeMajor);
+
+    if (support == Support::available)
+        logDiag("webview2 default background: available -- ICoreWebView2Controller2 inferred present (from runtime " +
+                shown + " >= major " + floor + ", not directly observed), JUCE puts argb " + argb);
+    else if (support == Support::unavailable)
+        logDiag("webview2 default background: UNAVAILABLE -- ICoreWebView2Controller2 inferred absent (from runtime " +
+                shown + " < major " + floor + ", not directly observed), JUCE drops argb " + argb + " silently");
+    else if (runtimeVersion.isEmpty())
+        // 当前调用点在 missing 分支之后，走不到这里 —— 但把它写对是给将来挪调用点的人：
+        // 否则这条会打成 "version unknown not parsable"，把原因指错。
+        logDiag("webview2 default background: unknown (no WebView2 runtime detected)");
+    else
+        logDiag("webview2 default background: unknown (runtime version " + shown + " not parsable)");
 }
 
 void SynchainBridgeWebEditor::showFallback(FallbackReason reason)
@@ -343,11 +392,16 @@ void SynchainBridgeWebEditor::beginLoadAttempt()
     mRevealLogged = false;
     mStartMs = juce::Time::getMillisecondCounter();
 
-    if (!webView2RuntimeAvailable())
+    const juce::String runtimeVersion = webView2RuntimeVersion(); // [SL-421] 空 = 没探到运行时
+    if (runtimeVersion.isEmpty())
     {
         showFallback(FallbackReason::MissingRuntime); // 面板里会 setVisible(false)，不进看门狗
         return;
     }
+
+    // [SL-421] 必须在 goToURL **之前**打：控制器一建好 JUCE 就 put 那个颜色，诊断行打在后面
+    // 会让读表的人分不清先后。每次加载尝试各打一行（retry 也重探一次运行时）。
+    logDefaultBackgroundSupport(runtimeVersion);
 
     // 必须在任何 emit 之前完成首个 goToURL（前端脚本随后加载并注册监听）。
     mWebView->setVisible(true);
@@ -478,6 +532,17 @@ juce::WebBrowserComponent::Options SynchainBridgeWebEditor::makeOptions()
     WBC::Options::WinWebView2 wv2;
     wv2 = wv2.withUserDataFolder(
         juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("SynchainBridgeWV2"));
+
+    // [SL-421] WebView2 在**任何** web 内容之下铺的那一层（= put_DefaultBackgroundColor）。
+    // 不设的话 JUCE 把默认构造的 juce::Colour = ARGB 0x00000000（**全透明**）原样 put 进去，
+    // 于是从控制器建好到页面画出来为止，这一层什么都不挡，露的是窗口的白 —— 遮挡闸守不到
+    // 它（park 落在 pageAboutToLoad，而控制器是在 Navigate **之前**就建好并上屏的），
+    // <head> 内联底也守不到它（那一层管的是外链 css 未到那一段）。取值 = 占位渐变沿轴 50%
+    // 的插值色（DefaultBackgroundColor 只收纯色，没有渐变形态），由 kPlaceholderStops 现算；
+    // 理由与「这条只证到哪一步」见 WebViewRevealGate.h 的 placeholderMidArgb 头注一处。
+    // ⚠ 这一句删掉编译照过、既有判据全绿 —— 守它的是 web-preview/reveal-first-frame.test.mjs
+    // 的源钉格 ④，以及运行期 logDefaultBackgroundSupport() 那行诊断。
+    wv2 = wv2.withBackgroundColour(juce::Colour(webview::placeholderMidArgb()));
 
     // 关键：Windows 上必须显式选 WebView2 后端。否则 getBackend()==defaultBackend，
     // JUCE 回退到旧 IE ActiveX 控件（Win32WebView），它不支持 resource provider /

@@ -5,7 +5,8 @@
 // =============================================================================
 // [SL-386] 开窗遮挡闸的跨语言同源判据(node:test + node:assert,零依赖,不需要 npm install)
 // =============================================================================
-// 钉三类「删一处就红」的事实:
+// 钉五格「删一处就红」的事实(①②③ 来自 SL-386 各推,④ 来自 SL-386 第 2/3 推,
+// ⑤ 来自 [SL-421];格数与下面的 test() 一一对应,改动时两边一起改):
 //   ① 占位底三处同源:web/styles.css 的 --vb-card-surface(css token,卡片消费它)
 //      == web/index.html <head> 内联 html 底(外链 css 未到时的第一层底)
 //      == src/WebViewRevealGate.h kPlaceholderStops/kPlaceholderGradientDeg(C++ 占位色标)。
@@ -15,6 +16,12 @@
 //      (DOMContentLoaded 武装 + 嵌套两层 rAF + __JUCE__ 在场守卫)。
 //   ③ 接线删除式源钉(src/WebViewEditor.cpp):webView 的 setVisible(false) 只允许出现在
 //      showFallback(兜底面板路径,SL-386 保留);遮挡闸放行链的调用点必须在场。
+//   ④ 插件路径关掉卡片入场动画(layoutForMode 的 isPlugin 段 animation:"none"),
+//      且它早于首帧信号生效。
+//   ⑤ [SL-421] WebView2 的 DefaultBackgroundColor 那一层接上了(makeOptions 的
+//      withBackgroundColour),取值经 placeholderMidArgb() 从 kPlaceholderStops 现算、
+//      不另写色值字面量,且「这一层在不在」的诊断行打在 goToURL 之前。
+//      ⚠ 这一层缺席是**静默**的:编译过、其余判据全绿,屏上却是白 —— 本格是它唯一的机检。
 //      纯文本断言钉不住运行期行为(那半边由 tests/reveal_gate_selftest.cpp 与真机
 //      pluginval 数表兜),这里钉的是「同源与接线」这一层。
 //
@@ -298,5 +305,70 @@ test("④ 插件路径关掉卡片入场动画,且早于首帧信号生效(源�
     pluginSeg,
     /animation:\s*"none"/,
     "layoutForMode() 的 **isPlugin 段**必须关掉卡片入场动画(挪去 else、删掉、或只写在注释里 ⇒ 红)",
+  );
+});
+
+test("⑤ WebView2 DefaultBackgroundColor 那一层必须接上,且取值不许另写字面量(源钉)", () => {
+  const src = read("src/WebViewEditor.cpp");
+
+  // 与 ③ 同一套词法近似:先把字符串字面量整体换成占位、再剥注释。本格尤其需要它 ——
+  // 下面几处的名字在注释里都出现过,不剥注释的话「把真句删掉只留注释」照样绿。
+  const code = src
+    .replace(/"(?:[^"\\]|\\.)*"/g, '""')
+    .replace(/'(?:[^'\\]|\\.)*'/g, "''")
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/\/\/[^\n]*/g, "");
+
+  // --- (a) makeOptions 里必须有 withBackgroundColour,且落在 WinWebView2 选项上 ---
+  // 删除式:删掉 makeOptions 里那一句 ⇒ 本格红(编译与其余全部判据都不会红 —— 这一层
+  // 缺席是**静默**的:JUCE 把默认构造的全透明色 put 进去,屏上就是白)。
+  const mkAt = code.search(
+    /juce::WebBrowserComponent::Options\s+SynchainBridgeWebEditor::makeOptions\s*\(/,
+  );
+  assert.ok(mkAt >= 0, "src/WebViewEditor.cpp 应有 makeOptions() 定义");
+  const mkBody = code.slice(mkAt, mkAt + 2600);
+  assert.match(
+    mkBody,
+    /wv2\s*=\s*wv2\.withBackgroundColour\(/,
+    "makeOptions() 必须给 WinWebView2 选项设 withBackgroundColour —— 不设的话 JUCE 把默认构造的" +
+      " juce::Colour(ARGB 0x00000000,全透明)原样 put 进 put_DefaultBackgroundColor,控制器建好到" +
+      "页面画出来之间那一层什么都不挡,露的是窗口的白(遮挡闸与 <head> 内联底都盖不到这一段)",
+  );
+
+  // --- (b) 取值必须现算,不许另写一个色值字面量 ---
+  // 删除式:把参数换成 juce::Colour(0xffd9cadb) 之类的字面量 ⇒ 本格红(那就成了占位色的
+  // 第二个真源,改 kPlaceholderStops 时它不会跟着变,而没有任何东西会红)。
+  const arg = mkBody.match(/withBackgroundColour\(([^;]*?)\)\s*;/);
+  assert.ok(arg, "应能取到 withBackgroundColour 的实参");
+  assert.match(
+    arg[1],
+    /webview::placeholderMidArgb\(\s*\)/,
+    "withBackgroundColour 的取值必须经 webview::placeholderMidArgb() 从 kPlaceholderStops 现算",
+  );
+  assert.doesNotMatch(
+    arg[1],
+    /0x[0-9a-fA-F]{6,8}/,
+    "withBackgroundColour 的实参里不许出现色值字面量(占位色只有 kPlaceholderStops 一个真源)",
+  );
+
+  // --- (c) 「这一层在不在」的诊断行必须接上,且打在 goToURL 之前 ---
+  // JUCE 对 QueryInterface(ICoreWebView2Controller2) 取不到是静默跳过(没有 else、没有日志、
+  // 不看 HRESULT),不打这行就分不出「设了没生效」与「压根没设」。
+  // 删除式:删掉 beginLoadAttempt 里那次调用 ⇒ 本格红;把它挪到 goToURL 之后 ⇒ 也红。
+  const blAt = code.search(
+    /void\s+SynchainBridgeWebEditor::beginLoadAttempt\s*\(/,
+  );
+  assert.ok(blAt >= 0, "src/WebViewEditor.cpp 应有 beginLoadAttempt() 定义");
+  const blBody = code.slice(blAt, blAt + 1600);
+  const logAt = blBody.search(/logDefaultBackgroundSupport\(/);
+  const navAt = blBody.search(/goToURL\(/);
+  assert.ok(
+    logAt >= 0,
+    "beginLoadAttempt() 必须调 logDefaultBackgroundSupport()(否则这一层在不在完全不可观测)",
+  );
+  assert.ok(navAt >= 0, "beginLoadAttempt() 应有 goToURL()");
+  assert.ok(
+    logAt < navAt,
+    "诊断行必须打在 goToURL() 之前:控制器一建好 JUCE 就 put 那个颜色,打在后面会让读表的人分不清先后",
   );
 });

@@ -4,7 +4,9 @@
 
 // src/WebViewRevealGate.h 的纯逻辑自测（[SL-386] 开窗遮挡闸）:只认首帧放行 / navFinished
 // 只记账 / settle 双条件(tick 数 ∧ 32ms 毫秒下界,回绕安全)/ 3s 超时兜底 / 挪窗几何 /
-// 占位渐变(CSS 同形)的 C++ 侧 golden。只 include 那一个头 + 标准库,不链接 JUCE /
+// 占位渐变(CSS 同形)的 C++ 侧 golden;[SL-421] 起还含 WebView2 DefaultBackgroundColor
+// 那一层的两件纯逻辑:占位渐变轴中点色 golden、与「这一层在不在」的版本判定三态。
+// 只 include 那一个头 + 标准库,不链接 JUCE /
 // ixwebsocket,故能脱离插件目标单独构建运行(cmake -DBRIDGE_BUILD_SELFTESTS=ON,随后由
 // scripts/gates.ps1 的 gate 5b、ci.yml 两个平台 job 与 compliance workflow 执行)。
 //
@@ -363,6 +365,70 @@ int main()
         }
         checkEqInt(static_cast<long long>(synchain::webview::kPlaceholderGradientDeg), 157ll, "占位渐变角度 = 157deg",
                    __LINE__);
+    }
+
+    // ------------------------------------------------------------------
+    // [SL-421] 占位渐变轴中点色 golden —— WebView2 的 DefaultBackgroundColor 取的就是它
+    // (那个属性只收纯色,没有渐变形态)。
+    // 断言口径:0xffd9cadb 是**独立算好的字面量**,不是拿 placeholderMidArgb() 反推:
+    //   0.5 落在 0.32 与 0.64 两个停靠点之间 ⇒ t = (0.5-0.32)/(0.64-0.32) = 0.5625;
+    //   R 0xcc→0xe3: 204 + 0.5625*23 = 216.9375 → 217 = 0xd9
+    //   G 0xbf→0xd2: 191 + 0.5625*19 = 201.6875 → 202 = 0xca
+    //   B 0xd5→0xe0: 213 + 0.5625*11 = 219.1875 → 219 = 0xdb
+    //   A 0xff→0xff: 恒 255                          = 0xff
+    // 删除式:改 kPlaceholderStops 任一停靠点 / 把插值换成「取首色」/ 把四舍五入改成截断
+    // (217→216 = 0xd8)/ 漏掉 alpha 通道,本格都当场红。
+    // ⚠ 钉不住的那半:相邻停靠点写成同一 position 时的 fail-closed 分支、以及「解析不出段」
+    // 那条兜路 —— kPlaceholderStops 是文件级常量,本文件注入不进去,那两条只靠头注与实现。
+    // ------------------------------------------------------------------
+    {
+        using synchain::webview::kPlaceholderStops;
+        using synchain::webview::placeholderMidArgb;
+        const std::uint32_t mid = placeholderMidArgb();
+        checkEqInt(static_cast<long long>(mid), static_cast<long long>(0xffd9cadbu),
+                   "占位渐变轴中点色应等于独立算出的 0xffd9cadb", __LINE__);
+        checkEqInt(static_cast<long long>((mid >> 24) & 0xffu), 0xffll,
+                   "中点色必须全不透明(JUCE withBackgroundColour 只收全不透明或全透明)", __LINE__);
+        // 它必须是**插值**出来的,不是某个停靠点本身 —— 把插值换成 fail-closed 取首色时这格红。
+        for (int i = 0; i < synchain::webview::kPlaceholderStopCount; ++i)
+            check(mid != kPlaceholderStops[i].argb, "中点色不许等于任何一个停靠点(那说明插值没跑)", __LINE__);
+        // 明暗必须落在两侧停靠点之间(取 R 通道:本组色标沿轴单调变亮)。
+        const std::uint32_t midR = (mid >> 16) & 0xffu;
+        check(midR > ((kPlaceholderStops[1].argb >> 16) & 0xffu) && midR < ((kPlaceholderStops[2].argb >> 16) & 0xffu),
+              "中点色应落在 32% 与 64% 两个停靠点之间", __LINE__);
+    }
+
+    // ------------------------------------------------------------------
+    // [SL-421] 版本串 → 主版本号 / DefaultBackgroundColor 支持三态。
+    // ⚠ 这两个纯函数只决定**诊断行的措辞**,不改任何行为 —— 别把本组读成「那一层真铺上了」。
+    // 删除式:把 defaultBackgroundSupport 的 `>=` 改成 `>`(87 那格红)/ 把「解析不出」的
+    // -1 改成猜一个默认值(nullptr、空串、"dev137" 三格红)/ 删掉首段非数字的拒收
+    // ("137x.0" 那格红)。
+    // ------------------------------------------------------------------
+    {
+        using synchain::webview::defaultBackgroundSupport;
+        using synchain::webview::kDefaultBackgroundMinRuntimeMajor;
+        using synchain::webview::majorVersionOf;
+        using Support = synchain::webview::DefaultBackgroundSupport;
+
+        checkEqInt(majorVersionOf("137.0.3296.83"), 137, "loader 常见形态:取首段", __LINE__);
+        checkEqInt(majorVersionOf("137"), 137, "没有小数点时整串就是首段", __LINE__);
+        checkEqInt(majorVersionOf("  137.0"), 137, "前导空白应被跳过", __LINE__);
+        checkEqInt(majorVersionOf("137x.0"), -1, "首段混进非数字:不猜,回 -1", __LINE__);
+        checkEqInt(majorVersionOf("dev 137.0"), -1, "首段不是数字:不猜,回 -1", __LINE__);
+        checkEqInt(majorVersionOf(""), -1, "空串:回 -1", __LINE__);
+        checkEqInt(majorVersionOf(nullptr), -1, "nullptr:回 -1(不许解引用)", __LINE__);
+
+        checkEqInt(kDefaultBackgroundMinRuntimeMajor, 87, "ICoreWebView2Controller2 的运行时主版本下限 = 87", __LINE__);
+        // 下限两侧各一格:写成 `>` 时上面那格红,写成 `>=` 少一档时下面那格红。
+        check(defaultBackgroundSupport("87.0.1.1") == Support::available, "恰好等于下限:available(边界含等号)",
+              __LINE__);
+        check(defaultBackgroundSupport("86.0.1.1") == Support::unavailable, "低于下限一档:unavailable", __LINE__);
+        check(defaultBackgroundSupport("137.0.3296.83") == Support::available, "现实中的运行时:available", __LINE__);
+        check(defaultBackgroundSupport(nullptr) == Support::unknown, "没探到运行时:unknown(不猜)", __LINE__);
+        check(defaultBackgroundSupport("") == Support::unknown, "空版本串:unknown", __LINE__);
+        check(defaultBackgroundSupport("dev137") == Support::unknown, "解析不出:unknown,不许落到 unavailable",
+              __LINE__);
     }
 
     std::printf("%d checks, %d failures\n", gChecks, gFailures);
