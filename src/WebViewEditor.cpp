@@ -540,8 +540,9 @@ juce::WebBrowserComponent::Options SynchainBridgeWebEditor::makeOptions()
     // <head> 内联底也守不到它（那一层管的是外链 css 未到那一段）。取值 = 占位渐变沿轴 50%
     // 的插值色（DefaultBackgroundColor 只收纯色，没有渐变形态），由 kPlaceholderStops 现算；
     // 理由与「这条只证到哪一步」见 WebViewRevealGate.h 的 placeholderMidArgb 头注一处。
-    // ⚠ 这一句删掉编译照过、既有判据全绿 —— 守它的是 web-preview/reveal-first-frame.test.mjs
-    // 的源钉格 ④，以及运行期 logDefaultBackgroundSupport() 那行诊断。
+    // ⚠ 这一句删掉编译照过、既有判据全绿（删除式对照格实测）—— 守它的是
+    // web-preview/reveal-first-frame.test.mjs 的源钉格 **⑤**（④ 是入场动画那格，别记串），
+    // 以及运行期 logDefaultBackgroundSupport() 那行诊断。
     wv2 = wv2.withBackgroundColour(juce::Colour(webview::placeholderMidArgb()));
 
     // 关键：Windows 上必须显式选 WebView2 后端。否则 getBackend()==defaultBackend，
