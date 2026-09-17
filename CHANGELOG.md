@@ -34,6 +34,11 @@
     「那一帧屏上真是这个颜色」—— 行里自带 `inferred / not directly observed`,别读过头。
   - 一并与 SCVB 形态对齐:编辑器构造里补 `setOpaque(true)`(SCVB 自己注明它**不治**开窗白闪,
     管的是兜底面板路径那块底)。
+  - **平台面**:`withBackgroundColour`、`setOpaque(true)` 与诊断行调用点**三处都在
+    `#if JUCE_WINDOWS` 内**,mac / Linux 行为与改动前逐字一致。⚠ `setOpaque` 必须与 `paint()`
+    同条件 —— `paint()` 的绘制体本就只在 Windows,若 `setOpaque` 无条件生效,mac 上就成了
+    「声明自己不透明、却一个像素都不画」;诊断行同理,非 Windows 上那个哨兵版本串会让它打出
+    三句全假的一行(`UNAVAILABLE` / `inferred absent` / `JUCE drops argb ... silently`)。
   判据:`tests/reveal_gate_selftest.cpp` 新增两组(中点色 golden `0xffd9cadb` 独立算出、
   全不透明、必须是插值而非某个停靠点;版本串解析与支持三态的边界两侧各一格)+
   `web-preview/reveal-first-frame.test.mjs` 新增第 ⑤ 格源钉(接线在场 / 取值不许写字面量 /

@@ -65,6 +65,37 @@ function parseCppPlaceholder(src) {
   return { deg: Number(deg[1]), stops };
 }
 
+/**
+ * [SL-421 第 2 推 · 裁定 7] 取某个函数定义的**函数体**(含首尾大括号)。
+ *
+ * 取代此前的「起点 + 魔法偏移」(`mkAt + 2600` / `blAt + 1600`):那种窗口一旦被注释写长
+ * 或函数挪动就会滑出目标 ⇒ **假红**。这里改成从函数头后的第一个 `{` 起做**大括号配对**,
+ * 切出的正好是函数体,长度自适应、不依赖任何常数。
+ *
+ * ⚠ 只能喂**已剥掉字符串与注释**的源码(调用方负责):否则字符串/注释里的大括号会把配对带偏。
+ * ⚠ **fail-closed 是本函数的硬性质**(裁定 7 明确要求保住):函数头找不到、`{` 找不到、
+ *   大括号到文件尾都没配平 —— 三种情况**一律 assert 红**,绝不 `return ""` 或跳过。
+ *   「找不到就跳过」会让删掉被守对象的那一刻静默变绿,正是本格要防的事。
+ */
+function functionBodyAt(code, headRe, label) {
+  const at = code.search(headRe);
+  assert.ok(
+    at >= 0,
+    `src/WebViewEditor.cpp 应有 ${label} 定义(源钉找不到函数头即判红)`,
+  );
+  const open = code.indexOf("{", at);
+  assert.ok(open >= 0, `${label} 的函数头之后应有 '{'`);
+  let depth = 0;
+  for (let i = open; i < code.length; i++) {
+    if (code[i] === "{") depth++;
+    else if (code[i] === "}") {
+      depth--;
+      if (depth === 0) return code.slice(open, i + 1);
+    }
+  }
+  assert.fail(`${label} 的大括号到文件尾都没配平(源钉不许在这里静默放过)`);
+}
+
 function assertSameGradient(a, b, label) {
   assert.equal(a.deg, b.deg, `${label}: 渐变角度不一致`);
   assert.equal(a.stops.length, b.stops.length, `${label}: 色标个数不一致`);
@@ -322,14 +353,14 @@ test("⑤ WebView2 DefaultBackgroundColor 那一层必须接上,且取值不许�
   // --- (a) makeOptions 里必须有 withBackgroundColour,且落在 WinWebView2 选项上 ---
   // 删除式:删掉 makeOptions 里那一句 ⇒ 本格红(编译与其余全部判据都不会红 —— 这一层
   // 缺席是**静默**的:JUCE 把默认构造的全透明色 put 进去,屏上就是白)。
-  const mkAt = code.search(
+  const mkBody = functionBodyAt(
+    code,
     /juce::WebBrowserComponent::Options\s+SynchainBridgeWebEditor::makeOptions\s*\(/,
+    "makeOptions()",
   );
-  assert.ok(mkAt >= 0, "src/WebViewEditor.cpp 应有 makeOptions() 定义");
-  const mkBody = code.slice(mkAt, mkAt + 2600);
   assert.match(
     mkBody,
-    /wv2\s*=\s*wv2\.withBackgroundColour\(/,
+    /\.withBackgroundColour\(/,
     "makeOptions() 必须给 WinWebView2 选项设 withBackgroundColour —— 不设的话 JUCE 把默认构造的" +
       " juce::Colour(ARGB 0x00000000,全透明)原样 put 进 put_DefaultBackgroundColor,控制器建好到" +
       "页面画出来之间那一层什么都不挡,露的是窗口的白(遮挡闸与 <head> 内联底都盖不到这一段)",
@@ -355,11 +386,11 @@ test("⑤ WebView2 DefaultBackgroundColor 那一层必须接上,且取值不许�
   // JUCE 对 QueryInterface(ICoreWebView2Controller2) 取不到是静默跳过(没有 else、没有日志、
   // 不看 HRESULT),不打这行就分不出「设了没生效」与「压根没设」。
   // 删除式:删掉 beginLoadAttempt 里那次调用 ⇒ 本格红;把它挪到 goToURL 之后 ⇒ 也红。
-  const blAt = code.search(
+  const blBody = functionBodyAt(
+    code,
     /void\s+SynchainBridgeWebEditor::beginLoadAttempt\s*\(/,
+    "beginLoadAttempt()",
   );
-  assert.ok(blAt >= 0, "src/WebViewEditor.cpp 应有 beginLoadAttempt() 定义");
-  const blBody = code.slice(blAt, blAt + 1600);
   const logAt = blBody.search(/logDefaultBackgroundSupport\(/);
   const navAt = blBody.search(/goToURL\(/);
   assert.ok(

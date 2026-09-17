@@ -55,7 +55,7 @@
 - **坑**：DAW 安装目录只读会导致 WebView2 初始化失败。必须给可写目录（`juce::File::tempDirectory` 下）。
 
 ### 4. 运行时探测 + 5s 看门狗 + 原生兜底面板
-- **复制来源**：探测 `src/WebViewEditor.cpp` 的 `webView2RuntimeAvailable()`；看门狗 `timerCallback()` 里的 `kWatchdogBudgetMs` 判定；兜底面板 `FallbackPanel` 类、`showFallback()`、`retryWebView()`
+- **复制来源**：探测 `src/WebViewEditor.cpp` 的 `webView2RuntimeVersion()`（回**空串** = 没探到运行时，调用方 `beginLoadAttempt()` 判 `isEmpty()`；非 Windows 回哨兵 `"0"`）；看门狗 `timerCallback()` 里的 `kWatchdogBudgetMs` 判定；兜底面板 `FallbackPanel` 类、`showFallback()`、`retryWebView()`
 - **坑**：
   - 探测用**前置声明** `GetAvailableCoreWebView2BrowserVersionString`，避免引 `<WebView2.h>`/`<windows.h>` 造成 include 路径与宏污染（文件头 `extern "C"` 块）。
   - 运行时**缺失** → 立即给可操作兜底面板（引导装 Runtime + 重试），不做无意义等待；运行时**在但 5s 看门狗超时**（冷启动慢）→ 也切兜底，文案不误报「运行时缺失」。
@@ -156,7 +156,7 @@
 |---|---|
 | WebView2 后端显式选择 | §A 2（`makeOptions()` 后端段） |
 | user data folder 指向临时目录 | §A 3（`makeOptions()` 的 `withUserDataFolder`） |
-| 运行时探测 + 5s 看门狗 + FallbackPanel | §A 4（`webView2RuntimeAvailable()` / `timerCallback()` / `FallbackPanel`） |
+| 运行时探测 + 5s 看门狗 + FallbackPanel | §A 4（`webView2RuntimeVersion()` / `timerCallback()` / `FallbackPanel`） |
 | resource provider + MIME 映射 | §A 5（`provideResource()` / `mimeForExtension()`） |
 | `withInitialisationData` 首帧 seed | §A 6（`makeOptions()` seed 段） |
 | `withNativeFunction` 注册 + `BridgeApi.h` 真源 | §A 7（`makeOptions()` 注册链、`BridgeApi.h`） |

@@ -419,6 +419,15 @@ int main()
         checkEqInt(majorVersionOf(""), -1, "空串:回 -1", __LINE__);
         checkEqInt(majorVersionOf(nullptr), -1, "nullptr:回 -1(不许解引用)", __LINE__);
 
+        // [第 2 推 · 裁定 3] 首段位数上界 —— 边界两侧各一格。9 位照收,10 位起拒收:
+        // 没有这道闸时 value*10+… 对 11 位以上首段是有符号溢出 UB,而本函数的既定口径是
+        // 「解析不出就回 -1,不猜」。删除式:删掉 `digits >= kMaxMajorDigits` 那句 ⇒ 下面
+        // 第 2/3 格红(会算出一个数来);把上界改成别的位数 ⇒ 第 1/2 格里必有一格红。
+        checkEqInt(synchain::webview::kMaxMajorDigits, 9, "首段位数上界 = 9", __LINE__);
+        checkEqInt(majorVersionOf("999999999.0"), 999999999, "恰好 9 位:照收(边界含等号)", __LINE__);
+        checkEqInt(majorVersionOf("1000000000.0"), -1, "10 位:拒收,不猜", __LINE__);
+        checkEqInt(majorVersionOf("99999999999999999999.0"), -1, "20 位:拒收(没有这道闸就是溢出 UB)", __LINE__);
+
         checkEqInt(kDefaultBackgroundMinRuntimeMajor, 87, "ICoreWebView2Controller2 的运行时主版本下限 = 87", __LINE__);
         // 下限两侧各一格:写成 `>` 时上面那格红,写成 `>=` 少一档时下面那格红。
         check(defaultBackgroundSupport("87.0.1.1") == Support::available, "恰好等于下限:available(边界含等号)",

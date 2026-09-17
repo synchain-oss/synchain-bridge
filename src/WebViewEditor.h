@@ -88,8 +88,10 @@ private:
         MissingRuntime,
         LoadTimeout
     };
-    static juce::String webView2RuntimeVersion(); // [SL-421] 空 = 没探到运行时
-    static bool webView2RuntimeAvailable(); // == webView2RuntimeVersion().isNotEmpty()
+    // [SL-421] 空 = 没探到运行时（**唯一**的运行时判定路，调用方直接判 isEmpty()）。
+    // ⚠ 非 Windows 回哨兵 "0"、不是空串 —— 空串会被 beginLoadAttempt 判成「运行时缺失」
+    // 直接切兜底面板。改这个返回值之前先读 beginLoadAttempt。
+    static juce::String webView2RuntimeVersion();
     void showFallback(FallbackReason reason);
     void retryWebView();
 

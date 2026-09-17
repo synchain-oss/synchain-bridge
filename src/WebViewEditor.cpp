@@ -259,11 +259,17 @@ private:
 SynchainBridgeWebEditor::SynchainBridgeWebEditor(SynchainBridgeAudioProcessor& p)
     : juce::AudioProcessorEditor(&p), mProcessor(p)
 {
+#if JUCE_WINDOWS
     // [SL-421] 声明本组件完全不透明：JUCE 因此不会去画它下面的东西（宿主给的编辑器容器）。
     // ⚠ 它**不治**开窗白闪 —— 白闪那几段里本组件的 paint 要么被 WebView2 表面盖住、要么
     // 画的就是占位（见下面 paint()）。它管的是兜底面板路径下这块底。与 SCVB
     // WebViewHost 构造里那一句同形、同理由，一并搬过来免得两仓形态分家。
+    // ⚠ **必须与 paint() 同平台条件**（第 1 轮复审两家都点了）：paint() 的绘制体在
+    // #if JUCE_WINDOWS 里，非 Windows 是空实现；若这句无条件生效，mac 上就成了「声明自己
+    // 不透明、却一个像素都不画」—— 构造→attach、retryWebView() 里 mFallback.reset()→resized()
+    // 这两个窗口里，WKWebView 还没盖住的区域拿到的是未定义的后备缓冲内容。
     setOpaque(true);
+#endif
 
     mWebView = std::make_unique<BridgeWebView>(*this, makeOptions());
     addAndMakeVisible(*mWebView);
@@ -288,7 +294,8 @@ SynchainBridgeWebEditor::~SynchainBridgeWebEditor()
 // [SL-421] 运行时版本串（空 = 没探到运行时）。原先这里只回一个 bool，把 loader 给的版本串
 // 丢掉了；DefaultBackgroundColor 那一层在不在只能从主版本号推（见 WebViewRevealGate.h 的
 // defaultBackgroundSupport 头注），所以把版本串留下来。「在不在」的判定仍是**同一个**
-// GetAvailableCoreWebView2BrowserVersionString 调用，webView2RuntimeAvailable 的语义不变。
+// GetAvailableCoreWebView2BrowserVersionString 调用、同一个「hr >= 0 且非空」判定，
+// 「运行时在不在」的语义与改动前逐字一致 —— 调用方改判 isEmpty()。
 juce::String SynchainBridgeWebEditor::webView2RuntimeVersion()
 {
 #if JUCE_WINDOWS
@@ -305,11 +312,6 @@ juce::String SynchainBridgeWebEditor::webView2RuntimeVersion()
 #endif
 }
 
-bool SynchainBridgeWebEditor::webView2RuntimeAvailable()
-{
-    return webView2RuntimeVersion().isNotEmpty();
-}
-
 // [SL-421] 把「DefaultBackgroundColor 这一层在不在」变成一行可抓的诊断 —— JUCE 对
 // QueryInterface(ICoreWebView2Controller2) 取不到是**静默跳过**（没有 else、没有日志、
 // 不看 HRESULT），不打这行就分不出「设了没生效」和「压根没设」（判例：JUCE 吞掉 WebView2
@@ -324,8 +326,11 @@ void SynchainBridgeWebEditor::logDefaultBackgroundSupport(const juce::String& ru
     const auto utf8 = runtimeVersion.toStdString();
     const auto support = webview::defaultBackgroundSupport(utf8.empty() ? nullptr : utf8.c_str());
     const juce::String shown = runtimeVersion.isNotEmpty() ? runtimeVersion : juce::String("unknown");
+    // ⚠ 走 juce::int64 重载，**别用 static_cast<int>**：中点色最高位是 1(0xff……)，转 int
+    // 是超值域窄化(C++17 实现定义)，得靠两次实现定义转换才凑出 ffd9cadb。int64 逐字节同
+    // 输出且与符号无关。同族问题 SCVB 刚在 #264 的 abiForJson 上修过（u32 超 INT_MAX 转 int）。
     const juce::String argb =
-        juce::String::toHexString(static_cast<int>(webview::placeholderMidArgb())).paddedLeft('0', 8);
+        juce::String::toHexString(static_cast<juce::int64>(webview::placeholderMidArgb())).paddedLeft('0', 8);
     const juce::String floor = juce::String(webview::kDefaultBackgroundMinRuntimeMajor);
 
     if (support == Support::available)
@@ -399,9 +404,17 @@ void SynchainBridgeWebEditor::beginLoadAttempt()
         return;
     }
 
+#if JUCE_WINDOWS
     // [SL-421] 必须在 goToURL **之前**打：控制器一建好 JUCE 就 put 那个颜色，诊断行打在后面
     // 会让读表的人分不清先后。每次加载尝试各打一行（retry 也重探一次运行时）。
+    // ⚠ **只在 Windows 打**（第 1 轮复审两家都点了）：非 Windows 上 webView2RuntimeVersion()
+    // 回的是哨兵 "0"，走下来会打成 `UNAVAILABLE ... ICoreWebView2Controller2 inferred absent
+    // ... JUCE drops argb ... silently` —— mac 上既没有 WebView2、也没有那个接口、更没有谁去
+    // put 这个 argb，**三个分句全假**。这行的全部价值是给贴 log 回来的人读，在 mac 上它会把
+    // 人指向一个不存在的缺口。⚠ 修法只能是给**调用点**加平台闸门：**不许改哨兵值** ——
+    // 哨兵改成空串会让上面那个 isEmpty() 判成「运行时缺失」，直接切兜底面板。
     logDefaultBackgroundSupport(runtimeVersion);
+#endif
 
     // 必须在任何 emit 之前完成首个 goToURL（前端脚本随后加载并注册监听）。
     mWebView->setVisible(true);

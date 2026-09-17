@@ -284,6 +284,15 @@ inline constexpr int kDefaultBackgroundMinRuntimeMajor = 87;
 
 // 版本串 → 主版本号;解析不出返回 -1。loader 可能返回 "137.0.3296.83",也可能带通道后缀
 // 写成 "137.0.3296.83 dev",只取首段数字;首段含任何非数字字符即判解析不出(**不猜**)。
+//
+// ⚠ 首段位数有上界 kMaxMajorDigits:超过就**拒绝**,既不截断也不继续乘。
+// 理由不是「现实中会发生」(WebView2 的 loader 给不出 10 位以上的主版本),而是**与本函数
+// 自己的既定口径一致** —— 它对一切解析不出的输入都回 -1「不猜」,那就不该在一个它同样
+// 判不了的输入上悄悄算出个数来。没有上界时 `value * 10 + …` 对 11 位以上首段是**有符号
+// 溢出 = UB**;而这是个取外部字符串的 noexcept 纯函数,UB 留着迟早被人当成「已验证过的
+// 输入路径」。9 位足够容下任何真实主版本(现值 152)还有五个数量级余量。
+inline constexpr int kMaxMajorDigits = 9;
+
 inline int majorVersionOf(const char* version) noexcept
 {
     if (version == nullptr)
@@ -297,6 +306,8 @@ inline int majorVersionOf(const char* version) noexcept
     {
         if (*p < '0' || *p > '9')
             return -1; // 首段混进非数字:不猜
+        if (digits >= kMaxMajorDigits)
+            return -1; // 首段过长:同样不猜(挡在 int 溢出之前)
         value = value * 10 + (*p - '0');
         ++digits;
     }
