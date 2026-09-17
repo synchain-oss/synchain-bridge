@@ -350,9 +350,16 @@ test("⑤ WebView2 DefaultBackgroundColor 那一层必须接上,且取值不许�
     .replace(/\/\*[\s\S]*?\*\//g, "")
     .replace(/\/\/[^\n]*/g, "");
 
-  // --- (a) makeOptions 里必须有 withBackgroundColour,且落在 WinWebView2 选项上 ---
-  // 删除式:删掉 makeOptions 里那一句 ⇒ 本格红(编译与其余全部判据都不会红 —— 这一层
-  // 缺席是**静默**的:JUCE 把默认构造的全透明色 put 进去,屏上就是白)。
+  // --- (a) makeOptions 里必须有 withBackgroundColour,**且把结果赋值回去** ---
+  // 删除式两格:删掉整句 ⇒ 本格红;**只删 `wv2 = ` 半句、保留调用 ⇒ 本格同样红**。
+  // 后一格是第 3 推补的:JUCE 的 Options::WinWebView2::withXxx 是 **by-value 返回的
+  // builder**(它返回一份改过的副本,不改原对象)—— 少写 `wv2 = ` 在语义上就是**这一层
+  // 根本没设**,而屏上照样是白。第 2 推为了「不绑死 wv2 这个变量名」把断言放宽成
+  // /\.withBackgroundColour\(/ 时,顺手把赋值这一半也丢了,实测「只删赋值」⑤ 仍然全绿 ——
+  // 那正是本仓 CTRL 对照格描述的形态(屏上是白、判据面一片绿),所以这里必须把赋值钉回来。
+  // ⚠ 不要指望 [[nodiscard]] 兜底:那是 MSVC C4834 **警告不是错误**,而 gates 对
+  // `warning C` 是**计数不判红**。
+  // 变量名仍然不绑死(两侧都用 \w+),改名不会假红。
   const mkBody = functionBodyAt(
     code,
     /juce::WebBrowserComponent::Options\s+SynchainBridgeWebEditor::makeOptions\s*\(/,
@@ -360,8 +367,9 @@ test("⑤ WebView2 DefaultBackgroundColor 那一层必须接上,且取值不许�
   );
   assert.match(
     mkBody,
-    /\.withBackgroundColour\(/,
-    "makeOptions() 必须给 WinWebView2 选项设 withBackgroundColour —— 不设的话 JUCE 把默认构造的" +
+    /\w+\s*=\s*\w+\.withBackgroundColour\(/,
+    "makeOptions() 必须给 WinWebView2 选项设 withBackgroundColour**并把结果赋值回去**" +
+      "(withXxx 是 by-value builder,不赋值 = 这一层没设)—— 不设的话 JUCE 把默认构造的" +
       " juce::Colour(ARGB 0x00000000,全透明)原样 put 进 put_DefaultBackgroundColor,控制器建好到" +
       "页面画出来之间那一层什么都不挡,露的是窗口的白(遮挡闸与 <head> 内联底都盖不到这一段)",
   );
