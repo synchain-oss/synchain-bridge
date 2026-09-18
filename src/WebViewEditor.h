@@ -35,7 +35,8 @@ namespace synchain
 //     零交集，JUCE 整个跳过它的 paint）；
 //   • BridgeWebView::paint —— 守「导航开始前 / 已放行」时自己表面上的白（fallbackPaint），
 //     未遮挡时被 WebView2 表面盖住。
-// 两层用同一组 kPlaceholderStops（成品可见底同形）。前端 DOMContentLoaded 后两层 rAF 发
+// 两层用同一组 kPlaceholderStops（成品可见底同形）。前端在 **paint 记录到达**（[SL-433]；
+// SL-386 原来是 DOMContentLoaded，那个触发条件不保证页面已经画过一帧）后再走两层 rAF 发
 // 首帧信号（timing::FirstFrameSignal），**只认首帧放行**（navFinished 只记账），信号后再压
 // tick ∧ 32ms 一拍才挪回；3s 超时兜底，兜底面板逻辑不变。挪窗激活只在 Windows
 // （#if JUCE_WINDOWS）；mac 路径保持现状。
@@ -104,7 +105,11 @@ private:
     void beginLoadAttempt(); // 构造 / retry 共用：重置看门狗与闸门，重新 goToURL
     void onNavigationStarted(const juce::String& url); // BridgeWebView::pageAboutToLoad 转发
     void onNavigationFinished(const juce::String& url); // BridgeWebView::pageFinishedLoading 转发
-    void handleFirstFrame(); // timing::FirstFrameSignal 事件（前端「首帧已绘」）
+    // timing::FirstFrameSignal 事件（前端「首帧已绘」）。
+    // [SL-433] 载荷从「整个不看」改成「读一个诊断字段」：timing::FirstFramePaintDeltaKey =
+    // 页面那一侧量到的 `信号时刻 − first-paint 时刻`。**只进日志，不参与任何放行判定**
+    // （判定仍全在 mRevealGate）。
+    void handleFirstFrame(const juce::var& payload);
     void applyRevealGate(); // 把闸门的判定落到 mWebView 的 bounds 上（唯一出口）
     void noteRevealed(); // 放行诊断行（reason + 用时；timeout 行带 navFinished 分诊后缀）
     void logDiag(const juce::String& line) const;

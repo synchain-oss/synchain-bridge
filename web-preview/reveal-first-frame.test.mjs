@@ -6,18 +6,32 @@
 // [SL-386] 开窗遮挡闸的跨语言同源判据(node:test + node:assert,零依赖,不需要 npm install)
 // =============================================================================
 // 钉五格「删一处就红」的事实(①②③ 来自 SL-386 各推,④ 来自 SL-386 第 2/3 推,
-// ⑤ 来自 [SL-421];格数与下面的 test() 一一对应,改动时两边一起改):
+// ⑤ 来自 [SL-421],② 于 [SL-433] 大改;格数与下面的 test() 一一对应,改动时两边一起改):
 //   ① 占位底三处同源:web/styles.css 的 --vb-card-surface(css token,卡片消费它)
 //      == web/index.html <head> 内联 html 底(外链 css 未到时的第一层底)
 //      == src/WebViewRevealGate.h kPlaceholderStops/kPlaceholderGradientDeg(C++ 占位色标)。
 //      角度 + 全部色标(位置与色值)三处逐项相等;改任一处即红。
 //   ② 首帧信号名两处同源:src/BridgeApi.h timing::FirstFrameSignal ==
-//      web/index.html <head> 内联脚本的 eventId;并钉脚本的时序结构
-//      (DOMContentLoaded 武装 + 嵌套两层 rAF + __JUCE__ 在场守卫)。
+//      web/index.html <head> 内联脚本的 eventId;并钉脚本的时序结构。
+//      [SL-433] 时序结构已从「DOMContentLoaded 武装」改判为「**paint 记录到达**才武装」
+//      (DCL 不保证页面画过任何一帧,详见 src/WebViewRevealGate.h),本格随之升级为六条:
+//      (a) 事件名逐字同源;(b) 嵌套两层 rAF;(c) 武装**确实由 paint 记录接线过来**
+//      (断生效不断在场:PerformanceObserver 在场 + buffered 落在 .observe 实参对象里 +
+//      回调体里真的调 armOnce + DOMContentLoaded 全块恰好一次且在 catch 里);
+//      (d) 回落路与保险定时器在场,且保险**排在 try 之前**、回调**直接发信号不绕 rAF**、
+//      撤网落在 signal() 里、**且撤网与去重都排在 postMessage 之后**(第 1 轮复审:只断
+//      「落在 signal() 里」时,排在 __JUCE__ 守卫之前的写法照样全绿,而那条路上信号一个字节
+//      都没发出去、网却已经撤了);(e) 载荷诊断字段 timing::FirstFramePaintDeltaKey 逐字同源且
+//      算式接上;(f) **C++ 那一侧**真的经该常量读了它并拼进诊断行(跨边界字面量双向对拍 ——
+//      任一侧漂了都只会打 `(no paint record)`,而那与合法回落路在日志里逐字同形)。
+//      外加原有的 __JUCE__ 在场守卫与 try 包裹两条。
 //   ③ 接线删除式源钉(src/WebViewEditor.cpp):webView 的 setVisible(false) 只允许出现在
 //      showFallback(兜底面板路径,SL-386 保留);遮挡闸放行链的调用点必须在场。
-//   ④ 插件路径关掉卡片入场动画(layoutForMode 的 isPlugin 段 animation:"none"),
-//      且它早于首帧信号生效。
+//   ④ 插件路径关掉卡片入场动画(layoutForMode 的 isPlugin 段 animation:"none")。
+//      ⚠ [SL-433] 本格**只钉「关了动画」这一件**,**不再声称它早于首帧信号** ——
+//      信号改由 paint 记录触发后,boot() 与 first-paint 的先后是**竞态**(见 web/index.html
+//      layoutForMode 处注释),静态判据接不住;那一档已进 src/WebViewRevealGate.h 的
+//      「真机回验的症状清单」。
 //   ⑤ [SL-421] WebView2 的 DefaultBackgroundColor 那一层接上了(makeOptions 的
 //      withBackgroundColour),取值经 placeholderMidArgb() 从 kPlaceholderStops 现算、
 //      不另写色值字面量,且「这一层在不在」的诊断行打在 goToURL 之前。
@@ -66,25 +80,30 @@ function parseCppPlaceholder(src) {
 }
 
 /**
- * [SL-421 第 2 推 · 裁定 7] 取某个函数定义的**函数体**(含首尾大括号)。
+ * [SL-421 第 2 推 · 裁定 7;SL-433 抽成公共件] 从 `at` 起,取其后第一个 `{` 到配平 `}` 的
+ * **整块**(含首尾大括号)。
  *
  * 取代此前的「起点 + 魔法偏移」(`mkAt + 2600` / `blAt + 1600`):那种窗口一旦被注释写长
- * 或函数挪动就会滑出目标 ⇒ **假红**。这里改成从函数头后的第一个 `{` 起做**大括号配对**,
- * 切出的正好是函数体,长度自适应、不依赖任何常数。
+ * 或函数挪动就会滑出目标 ⇒ **假红**。大括号配对切出的正好是目标块,长度自适应、
+ * 不依赖任何常数。
  *
- * ⚠ 只能喂**已剥掉字符串与注释**的源码(调用方负责):否则字符串/注释里的大括号会把配对带偏。
- * ⚠ **fail-closed 是本函数的硬性质**(裁定 7 明确要求保住):函数头找不到、`{` 找不到、
- *   大括号到文件尾都没配平 —— 三种情况**一律 assert 红**,绝不 `return ""` 或跳过。
+ * ⚠ 前提(第 2 轮复审订正成它**实际**要求的那句,别再照旧写成「字符串与注释都必须剥」):
+ *   **注释必须剥**;**字符串未剥时,调用方须自证目标块内没有携带大括号的字符串** ——
+ *   带大括号的字符串会把配对带偏,红就会落到无关的断言上(与 D6 当场抓到的那次滑动同类)。
+ *   两个调用方各自满足它的方式不同,写在各自那里:
+ *     · functionBodyAt(C++ 侧)喂的是**已把字符串整体占位成 `""`** 的源码 ⇒ 前提天然满足;
+ *     · jsBodyAt(JS 侧)喂的是**只剥了注释**的脚本块 ⇒ 靠「块内字符串都不含大括号」自证
+ *       (今天是 `"__bridge__firstFrame"` / `"paint"` / `"loading"` / `"DOMContentLoaded"` 等)。
+ *   ⚠ 这里**有意不加一步「剥字符串」**:那会让 (a)(e) 那几条字面量断言永远绿,而且是往
+ *   SL-431 那一族再加一层机制 —— **写准前提是删歧义,加剥字符串是加机制**。
+ * ⚠ **fail-closed 是本函数的硬性质**(裁定 7 明确要求保住):`{` 找不到、大括号到文件尾都
+ *   没配平 —— 一律 assert 红,绝不 `return ""` 或跳过。调用方那一半(锚点找不到也要红)
+ *   由 functionBodyAt / jsBodyAt 负责。
  *   「找不到就跳过」会让删掉被守对象的那一刻静默变绿,正是本格要防的事。
  */
-function functionBodyAt(code, headRe, label) {
-  const at = code.search(headRe);
-  assert.ok(
-    at >= 0,
-    `src/WebViewEditor.cpp 应有 ${label} 定义(源钉找不到函数头即判红)`,
-  );
+function braceBodyFrom(code, at, label) {
   const open = code.indexOf("{", at);
-  assert.ok(open >= 0, `${label} 的函数头之后应有 '{'`);
+  assert.ok(open >= 0, `${label} 之后应有 '{'`);
   let depth = 0;
   for (let i = open; i < code.length; i++) {
     if (code[i] === "{") depth++;
@@ -94,6 +113,71 @@ function functionBodyAt(code, headRe, label) {
     }
   }
   assert.fail(`${label} 的大括号到文件尾都没配平(源钉不许在这里静默放过)`);
+}
+
+/**
+ * [SL-433 第 1 轮复审 · A3] 剥掉 C++ 注释,**保留字符串字面量**。
+ *
+ * ③ ⑤ 那一套是「先把字符串整体占位成 `""`、再剥注释」——它要的是代码骨架,而占位之后
+ * **任何字面量断言都会永远绿**,所以「不许另写这个字段名的字面量」那条不能用它。
+ * 反过来,直接对原文跑「行注释正则」又会吃掉字符串里的 `//`(如 `"https://..."`),
+ * 把那一行从截点起整段删掉 —— 方向是 **fail-open**(真有字面量藏在同一行后半段就扫不到)。
+ * (这里不写出那条正则的字面形态:它含有 `*` 加 `/` 的相邻组合,写进块注释会把注释提前收尾 ——
+ *  本卡实测踩过一次。)
+ *
+ * 所以这里按字符走一遍,只在**字符串外**认注释:两个坑各避各的,不靠正则碰运气。
+ * 已知边界(写明):不处理原始字符串字面量 `R"(...)"`;本仓 C++ 里没有,真出现时它的内容
+ * 会被当普通代码扫,方向是**更严**(判负),不是更松。
+ */
+function stripCppCommentsKeepStrings(src) {
+  let out = "";
+  let i = 0;
+  while (i < src.length) {
+    const c = src[i];
+    const d = src[i + 1];
+    if (c === '"' || c === "'") {
+      const quote = c;
+      out += c;
+      i++;
+      while (i < src.length) {
+        out += src[i];
+        if (src[i] === "\\") {
+          // 转义对:整对照抄,免得 \" 被当成收尾引号。
+          if (i + 1 < src.length) out += src[i + 1];
+          i += 2;
+          continue;
+        }
+        if (src[i] === quote) {
+          i++;
+          break;
+        }
+        i++;
+      }
+      continue;
+    }
+    if (c === "/" && d === "/") {
+      while (i < src.length && src[i] !== "\n") i++;
+      continue;
+    }
+    if (c === "/" && d === "*") {
+      i += 2;
+      while (i < src.length && !(src[i] === "*" && src[i + 1] === "/")) i++;
+      i += 2;
+      continue;
+    }
+    out += c;
+    i++;
+  }
+  return out;
+}
+
+function functionBodyAt(code, headRe, label) {
+  const at = code.search(headRe);
+  assert.ok(
+    at >= 0,
+    `src/WebViewEditor.cpp 应有 ${label} 定义(源钉找不到函数头即判红)`,
+  );
+  return braceBodyFrom(code, at, `${label} 的函数头`);
 }
 
 function assertSameGradient(a, b, label) {
@@ -143,38 +227,236 @@ test("① 占位底三处同源:css token == 内联 html 底 == C++ 色标", () 
   assertSameGradient(fromToken, fromCpp, "css token ↔ C++ 色标");
 });
 
-test("② 首帧信号名同源 + 内联脚本时序结构(DOMContentLoaded + 两层 rAF + __JUCE__ 守卫)", () => {
+/**
+ * [SL-433] 在**剥完 JS 注释**的信号脚本块里,按 `re` 找到一处、切出其后第一个大括号配对块。
+ * fail-closed 同 functionBodyAt:锚点找不到即 assert 红,绝不 `return ""`。
+ *
+ * ⚠ 这里喂给 braceBodyFrom 的 `code` **只剥了注释、没剥字符串**,所以要自证它的前提:
+ *   本块里的字符串都不含大括号(`"__bridge__firstFrame"` / `"paint"` / `"loading"` /
+ *   `"DOMContentLoaded"` / `"function"` 等)。**将来在这段脚本里写一个含 `{` 或 `}` 的字符串
+ *   (例如把载荷改成模板串、或加一句带 `{}` 的日志文案),这个前提就破了** —— 配对会滑偏,
+ *   红会落到无关的断言上。到那时**改锚点或在这里剥字符串,别指望它自愈**。
+ *
+ * ⚠ 已知边界(第 1 轮复审 B5,写明、**不再加正则去兜**):调用方把锚点写成 `function` 形态时,
+ *   改成箭头函数(`setTimeout(() => {...})`)会落进本函数的 fail-closed ⇒ **判负**。
+ *   这是**有意的方向**:配对一旦滑到无关的块上,红就会落在别的断言上(本卡实测过一次,
+ *   见 D6/D6b)。要换写法就连同锚点一起改。
+ */
+function jsBodyAt(code, re, label) {
+  const at = code.search(re);
+  assert.ok(
+    at >= 0,
+    `web/index.html 的首帧信号脚本里应有 ${label}(源钉找不到即判红)`,
+  );
+  return braceBodyFrom(code, at, label);
+}
+
+test("② 信号名/载荷字段名两处同源 + 内联脚本由 paint 记录触发(两层 rAF + 回落 + 保险)+ C++ 侧真的读了那个字段", () => {
   const api = read("src/BridgeApi.h");
   const fnName = api.match(/FirstFrameSignal\s*=\s*"([^"]+)"/);
   assert.ok(fnName, "BridgeApi.h 应有 timing::FirstFrameSignal(唯一真源)");
   const eventId = fnName[1];
+  // [SL-433] 载荷里那个诊断字段名的真源同样在 BridgeApi.h,取法与事件名**逐字同源**。
+  const keyName = api.match(/FirstFramePaintDeltaKey\s*=\s*"([^"]+)"/);
+  assert.ok(
+    keyName,
+    "BridgeApi.h 应有 timing::FirstFramePaintDeltaKey([SL-433] 载荷诊断字段名的唯一真源)",
+  );
+  const paintDeltaKey = keyName[1];
 
   const html = read("web/index.html");
-  assert.ok(
-    html.includes(`eventId: "${eventId}"`),
-    "内联脚本应逐字引用 BridgeApi.h 的信号名",
-  );
 
   // 抽出内联信号脚本(<head> 里引用 eventId 的那个 <script> 块)。
   const script = html.match(/<script>([\s\S]*?eventId:[\s\S]*?)<\/script>/);
   assert.ok(script, "index.html <head> 应有首帧信号内联脚本");
-  const body = script[1];
+  // ⚠ [SL-433] **必须先剥掉块里的 JS 注释**:下面几条断言的关键词(PerformanceObserver /
+  // buffered / DOMContentLoaded / setTimeout / signal)在这段脚本的说明注释里逐字出现过,
+  // 不剥的话**注释自己就替实现发了合格证** —— SCVB 同族卡实测过:删掉 `buffered: true` 这个
+  // 实参,判据照样全绿。行尾 `//` 也要剥(把关键词挪进行尾注释是同一个洞的另一侧)。
+  // ⚠ 已知边界两条(写明,**不再加正则去兜** —— 判例 SL-431):
+  //   · 字符串字面量里的裸 `//`(如 `"a//b"`)会被误剥。本块里没有这种写法;真要有,后果是
+  //     **判据更严**(实现文本被剥掉 ⇒ 判负),方向是 fail-closed;
+  //   · 行尾那条用「`//` 前必须有一个字符且不是 `:`」避开 `https://`,代价是 `x: //注释`
+  //     这种形态剥不掉(第 1 轮复审 B5)。方向是 fail-open,但本块里没有这种写法,而且
+  //     下面 (c) 的 buffered 断言另外还要求它落在 `.observe({...})` 的**实参对象**里 ——
+  //     两道各自独立,任一道单独失效都不会让那一格空过。
+  const body = script[1]
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/^[ \t]*\/\/.*$/gm, "")
+    .replace(/([^:])\/\/.*$/gm, "$1");
 
+  // --- (a) 事件名逐字同源 ---
   assert.ok(
-    /document\.addEventListener\(\s*"DOMContentLoaded",\s*arm\s*\)/.test(
-      body,
-    ) ||
-      /document\.addEventListener\(\s*'DOMContentLoaded',\s*arm\s*\)/.test(
-        body,
-      ),
-    "信号必须等 DOMContentLoaded 才武装(此前页面还没构建)",
+    body.includes(`eventId: "${eventId}"`),
+    "内联脚本应逐字引用 BridgeApi.h 的信号名",
   );
-  // 嵌套两层 rAF:单层 rAF 的回调跑在这一帧提交之前,发信号会早于首帧 —— 那正是要治的病。
+
+  // --- (b) 嵌套两层 rAF ---
+  // 单层 rAF 的回调跑在这一帧提交**之前**,比嵌套两层更早,信号更不可能落在已绘之后。
   assert.match(
     body,
     /requestAnimationFrame\(\s*function\s*\(\s*\)\s*\{\s*window\.requestAnimationFrame\(\s*signal\s*\)/,
-    "信号必须嵌套两层 requestAnimationFrame(前一帧确已合成)",
+    "信号必须嵌套两层 requestAnimationFrame",
   );
+
+  // --- (c) [SL-433] 武装**确实由 paint 记录接线过来** —— 断的是**生效**,不是在场 ---
+  // 绕法很自然:把武装改回 DOMContentLoaded、同时把 PerformanceObserver 留成死代码
+  // (「怕某些浏览器不报 paint 记录,两边都挂上」)⇒ 片段全在、判据全绿、病照旧。所以四条一起断:
+  //   · `new PerformanceObserver` 在场;
+  //   · `buffered: true` 必须落在 `.observe({...})` 的**实参对象**里(不是块里任意位置);
+  //   · **paint 回调体里真的调了 armOnce**(死代码那条路死在这一条上)。这里用**大括号配对**
+  //     切出回调体来判,不用字符距离窗口 —— 窗口是「今天不漏」,不是结构;
+  //   · `DOMContentLoaded` 在整块里**恰好出现一次,且在 catch 里** —— 多出来的那一次正是
+  //     「把武装改回 DCL」的形态,回落路只许待在 catch 那条兜底路上。
+  const poCallback = jsBodyAt(
+    body,
+    /new\s+PerformanceObserver\s*\(/,
+    "PerformanceObserver 的回调",
+  );
+  assert.match(
+    poCallback,
+    /armOnce\s*\(/,
+    "paint 回调体里必须真的调 armOnce(片段在场但不接线 = 武装仍由 DOMContentLoaded 驱动)",
+  );
+  // [SL-433 第 2 轮复审] 先切出 `.observe(...)` 的**实参对象**,再分别断两件 —— 上一版用一条长
+  // 正则把 `type` 与 `buffered` 串在一起写,顺带把**键的先后顺序**也钉死了:等价写法
+  // `{ buffered: true, type: "paint" }` 会**假红**,而键序与被守的性质毫无关系。
+  // 本格要断的是「`buffered` 落在**实参对象**里、不是落在注释里」,不是字面排版。
+  const observeArg = body.match(/\.observe\s*\(\s*(\{[^}]*\})\s*\)/);
+  assert.ok(
+    observeArg,
+    ".observe 必须带一个实参对象(paint 记录可能早于本脚本产生,靠它要 buffered)",
+  );
+  assert.match(
+    observeArg[1],
+    /type\s*:\s*"paint"/,
+    '.observe 的实参里必须是 type: "paint"',
+  );
+  assert.match(
+    observeArg[1],
+    /buffered\s*:\s*true/,
+    "buffered: true 必须落在 .observe 的**实参对象**里(写进注释不算)",
+  );
+  // ⚠ 已知边界(第 2 轮复审提过,第 3 轮指出这一处没补上,现补):本条数的是**剥完注释、
+  // 但未剥字符串**的文本,所以**字符串字面量里的 `DOMContentLoaded` 也会被计入**。
+  // 今天块里唯一那次就是 addEventListener 的实参,计数正好;将来若在这段脚本里另写一个
+  // 含该词的字符串(例如日志文案),本条会**假红**。方向是 fail-closed,届时改锚点即可 ——
+  // 别为它在这里加剥字符串那一层(会让其它几条字面量断言永远绿,判例 SL-431)。
+  assert.equal(
+    (body.match(/DOMContentLoaded/g) || []).length,
+    1,
+    "DOMContentLoaded 在整块里必须恰好出现一次(多出来的那一次 = 把武装改回了 DCL)",
+  );
+  assert.match(
+    body,
+    /catch\s*(\([^)]*\)\s*)?\{[^}]*DOMContentLoaded/,
+    "唯一那次 DOMContentLoaded 必须在 catch 里(它只是「压根没有 PerformanceObserver」时的回落路)",
+  );
+
+  // --- (d) [SL-433] 回落路 + 保险定时器,以及保险本身的三条形态 ---
+  // 这三条每一条都是 SCVB 同族卡在复审里现场栽出来的,且栽的时候「片段在场」那几条全绿:
+  //   · 保险**排在 try 之前** —— 排在 po.observe() 之后的话,`new PerformanceObserver` 抛错时
+  //     那一行根本没执行过 ⇒ **回落路压根没有保险**;
+  //   · 保险的回调**直接发信号、不绕两层 rAF** —— 「paint 不来」最可能的成因是 BeginFrame
+  //     停摆,那时 rAF 也不回调 ⇒ 绕过去等于把绳子拴在同一根断掉的柱子上;
+  //   · **撤网(clearTimeout)落在 signal() 里** —— 落在 armOnce() 里的话,网在信号真发出去
+  //     之前就没了,而撤网后剩下的恰恰是上一条说的那两层 rAF。
+  assert.match(
+    body,
+    /readyState/,
+    "回落路必须读 readyState(脚本晚于 DOMContentLoaded 执行时也要武装)",
+  );
+  assert.equal(
+    (body.match(/setTimeout\s*\(/g) || []).length,
+    1,
+    "保险定时器必须恰好一个(多一个就有第二条时限,读日志时分不出是哪条发的)",
+  );
+  const guardAt = body.search(/setTimeout\s*\(/);
+  const poAt = body.search(/new\s+PerformanceObserver\s*\(/);
+  const tryAt = body.lastIndexOf("try", poAt);
+  assert.ok(
+    tryAt >= 0 && tryAt < poAt,
+    "new PerformanceObserver 必须包在 try 里(没有 PerformanceObserver 的浏览器要走回落路)",
+  );
+  assert.ok(
+    guardAt >= 0 && guardAt < tryAt,
+    "保险定时器必须排在那个 try **之前**:排在 po.observe() 之后的话," +
+      "new PerformanceObserver 抛错时它根本没执行过 —— 回落路就没有保险了",
+  );
+  // ⚠ 顺序有意如此:先断「不许把 arm/armOnce 直接当回调」,再去切回调体。反过来的话
+  // `setTimeout(armOnce, 2500)` 这一注入会先把下面的大括号配对**滑到紧随其后的 try 块上**
+  // (实测过),红是红了却红在别的断言上 —— 「红在设计接住它的那条断言上」就不成立了。
+  assert.doesNotMatch(
+    body,
+    /setTimeout\s*\(\s*(arm|armOnce)\s*[,)]/,
+    "保险不许把 arm/armOnce 当回调(那条路还要过两层 rAF,BeginFrame 停摆那一档下根本不回调)",
+  );
+  // 锚点带上 `function`:回调不是**就地写的函数**时,配对同样会滑到无关的块上 ⇒ 这里让
+  // jsBodyAt 的 fail-closed 在锚点这一步就判红,而不是让后面那条断言去背这口锅。
+  const guardCallback = jsBodyAt(
+    body,
+    /setTimeout\s*\(\s*function/,
+    "保险定时器的**就地**回调 setTimeout(function () {...})",
+  );
+  assert.match(
+    guardCallback,
+    /signal\s*\(\s*\)/,
+    "保险的回调必须**直接发信号**:绕 arm() 的两层 rAF 时,BeginFrame 停摆那一档下 rAF 根本不回调," +
+      "保险等于不存在",
+  );
+  assert.equal(
+    (body.match(/clearTimeout\s*\(/g) || []).length,
+    1,
+    "撤网必须恰好一处",
+  );
+  const signalBody = jsBodyAt(body, /function\s+signal\s*\(/, "signal()");
+  assert.match(
+    signalBody,
+    /clearTimeout\s*\(/,
+    "撤网必须落在 signal() 里:落在 armOnce() 里的话,网在信号真发出去之前就撤了," +
+      "而撤网后剩下的正是两层 rAF",
+  );
+  // [SL-433 第 1 轮复审] 「落在 signal() 里」还不够 —— 上一版就是落在 signal() 里、却排在
+  // `try` 之前,也就是排在「__JUCE__ 在不在」那道守卫之前:守卫命中 return(或 postMessage
+  // 抛异常)时信号一个字节没发出去,网却已经撤了。**注释宣称的保证,代码给不到** —— 而上面
+  // 那两条断言当时全是绿的。所以这里按**位置**钉死那句不变式的两半:撤网与去重都必须排在
+  // `postMessage` 之后。用下标比较而不是再加正则(判据面别再长胖,判例 SL-431)。
+  const postAt = signalBody.search(/postMessage\s*\(/);
+  assert.ok(
+    postAt >= 0,
+    "signal() 里必须有 postMessage((源钉找不到发送点即判红)",
+  );
+  assert.ok(
+    signalBody.search(/clearTimeout\s*\(/) > postAt,
+    "撤网(clearTimeout)必须排在 postMessage **之后**:排在前面时,__JUCE__ 不在场或 postMessage" +
+      " 抛异常这两条路上信号根本没发出去,网却已经撤了 —— 保险就白挂了",
+  );
+  assert.ok(
+    signalBody.search(/sent\s*=\s*true/) > postAt,
+    "去重置位(sent = true)必须排在 postMessage **之后**:排在前面时,一次没发出去的尝试" +
+      "会把后面那次真能发出去的短路掉",
+  );
+
+  // --- (e) [SL-433] 载荷里的诊断字段:字段名逐字同源 + 算式真的接上了 ---
+  // 两条各守一件:①`p.<字段名> = Math.round(performance.now() - paintStartMs)` 的算式形态
+  // (顺带把「减号写反 / 拿别的当基线」变成源码可判);② 基线真的取自 paint 记录的 startTime。
+  assert.match(
+    body,
+    new RegExp(
+      "p\\." +
+        paintDeltaKey +
+        "\\s*=\\s*Math\\.round\\(\\s*performance\\.now\\(\\)\\s*-\\s*paintStartMs",
+    ),
+    `载荷里必须带 p.${paintDeltaKey} = Math.round(performance.now() - paintStartMs)` +
+      "(字段名取自 BridgeApi.h 的 timing::FirstFramePaintDeltaKey,逐字一致)",
+  );
+  assert.match(
+    body,
+    /paintStartMs\s*=\s*list\.getEntries\(\)\[0\]\.startTime/,
+    "差值的基线必须取自 paint 记录的 startTime",
+  );
+
+  // --- 原有两条守卫不变 ---
   assert.match(
     body,
     /window\.__JUCE__/,
@@ -184,6 +466,52 @@ test("② 首帧信号名同源 + 内联脚本时序结构(DOMContentLoaded + �
     body,
     /try\s*\{/,
     "postMessage 必须 try 包裹(发不出去也不许卡住,还有 3s 兜底)",
+  );
+
+  // --- (f) [SL-433] 跨边界字面量的**另一侧**:C++ 真的读了那个字段 ---
+  // 为什么非要两侧都断:任一侧漂了,失败形态都是 C++ 打 `(no paint record)` —— 而那与
+  // 「页面确实走了回落路 / 保险路」在日志里**逐字同形**,贴 log 回来的人分不出是哪一种,
+  // 这个诊断字段就失去存在意义。上面 (e) 守页面那一侧,这里守 C++ 那一侧。
+  const src = read("src/WebViewEditor.cpp");
+  // 与 ③ ⑤ 同一套词法近似:先把字符串字面量整体换成占位、**再**剥注释(顺序不能反,
+  // 理由见 ③ 处注释)。
+  const code = src
+    .replace(/"(?:[^"\\]|\\.)*"/g, '""')
+    .replace(/'(?:[^'\\]|\\.)*'/g, "''")
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/\/\/[^\n]*/g, "");
+  const hfBody = functionBodyAt(
+    code,
+    /void\s+SynchainBridgeWebEditor::handleFirstFrame\s*\(/,
+    "handleFirstFrame()",
+  );
+  assert.match(
+    hfBody,
+    /getProperty\([^;]*FirstFramePaintDeltaKey/,
+    "handleFirstFrame 必须经 timing::FirstFramePaintDeltaKey 取那个字段(不许另写字面量)",
+  );
+  assert.match(
+    code,
+    /handleFirstFrame\(\s*\w+\s*\)/,
+    "事件监听必须把载荷**传下去**:不传的话上面那句永远读到空 var,而编译照过、日志恒打 (no paint record)",
+  );
+  // 这一条**绑了 paintNote 这个变量名**,有意如此:不绑名字就只能去比字符串字面量,而字符串在
+  // 上一步已被整体占位掉。删除式:删掉 logDiag 那句里的 `+ paintNote` ⇒ 本格红;改名时连同
+  // 本断言一起改。
+  assert.match(
+    hfBody,
+    /logDiag\([^;]*paintNote/,
+    "差值必须真的拼进那行诊断(算出来却不打 = 用户那份日志里什么都没多)",
+  );
+  // ⚠ [SL-433 第 1 轮复审 · A3] 这一条**不能**扫上面那份 `code`:它把字符串整体占位成 `""`,
+  // 字面量断言会**永远绿**(判据自己给自己发合格证)。也不能直接扫原文 `src`:
+  // `handleFirstFrame` 上面那段注释本来就在逐字讨论这个字段名(现在写的是反引号才没红),
+  // 哪天有人改成双引号就是一条**假红**。所以扫「只剥注释、保留字符串」的那一份。
+  assert.ok(
+    !new RegExp('"' + paintDeltaKey + '"').test(
+      stripCppCommentsKeepStrings(src),
+    ),
+    `src/WebViewEditor.cpp 里不许出现 "${paintDeltaKey}" 字面量(字段名只有 BridgeApi.h 一个真源)`,
   );
 });
 
@@ -297,12 +625,14 @@ test("③ 接线源钉:webView 的 setVisible(false) 只许在 showFallback(兜�
   );
 });
 
-test("④ 插件路径关掉卡片入场动画,且早于首帧信号生效(源钉,fail-closed)", () => {
+test("④ 插件路径关掉卡片入场动画(源钉,fail-closed)", () => {
   const html = read("web/index.html");
 
-  // 主脚本必须是 type="module":整条时序保证依赖它 —— module 脚本在文档解析完
-  // (readyState === "interactive")时求值,早于 DOMContentLoaded 派发。删除式:去掉
-  // type="module" ⇒ 本格红(module 求值点变了,boot() 的执行时机不再由构造保证)。
+  // 主脚本必须是 type="module":**boot() 早于 DOMContentLoaded 派发**这一条依赖它 ——
+  // module 脚本在文档解析完(readyState === "interactive")时求值。删除式:去掉
+  // type="module" ⇒ 本格红(module 求值点变了,boot() 的执行时机不再由构造决定)。
+  // ⚠ 这条**只管 boot() 与 DCL 的先后**;[SL-433] 之后它已经推不出「boot() 早于首帧信号」,
+  // 理由见下面那段。
   const moduleAt = html.search(/<script\s+type="module">/);
   assert.ok(
     moduleAt >= 0,
@@ -313,14 +643,19 @@ test("④ 插件路径关掉卡片入场动画,且早于首帧信号生效(源�
   // [第 4 推 R2] 含 boot() 的脚本必须是那个 module 脚本(boot 定义在 module 开标签之后)。
   assert.ok(
     html.search(/function\s+boot\s*\(/) > moduleAt,
-    "boot() 必须定义在 type=module 脚本内(时序保证的前半句)",
+    "boot() 必须定义在 type=module 脚本内(「boot() 早于 DCL 派发」那一条的前半句)",
   );
 
   // [第 3 推 R1 改准] 时序:boot() 在**模块求值时**(readyState === "interactive")已执行、
   // 早于 DOMContentLoaded 派发 —— 不是「DOMContentLoaded 派发中同步执行」(module 脚本在
   // 解析完、DOMContentLoaded 事件之前求值,此刻 readyState 已是 interactive,走的是
-  // readyState !== "loading" 的立即分支)。首帧信号则在 DOMContentLoaded 之后等两层 rAF,
-  // 故「先关动画、后发信号」由构造保证。删除式双向:
+  // readyState !== "loading" 的立即分支)。以上**仍然成立**,它只说 boot() 与 DCL 的先后。
+  // ⚠ [SL-433] 但**「先关动画、后发信号」不再由构造保证** —— 首帧信号已不是 DCL 触发,
+  // 改由 paint 记录触发,而 boot() 与 first-paint 是**竞态**(模块求值要等 bridge.js +
+  // i18n.js 两次往返,first-paint 只等渲染阻塞的 styles.css 一次;本机未量)。
+  // 本格因此**只钉「关了动画」**,不钉先后;那一档的症状(放行瞬间卡片还在 vbUp 淡入头几帧)
+  // 落在 src/WebViewRevealGate.h 的「真机回验的症状清单」里,静态判据接不住。
+  // 删除式双向:
   //   · 去掉 isPlugin 段里的 animation: "none" ⇒ 本格红;
   //   · 把那句搬到 else(预览)分支 ⇒ 本格红(第 1/2 推的整函数断言对搬家假绿,已实测)。
   const fnAt = html.search(/function\s+layoutForMode\s*\(/);

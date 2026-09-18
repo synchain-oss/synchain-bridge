@@ -449,14 +449,64 @@ void SynchainBridgeWebEditor::onNavigationFinished(const juce::String& url)
     logDiag("navigation finished: " + url);
 }
 
-void SynchainBridgeWebEditor::handleFirstFrame()
+// [SL-433] 载荷从「整个不看」改成**只看一个诊断字段**：`paintDeltaMs` = 页面那一侧量到的
+// `信号时刻 − first-paint 时刻`。它**只进日志，不参与任何放行判定** —— 判定仍全在 mRevealGate。
+//
+// 【为什么要它】用户机上的这个余量**从来没有被量过**：日志此前只记信号时刻与放行时刻，于是
+// 「他那台上信号到底早于还是晚于首帧、差多少」只能靠推断。有了这一格，用户下次贴一份日志就能
+// **直接读出来**，而不是继续拿「还白 / 不白」两个 bit 做判断。
+//
+// 【为什么送差值而不是 paint 的绝对时刻】页面的 `performance` 时间轴与这里的 `mStartMs`
+// **不共享原点**，送绝对值过来无法与任何东西相减。
+//
+// 【`(no paint record)` 怎么读 —— 按字面读，别读成「走了兜底路」】它只说明**这一次的载荷里
+// 没有这个字段**。页面在没有 paint 记录时不带它，所以「没有 paint 记录 ⇒ 打这一行」成立；
+// **反过来不成立**：页面侧的去重落在 signal() 里，保险定时器的回调不再查 armed ⇒
+// 「paint 已到、两层 rAF 还没跑完就到保险时限」这一路会**带着一个真实的差值**由保险发出。
+// ⇒ 判「走的是不是保险路」要看 `after N ms` 的量级，不是看这个字段在不在。
+// [SL-433 第 1 轮复审] 「字段在场、但读不出来」**不打这一行**，打 `(paint delta unreadable)`
+// —— 它的含义是「真源没漂、载荷坏了」，与本行要查的地方不是一处（见下面 else if 分支）。
+// 字段名的真源是 BridgeApi.h 的 timing::FirstFramePaintDeltaKey，web/index.html 逐字引用，
+// 由 web-preview/reveal-first-frame.test.mjs 第 ② 格逐字对拍（理由见该常量的注释：
+// 打错字母的失败形态与合法回落路在日志里同形）。
+void SynchainBridgeWebEditor::handleFirstFrame(const juce::var& payload)
 {
+    // 日志文案一律 ASCII（printf 族拼接非 ASCII 字面量会触发 MSVC C4819），同 logDiag 的口径。
+    juce::String paintNote(" (no paint record)");
+    const auto delta = payload.getProperty(juce::Identifier(bridge::timing::FirstFramePaintDeltaKey), juce::var());
+    // **非有限、或有限但超出目标类型值域**的 double 直接 static_cast 成 int 是 UB，所以先在
+    // double 域夹，再由这里窄化。入口是真的：JSON 里造得出 ±Inf（`{"x": 1e400}` 经 strtod
+    // 溢出成 HUGE_VAL）；我们自己的 web 侧发不出（JS 的 JSON.stringify(Infinity) 出 null），
+    // 但这条载荷毕竟跨了 web → C++ 这道边界，本仓对同类边界的口径是「先校验再用」。
+    const auto usable =
+        delta.isInt() || delta.isInt64() || (delta.isDouble() && std::isfinite(static_cast<double>(delta)));
+    if (usable)
+    {
+        // 夹到 ±60 s：这是「信号 − 首帧」的毫秒差值，再大也没有诊断意义，而夹完必然落在 int
+        // 的可表示范围内 ⇒ 下面这次窄化不再触碰 UB。
+        const auto n = static_cast<int>(juce::jlimit(-60000.0, 60000.0, static_cast<double>(delta)));
+        paintNote = juce::String(" (signal-firstPaint ") + (n >= 0 ? "+" : "") + juce::String(n) + " ms)";
+    }
+    else if (!delta.isVoid())
+    {
+        // [SL-433 第 1 轮复审] **第三种形态要与前两种分开**:字段**在场、但读不出来**
+        //(类型不对 / 非有限 double)。它与 `(no paint record)` 的含义完全不同 ——
+        // 后者是「页面没带这个字段」(走了回落路 / 保险路,或者真源名字漂了),
+        // 前者是「真源没漂、载荷坏了」,要查的地方不是一处。立这个常量的全部理由就是
+        // 「别让几种成因在日志里同形」,那就不该自己再把第三种并进去。
+        // ⚠ **这个三态划分还剩一个已知口子,本轮有意没收**(第 3/4 轮复审【建议】,转 **SL-438**):
+        // `payload` **整个不是对象**(载荷是数组 / 字符串)或字段是 JSON `null` 时,getProperty
+        // 的返回与「字段压根不在」不可分 ⇒ 仍落进上面那行 `(no paint record)`。纯诊断面、
+        // 不影响任何判定,故不搭在收口推上 —— 但**要改这段的人得知道它在**。
+        paintNote = " (paint delta unreadable)";
+    }
+
     // 先记「信号到了」，再谈放行 —— 两件事分开数：信号可能在 3s 兜底或兜底面板之后才到，
     // 只看放行行会把「信号来晚了」误读成「信号没来」。真机/pluginval 验收数的就是这一行
     // 与 noteRevealed() 放行行的条数比（开 N 次窗应有 N 行 first-frame signal）。
     logDiag(juce::String("first-frame signal after ") +
             juce::String(static_cast<int>(juce::Time::getMillisecondCounter() - mStartMs)) + " ms" +
-            (mRevealGate.parked() ? juce::String(" (still parked)") : juce::String(" (already revealed)")));
+            (mRevealGate.parked() ? juce::String(" (still parked)") : juce::String(" (already revealed)")) + paintNote);
     // onFirstFrame 只武装不放行（tick ∧ 32ms 一拍在 timerCallback 的 onTick 里结算）；
     // 传 nowMs 是因为毫秒下界要从信号到达那一刻起算。
     // 防御性保留，效果为零 —— 信号在 settling 期到达时 noteRevealed() 的 parked() 条件早退；
@@ -607,9 +657,10 @@ juce::WebBrowserComponent::Options SynchainBridgeWebEditor::makeOptions()
                             })
         // [SL-386] 时序面（非契约）：前端「首帧已绘」上行 —— 遮挡闸唯一的正常放行路。
         // 通道选择与「为何不进 Fn:: 契约名表」见 BridgeApi.h timing::FirstFrameSignal 处注释。
-        // 载荷不看：这条信号只有「到了」这一个信息量，前端也只发一次。
+        // [SL-433] 载荷从「不看」改成**只看一个诊断字段**（timing::FirstFramePaintDeltaKey）：
+        // 它只进日志、不参与放行判定，理由与读法见 handleFirstFrame 的注释。
         .withEventListener(juce::Identifier(bridge::timing::FirstFrameSignal),
-                           [this](const juce::var&) { handleFirstFrame(); });
+                           [this](const juce::var& payload) { handleFirstFrame(payload); });
 }
 
 std::optional<juce::WebBrowserComponent::Resource>

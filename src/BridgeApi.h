@@ -69,6 +69,16 @@ inline constexpr const char* CommitUiScale = "commitUiScale";
 namespace timing
 {
 inline constexpr const char* FirstFrameSignal = "__bridge__firstFrame";
+
+// [SL-433] 上面那条信号载荷里**唯一**被读的字段名：页面量到的
+// `信号时刻 − first-paint 时刻`（毫秒差值，**只进诊断日志，不参与任何放行判定**）。
+// 与 FirstFrameSignal 同属时序/诊断面、同样不进 Fn:: 名表（判定与兼容性承诺见
+// docs/contract-changes/20260918-sl433-first-frame-paint-delta.md）。
+// ⚠ 为什么单独立常量、不就地写字面量：这个名字跨了 web → C++ 两侧，任一侧打错一个字母的
+// 失败形态是 **C++ 打 `(no paint record)`** —— 而那与「页面确实走了回落路 / 保险路」在日志里
+// **逐字同形**，贴 log 回来的人分不出是哪一种，这个诊断字段就失去存在意义。立成常量之后，
+// web-preview/reveal-first-frame.test.mjs 第 ② 格照 FirstFrameSignal 的同一个 shape 逐字对拍。
+inline constexpr const char* FirstFramePaintDeltaKey = "paintDeltaMs";
 } // namespace timing
 
 // --- withInitialisationData 预置键（首帧同步可读，无需往返）----------------

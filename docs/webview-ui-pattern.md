@@ -41,6 +41,13 @@
 > 另：JUCE 对 `QueryInterface(ICoreWebView2Controller2)` 取不到是**静默跳过**（没有 else、
 > 没有日志、不看 HRESULT），所以 ①-b 必须配一行诊断（`webview2 default background: ...`），
 > 否则「设了没生效」与「压根没设」在真机上分不开。
+>
+> ⚠ **「三层」是「底色层」的完整枚举，不是「开窗能看见的白」的完整枚举（SL-433）**：
+> 三层全铺对了，屏上仍可能多一段白 —— **放行时机太早**时遮挡闸把窗口揭开，而 Chromium
+> widget 一个像素都还没画，露的是它自己的 base background。那不是「少铺了一层底」，是时序
+> 问题，①-b 也盖不住它（①-b 铺在**任何 web 内容之下**）。判据面也不同：底色那三层由
+> `reveal-first-frame.test.mjs` 的 ① ⑤ 钉同源，时序这一段由同文件 ② 格钉「首帧信号必须
+> 等 paint 记录到达才发」。详见 `src/WebViewRevealGate.h` 头注的「首帧信号什么时候发」。
 
 ### 1. 设计盒常量 `kDesignW/kDesignH`
 - **复制来源**：`src/WebViewEditor.cpp` 的 `kDesignW` / `kDesignH`（匿名命名空间常量）
