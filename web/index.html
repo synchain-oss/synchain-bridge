@@ -26,22 +26,54 @@
         );
       }
     </style>
-    <!-- [SL-386] 「首帧已绘」上行信号 —— 开窗遮挡闸唯一的正常放行路（3s 超时兜底除外）。
+    <!-- [SL-386 / SL-433] 「首帧已绘」上行信号 —— 开窗遮挡闸唯一的正常放行路（3s 超时兜底除外）。
          机理/为什么挪窗/为什么只认首帧，只写在 src/WebViewRevealGate.h 一处，别在这里复述。
          通道：JUCE 内建 __JUCE__.postMessage ←→ withEventListener（不经 bridge.js、不占
          BridgeApi.h Fn:: 契约名表）；事件名真源 = src/BridgeApi.h timing::FirstFrameSignal，
-         此处逐字引用（判据 = web-preview/reveal-first-frame.test.mjs）。
-         **必须嵌套两层 requestAnimationFrame**：单层 rAF 的回调跑在这一帧提交**之前**，
-         只有在它里面再要一帧，回调触发时前一帧才确实已经合成。浏览器预览下没有
-         __JUCE__，静默返回；发不出去也不许卡住 —— C++ 侧还有 3s 超时兜底。 -->
+         载荷里那个诊断字段名真源 = 同文件的 timing::FirstFramePaintDeltaKey，此处两者都逐字
+         引用（判据 = web-preview/reveal-first-frame.test.mjs 第 ② 格）。
+         [SL-433] 武装的触发条件是「**页面真的画过一帧**」（paint 记录到达），不是
+         DOMContentLoaded：**嵌套两层 requestAnimationFrame 并不保证页面已经画过任何一帧**。
+         按 DCL 触发时信号时刻 ≈ DCL + 两个 rAF，与 first-paint 之间没有任何约束 —— 信号早于
+         first-paint 时，C++ 收到信号就把窗口揭开，而 Chromium widget 一个像素都还没画，
+         露的是它自己的 base background（白）。这就是用户看到的「第二段白」。
+         两层 rAF 仍然保留（paint 记录到达后再等一拍，让已画的那一帧提交给合成器）。
+         回落路（没有 PerformanceObserver）与保险定时器各自的理由写在下面它们那里。
+         浏览器预览下没有 __JUCE__，静默返回；发不出去也不许卡住 —— C++ 侧还有 3s 超时兜底。 -->
     <script>
       (function () {
+        // [SL-433] paint 记录到达时把它的 startTime 记下来，信号发出时算差值。
+        // −1 = 这一次没有 paint 记录（走了回落路或保险路）。
+        var paintStartMs = -1;
+        // [SL-433] `sent` 与「撤网」（clearTimeout）都落在 signal() 里，**不在 armOnce() 里**：
+        // 网只在信号**真发出去**的那一刻才撤。若撤在 armOnce() 里，撤网之后剩下的就是 arm()
+        // 那两层 rAF —— 而它恰恰是 BeginFrame 停摆那一档下不回调的东西（窗口被最小化 /
+        // 被完全遮挡 / DAW 弹模态框把合成停了）⇒ 网没了、信号也发不出，仍旧掉进 C++ 的超时
+        // 兜底。`sent` 兼做去重（保险与两层 rAF 都可能跑到这里）。
+        var sent = false;
         function signal() {
+          if (sent) return;
+          sent = true;
+          if (guard !== null) {
+            clearTimeout(guard);
+            guard = null;
+          }
           try {
             var juce = window.__JUCE__;
             if (!juce || typeof juce.postMessage !== "function") return;
+            // [SL-433] 载荷里带上「信号时刻 − first-paint 时刻」这个**差值**。它只进 C++ 的
+            // 诊断行，不参与任何放行判定。
+            // ⚠ **送差值、不送 paint 的绝对时刻**：页面的 performance 时间轴与 C++ 的
+            // mStartMs **不共享原点**，送绝对值过去无法与任何东西相减。
+            // 没有 paint 记录时**不带这个字段**，C++ 那行会打 `(no paint record)`。
+            // ⚠ 反过来读不成立：去重落在本函数里之后，保险的回调不再查 armed ⇒
+            // 「paint 已到、两层 rAF 还没跑完就到 2.5s」这一路会**带着一个真实的差值**由保险
+            // 发出。判「走没走保险路」要看诊断行 `after N ms` 的量级，不是看这个字段在不在。
+            var p = {};
+            if (paintStartMs >= 0)
+              p.paintDeltaMs = Math.round(performance.now() - paintStartMs);
             juce.postMessage(
-              JSON.stringify({ eventId: "__bridge__firstFrame", payload: {} }),
+              JSON.stringify({ eventId: "__bridge__firstFrame", payload: p }),
             );
           } catch {
             // 发不出去也不许卡住:C++ 侧还有 3s 超时兜底。
@@ -56,9 +88,48 @@
             window.requestAnimationFrame(signal);
           });
         }
-        if (document.readyState === "loading")
-          document.addEventListener("DOMContentLoaded", arm);
-        else arm();
+        var armed = false;
+        var guard = null;
+        function armOnce() {
+          if (armed) return;
+          armed = true;
+          arm();
+        }
+        // [SL-433] 保险定时器 —— paint 记录迟迟不来时的兜底。三件事都是有意为之：
+        //   · **排在 try 之前**，不在 try 里面：排在 po.observe() 之后的话，
+        //     `new PerformanceObserver` 抛错时这一行根本没执行过 ⇒ **回落路压根没有保险**；
+        //   · 回调**直接 signal()，不绕 arm() 的两层 rAF**：「paint 不来」最可能的成因就是
+        //     BeginFrame 停摆，那时 rAF 同样不回调 ⇒ 绕过去等于把绳子拴在同一根断掉的柱子上；
+        //   · 撤网在 signal() 里（见上）。
+        // ⚠ 它与 C++ 侧 3s 超时兜底**不共享时间原点**：后者从导航开始（pageAboutToLoad）起算，
+        // 本行从**这段内联脚本执行**起算，中间隔着「导航开始 → 文档送达 → <head> 解析」，
+        // 而那一段**读不出来**。所以别写「页内保险一定抢在 C++ 兜底前面」这种话 —— 冷起或
+        // 机器吃紧时它跑输，放行原因照样掉成 timeout（形态是「多等一会儿占位」，不是崩）。
+        // 另：页面在 hidden 状态下 Chromium 会把 setTimeout 节流到约 1 Hz，会进一步吃掉余量。
+        guard = setTimeout(function () {
+          signal();
+        }, 2500);
+        try {
+          var po = new PerformanceObserver(function (list) {
+            if (list.getEntries().length === 0) return;
+            paintStartMs = list.getEntries()[0].startTime;
+            try {
+              po.disconnect();
+            } catch {}
+            armOnce();
+          });
+          // buffered:true —— paint 记录可能在本脚本跑之前就产生了，不 buffered 就永远收不到。
+          po.observe({ type: "paint", buffered: true });
+        } catch {
+          // 没有 PerformanceObserver：回落 [SL-386] 的旧触发（DOMContentLoaded），不许变成
+          // 永不放行。⚠ 这个 catch **只覆盖「压根没有 PerformanceObserver」**（以及只认
+          // entryTypes 的史前实现）。「有 PerformanceObserver、但它不报 paint 记录」
+          // **不会抛异常** —— 规范要求未知 type 直接 abort + 控制台 warning。那一档落在上面
+          // 那条保险上：代价是「多等一会儿占位」，不是「永不放行」。
+          if (document.readyState === "loading")
+            document.addEventListener("DOMContentLoaded", armOnce);
+          else armOnce();
+        }
       })();
     </script>
     <!-- 离线自包含：无 Google Fonts / CDN。样式与字体见 styles.css，逻辑走 ES module。 -->
@@ -1090,8 +1161,13 @@
           // [SL-386 第 2 推 R4 + 第 3 推 R1 时序改准] 插件路径关掉卡片入场动画 vbUp(0.6s 透明淡入)：
           // 占位对齐的是成品稳态，放行瞬间卡片不能还在淡入（浅占位→深 root→浅卡片的明暗跳变）。
           // 时序：主脚本 type="module"，boot() 在模块求值时（readyState === "interactive"）已执行、
-          // 早于 DOMContentLoaded 派发；首帧信号在 DOMContentLoaded 之后还要等两层 rAF ——
-          // 「先关动画、后发信号」由构造保证。浏览器预览路径（else 分支）动画照旧。
+          // 早于 DOMContentLoaded 派发。
+          // ⚠ [SL-433] 首帧信号的触发条件已从 DOMContentLoaded 改成 **paint 记录到达**（见 <head>
+          // 那段脚本），所以「先关动画、后发信号」**不再是构造保证**，按它现在的真实理由读：
+          // first-paint 不可能早于渲染阻塞的 `<link rel="stylesheet">` 到达（styles.css 要经 JUCE
+          // 资源提供器一次往返），而模块求值只要解析一结束就跑 —— 实际路径上 boot() 远在
+          // first-paint 之前。真排到后面时最坏形态是放行瞬间卡片还在 0.6s vbUp 淡入的头几帧
+          // （观感回归，不是功能缺陷）。浏览器预览路径（else 分支）动画照旧。
           Object.assign(root.style, {
             display: "block",
             alignItems: "",

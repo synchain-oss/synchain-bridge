@@ -34,6 +34,10 @@
 //   超时兜底。命中形态是**静默降级**(屏上仍是「占位 → 内容」,不白不卡),且没有任何
 //   一格静态判据会红 —— 验收硬指标是数表:**开 N 次窗就该有 N 行 first-frame signal**,
 //   放行原因里出现 timeout 即命中(那一行自带 navFinished seen|not seen 帮分诊)。
+//   [SL-433] 页面侧新增的保险定时器**不由 BeginFrame 驱动**(setTimeout 不是 rAF),到点直接
+//   发信号 ⇒ 这一档下信号有机会在页内保险时限到达、放行原因仍是 firstFrame。但**别把它
+//   读成「这条风险已排除」**:两边不共享时间原点(页内从脚本执行起算、这里从导航开始起算,
+//   中间那一段读不出来),保险跑输时放行原因照样掉成 timeout。数表指标一个字不改。
 //
 // 【为什么等到导航开始才挪】JUCE 的 WebView2 控制器重试泵挂在基类 paint 的
 // fallbackPaint 尾部(checkWindowAssociation),控制器建好之前挪走组件会让 JUCE 不再
@@ -42,11 +46,25 @@
 // 【只认首帧放行(SL-376)】pageFinishedLoading 只说明文档下载完、load 事件发了,
 // 不保证任何一帧已合成 —— SCVB 的 pluginval 数表里它有 4/10 次抢在首帧信号前 3–6 ms
 // 放行,放回来的正是「白一瞬」。⇒ navFinished **不再放行**,只记账(供超时行分诊);
-// 放行只认 firstFrame(前端 DOMContentLoaded 后嵌套两层 rAF ⇒ 前一帧确已合成),
-// 外加 timeout 兜底与 fallback 顶替。
+// 放行只认 firstFrame,外加 timeout 兜底与 fallback 顶替。
 //
-// 【为什么首帧信号到了还要再压一拍】两层 rAF 保证「帧已提交给合成器」,提交到上屏还差
-// 一拍;信号一到就挪回来仍可能露底。onFirstFrame 只武装,放行落在 25Hz tick 上,
+// 【首帧信号什么时候发(SL-433 改判)】SL-386 当时写的是「前端 DOMContentLoaded 后嵌套两层
+// rAF ⇒ 前一帧确已合成」—— **后半句是假的**:两层 rAF 只保证「又过了两个渲染时机」,
+// **不保证页面已经画过任何一帧**。按 DCL 触发时信号时刻 ≈ DCL + 两个 rAF,与 first-paint
+// 之间没有任何约束;信号早于 first-paint 时,这里收到信号就把窗口揭开,而 Chromium widget
+// 一个像素都还没画,露的是它自己的 base background(白)—— 那就是用户在 1.5.2 上仍然看得见的
+// 「第二段白」(白 → 背景色 → **白** → 正常 里中括号那一段)。
+// ⚠ 与它**无关**的一层:[SL-421] 的 put_DefaultBackgroundColor(①-b)铺在 web 内容**之下**,
+// 盖不住 widget 自己的 base background —— 这正是「1.5.2 加了 ①-b 用户照样看见白」的原因。
+// ⇒ [SL-433] 起,前端武装的触发条件改成「**页面真的画过一帧**」:
+// PerformanceObserver({type:"paint", buffered:true}) 收到 paint 记录之后,再走原来的两层 rAF。
+// 页面侧另有一条回落路(没有 PerformanceObserver ⇒ 退回 DOMContentLoaded)与一条保险定时器
+// (paint 记录迟迟不来时直接发信号、不绕 rAF);三条路各自的理由写在 web/index.html 那段脚本
+// 里,判据在 web-preview/reveal-first-frame.test.mjs 第 ② 格。
+// 代价:占位段多停一小段(SCVB 同一改法在真宿主上实测 +17~48 ms)。
+//
+// 【为什么首帧信号到了还要再压一拍】paint 记录 + 两层 rAF 保证「帧已提交给合成器」,提交到
+// 上屏还差一拍;信号一到就挪回来仍可能露底。onFirstFrame 只武装,放行落在 25Hz tick 上,
 // **tick 数 ∧ 毫秒下界**两个条件缺一不可(#247 复审【重要】②:只数 tick 的下界是 0)。
 // 32 ms = 一个 60Hz 合成帧(16.7 ms)再加约一帧余量;代价上界 ≈ 32 + 一个 25Hz tick ≈ 72 ms。
 //

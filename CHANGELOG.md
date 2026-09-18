@@ -6,13 +6,53 @@
 
 ## [未发布]
 
-> 版本号由 1.5.0 升至 **1.5.2**(唯一真源 `CMakeLists.txt` 的 `project(... VERSION)`,四镜像同步:
+> 版本号由 1.5.0 升至 **1.5.3**(唯一真源 `CMakeLists.txt` 的 `project(... VERSION)`,四镜像同步:
 > web-preview 的 mock-server.mjs / package.json / package-lock.json 与 `BRIDGE_CONTRACT.md` §三)。
-> 1.5.1 与 1.5.2 两批改动都在本段:1.5.1 **没有发过 tag / Release**,只出过一个内部测试包。
-> **两批都不涉及契约变更**(wire 协议零改动;`__bridge__firstFrame` 时序信号为非契约面,判定与
-> 兼容性承诺见 `docs/contract-changes/20260914-sl386-reveal-gate.md`)。
+> 1.5.1 / 1.5.2 / 1.5.3 三批改动都在本段:1.5.1 与 1.5.2 **都没有发过 tag / Release**,各出过一个
+> 内部测试包 —— 1.5.3 这个号存在的理由就是让用户手上那个包与他已经测过的 1.5.2 能分辨开。
+> **三批都不涉及契约变更**(wire 协议零改动;`__bridge__firstFrame` 时序信号及其载荷里的诊断字段
+> 均为非契约面,判定与兼容性承诺见 `docs/contract-changes/20260914-sl386-reveal-gate.md` 与
+> `docs/contract-changes/20260918-sl433-first-frame-paint-delta.md`)。
 
 ### 修复
+
+- **开窗第二段白:首帧信号改由「页面真的画过一帧」触发(SL-433,1.5.3)**:
+  用户在 1.5.2 上回验,开窗仍是「白 → 背景色 → **白** → 正常」,中括号那一段没消失。
+  - **先排除一层**:[SL-421] 补的 `DefaultBackgroundColor`(①-b)**不是这一段** —— 它铺在
+    **任何 web 内容之下**,盖不住 WebView2 widget 自己的 base background。这正是「加了 ①-b
+    照样看见白」的原因,那一层该在还在,本卡不动它。
+  - **成因**:[SL-386] 的首帧信号是在 `DOMContentLoaded` 之后嵌套两层 `requestAnimationFrame`
+    才发的,而**两层 rAF 并不保证页面已经画过任何一帧** —— 信号时刻 ≈ DCL + 两个 rAF,
+    与 `first-paint` 之间没有任何约束。信号早于 first-paint 时,C++ 收到信号就把窗口揭开,
+    而 widget 一个像素都还没画,露的是它自己的白。
+  - **改法(与 SCVB SL-429 同一套,那边已经用户真机终验通过)**:武装的触发条件改成
+    `PerformanceObserver({ type: "paint", buffered: true })` 收到 paint 记录之后,再走原来的
+    两层 rAF。另配两条不许省的路 —— 没有 `PerformanceObserver` 时回落到旧的 `DOMContentLoaded`
+    触发;paint 记录迟迟不来时由一条**排在 `try` 之前**的保险定时器**直接**发信号(不绕 rAF:
+    「paint 不来」最可能的成因是 BeginFrame 停摆,那时 rAF 同样不回调)。
+  - **放行判定本身零改动**:`src/WebViewRevealGate.h` 本次只改了头注说明(类体逐字未动);
+    `src/WebViewEditor.cpp` 里闸门的五个调用点(`onNavigationStarted` / `onNavigationFinished` /
+    `onFirstFrame` / `onTick` / `onFallbackShown`)一字未改 —— 唯一碰到 `mRevealGate` 的改动是
+    诊断行里那次**只读**的 `parked()` 查询后面多拼了一段文案。本卡只改「信号什么时候发」。
+  - **代价**:占位那一段多停一小会儿 —— SCVB 在**真插件宿主**上同机实测多 17~48 ms,
+    Bridge 这一页没有对应的真宿主读数。
+  - ⚠ **这一版对 Bridge 只保证「放行只会更晚、不会更早」**。SCVB 那边的真机数(13/13 正常、
+    `signal − first-paint` 恒为正)**不能外推到本仓** —— Bridge 是另一张页面、另一套资源,
+    改前它那条信号到底早于还是晚于首帧,**从来没有被量过**。第二段白是否就此消失要真机回验。
+  - **为此同时补上一格诊断**:首帧信号的载荷里带上页面量到的 `信号时刻 − first-paint 时刻`
+    (毫秒差值,字段名真源 `BridgeApi.h` 的 `timing::FirstFramePaintDeltaKey`),C++ 拼进既有那行
+    `first-frame signal after N ms ...`,变成 `... (signal-firstPaint +M ms)`;页面没有 paint 记录时
+    打 `(no paint record)`。**只进日志,不参与任何放行判定。** 它送的是**差值不是绝对时刻** ——
+    页面的 `performance` 时间轴与 C++ 的 `mStartMs` 不共享原点。有了它,用户下次贴一份日志就能
+    直接读出「新路真的生效了、余量还剩多少」,而不是只剩「还白 / 不白」两个 bit。
+    ⚠ `(no paint record)` **按字面读**:它只说明这一次载荷里没这个字段;反过来「带了差值」
+    **不等于**走的是 paint 路(保险路也可能带着真差值发出),判是不是保险路看 `after N ms` 的量级。
+  判据:`web-preview/reveal-first-frame.test.mjs` 第 ② 格由「`DOMContentLoaded` + 两层 rAF 在场」
+  升级成六条(a~f),断的是**接线生效**不是片段在场 —— 「把 `PerformanceObserver` 留成死代码、
+  武装改回 DCL」这种全片段在场的绕法必须红;保险的三条形态(排在 `try` 之前 / 回调直接发信号 /
+  撤网落在 `signal()` 里)各有一格;载荷字段名**两侧逐字对拍**(页面侧打错、C++ 侧改写字面量
+  各有一格必红 —— 任一侧漂了都只会打 `(no paint record)`,而那与合法回落路在日志里逐字同形)。
+  17 格删除式反向注入逐格核过「红在设计接住它的那条断言上」。
 
 - **补上遮挡闸盖不到的那一段白:WebView2 的 `DefaultBackgroundColor`(SL-421,1.5.2)**:
   用户报开窗仍是「白 → 背景色 → 白 → 正常」的四段跳。SL-386 的遮挡闸、三处同源占位与插件内
@@ -54,8 +94,9 @@
      与可视区零交集、JUCE 不再画它,`BridgeWebView::paint` 那层只守未遮挡时的
      fallbackPaint 白 —— 两层共用同一组色标);**只认首帧放行**,`navigationFinished` 只记账
      不放行(它不保证任何一帧已合成);前端 `DOMContentLoaded` 后嵌套两层 rAF 发
-     `__bridge__firstFrame` 信号,信号后再压一拍(tick 数 ∧ 32 ms 毫秒下界,回绕安全)才挪回;
-     3 s 超时兜底(绝不允许「永远不放行」)。
+     `__bridge__firstFrame` 信号(⚠ 这个触发条件**已由上面的 SL-433 改掉**:两层 rAF 并不保证
+     页面画过一帧,现在等 paint 记录到达才发 —— 本条记的是 SL-386 当时的形态),信号后再压一拍
+     (tick 数 ∧ 32 ms 毫秒下界,回绕安全)才挪回;3 s 超时兜底(绝不允许「永远不放行」)。
   2. **占位与成品底同形** —— 占位不是单一中点色,而是与成品可见底(玻璃拟态卡片)同一个
      渐变 `linear-gradient(157deg, #b5acc9/#ccbfd5/#e3d2e0/#fde8ed)`,占位切内容不跳阶;
      三处同源:css token(`styles.css` 的 `--vb-card-surface`,卡片消费它)/ `<head>` 内联
