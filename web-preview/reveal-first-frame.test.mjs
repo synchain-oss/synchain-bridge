@@ -84,7 +84,15 @@ function parseCppPlaceholder(src) {
  * 或函数挪动就会滑出目标 ⇒ **假红**。大括号配对切出的正好是目标块,长度自适应、
  * 不依赖任何常数。
  *
- * ⚠ 只能喂**已剥掉字符串与注释**的源码(调用方负责):否则字符串/注释里的大括号会把配对带偏。
+ * ⚠ 前提(第 2 轮复审订正成它**实际**要求的那句,别再照旧写成「字符串与注释都必须剥」):
+ *   **注释必须剥**;**字符串未剥时,调用方须自证目标块内没有携带大括号的字符串** ——
+ *   带大括号的字符串会把配对带偏,红就会落到无关的断言上(与 D6 当场抓到的那次滑动同类)。
+ *   两个调用方各自满足它的方式不同,写在各自那里:
+ *     · functionBodyAt(C++ 侧)喂的是**已把字符串整体占位成 `""`** 的源码 ⇒ 前提天然满足;
+ *     · jsBodyAt(JS 侧)喂的是**只剥了注释**的脚本块 ⇒ 靠「块内字符串都不含大括号」自证
+ *       (今天是 `"__bridge__firstFrame"` / `"paint"` / `"loading"` / `"DOMContentLoaded"` 等)。
+ *   ⚠ 这里**有意不加一步「剥字符串」**:那会让 (a)(e) 那几条字面量断言永远绿,而且是往
+ *   SL-431 那一族再加一层机制 —— **写准前提是删歧义,加剥字符串是加机制**。
  * ⚠ **fail-closed 是本函数的硬性质**(裁定 7 明确要求保住):`{` 找不到、大括号到文件尾都
  *   没配平 —— 一律 assert 红,绝不 `return ""` 或跳过。调用方那一半(锚点找不到也要红)
  *   由 functionBodyAt / jsBodyAt 负责。
@@ -220,6 +228,12 @@ test("① 占位底三处同源:css token == 内联 html 底 == C++ 色标", () 
  * [SL-433] 在**剥完 JS 注释**的信号脚本块里,按 `re` 找到一处、切出其后第一个大括号配对块。
  * fail-closed 同 functionBodyAt:锚点找不到即 assert 红,绝不 `return ""`。
  *
+ * ⚠ 这里喂给 braceBodyFrom 的 `code` **只剥了注释、没剥字符串**,所以要自证它的前提:
+ *   本块里的字符串都不含大括号(`"__bridge__firstFrame"` / `"paint"` / `"loading"` /
+ *   `"DOMContentLoaded"` / `"function"` 等)。**将来在这段脚本里写一个含 `{` 或 `}` 的字符串
+ *   (例如把载荷改成模板串、或加一句带 `{}` 的日志文案),这个前提就破了** —— 配对会滑偏,
+ *   红会落到无关的断言上。到那时**改锚点或在这里剥字符串,别指望它自愈**。
+ *
  * ⚠ 已知边界(第 1 轮复审 B5,写明、**不再加正则去兜**):调用方把锚点写成 `function` 形态时,
  *   改成箭头函数(`setTimeout(() => {...})`)会落进本函数的 fail-closed ⇒ **判负**。
  *   这是**有意的方向**:配对一旦滑到无关的块上,红就会落在别的断言上(本卡实测过一次,
@@ -301,10 +315,24 @@ test("② 信号名/载荷字段名两处同源 + 内联脚本由 paint 记录�
     /armOnce\s*\(/,
     "paint 回调体里必须真的调 armOnce(片段在场但不接线 = 武装仍由 DOMContentLoaded 驱动)",
   );
+  // [SL-433 第 2 轮复审] 先切出 `.observe(...)` 的**实参对象**,再分别断两件 —— 上一版用一条长
+  // 正则把 `type` 与 `buffered` 串在一起写,顺带把**键的先后顺序**也钉死了:等价写法
+  // `{ buffered: true, type: "paint" }` 会**假红**,而键序与被守的性质毫无关系。
+  // 本格要断的是「`buffered` 落在**实参对象**里、不是落在注释里」,不是字面排版。
+  const observeArg = body.match(/\.observe\s*\(\s*(\{[^}]*\})\s*\)/);
+  assert.ok(
+    observeArg,
+    ".observe 必须带一个实参对象(paint 记录可能早于本脚本产生,靠它要 buffered)",
+  );
   assert.match(
-    body,
-    /\.observe\s*\(\s*\{[^}]*type\s*:\s*"paint"[^}]*buffered\s*:\s*true[^}]*\}\s*\)/,
-    'buffered: true 必须落在 .observe({ type: "paint", ... }) 的实参对象里(paint 记录可能早于本脚本产生)',
+    observeArg[1],
+    /type\s*:\s*"paint"/,
+    '.observe 的实参里必须是 type: "paint"',
+  );
+  assert.match(
+    observeArg[1],
+    /buffered\s*:\s*true/,
+    "buffered: true 必须落在 .observe 的**实参对象**里(写进注释不算)",
   );
   assert.equal(
     (body.match(/DOMContentLoaded/g) || []).length,
