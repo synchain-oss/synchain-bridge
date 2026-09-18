@@ -50,14 +50,17 @@
         // 那两层 rAF —— 而它恰恰是 BeginFrame 停摆那一档下不回调的东西（窗口被最小化 /
         // 被完全遮挡 / DAW 弹模态框把合成停了）⇒ 网没了、信号也发不出，仍旧掉进 C++ 的超时
         // 兜底。`sent` 兼做去重（保险与两层 rAF 都可能跑到这里）。
+        //
+        // ⚠ [SL-433 第 1 轮复审] 这两句必须排在 **postMessage 之后**，不是排在 `try` 之前。
+        // 上一版排在 `try` 之前 ⇒ 排在了「`__JUCE__` 在不在」这道守卫之前：守卫命中而 return
+        // （或 postMessage 抛异常被下面的 catch 吞掉）时，信号**一个字节都没发出去**，网却已经
+        // 撤了 —— 与上面那句「网只在信号真发出去的那一刻才撤」**正好相反**，是一句实现给不到
+        // 的保证。挪到这里之后：发不出去 ⇒ `sent` 仍为 false、网仍挂着 ⇒ 保险到点还会再试一次。
+        // 不会死循环：能调到 signal() 的只有两层 rAF 那一条和保险那一条，各至多一次。
+        // 判据 = 第 ② 格里「撤网与去重都必须排在 postMessage 之后」那两条。
         var sent = false;
         function signal() {
           if (sent) return;
-          sent = true;
-          if (guard !== null) {
-            clearTimeout(guard);
-            guard = null;
-          }
           try {
             var juce = window.__JUCE__;
             if (!juce || typeof juce.postMessage !== "function") return;
@@ -75,6 +78,12 @@
             juce.postMessage(
               JSON.stringify({ eventId: "__bridge__firstFrame", payload: p }),
             );
+            // 走到这里信号才**真的发出去了** —— 去重与撤网都落在这一句之后（理由见上）。
+            sent = true;
+            if (guard !== null) {
+              clearTimeout(guard);
+              guard = null;
+            }
           } catch {
             // 发不出去也不许卡住:C++ 侧还有 3s 超时兜底。
           }

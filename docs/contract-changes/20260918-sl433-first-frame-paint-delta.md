@@ -10,7 +10,7 @@
 | 项 | 值 |
 |---|---|
 | 日期 | `2026-09-18` |
-| PR | SL-433（`fix/SL-433-second-white` → `dev`；PR 号见本文档所在 PR） |
+| PR | #37（SL-433，`feat/SL-433-second-white` → `dev`；⚠ 分支前缀必须是 `feat/*` 或 `feature/*`，`fix/*` 会被 `branch-gate` 拦掉，见 `CLAUDE.md` §1） |
 | 级别（`contract-impact`） | `none`（无 wire 变化；strict 级因触碰 `src/BridgeApi.h` 而新增本文档登记，`none` 申报不免检 —— 即本文档） |
 | 契约版本 | `BRIDGE_CONTRACT_VERSION`：`2.0` → `2.0`（不变） |
 | 主仓跟进 | 不需要：本变更无 wire 变化、不涉桥 #2，闭源网页端零感知（见下「兼容性说明」） |
@@ -46,10 +46,31 @@
   新编辑器读不到就打 `(no paint record)`，放行逻辑不受影响。
 - **兼容窗口**：不适用（`none` 级，无 wire 变化）。
 
+### ⚠ 上面两条不是推理，是实测 —— 两个方向各一条证据
+
+本仓有判例:**SL-132 就是「反向兼容论断与实现不符」**（新版无条件追加尾字段、旧版按定长比较整块拒载），
+而本次正好是同一形态（**给既有事件的载荷加字段**）。所以 `contract-impact: none` 这个自申报
+**先实测再写**，不靠读代码得出。
+
+方法：pluginval strict 5 `--repeat 5` 真开窗（真 WebView2 宿主），诊断行经 `OutputDebugString`
+由自建 DBWIN 捕获收取；捕获脚本**先跑自测探针**确认能捕到才开测（否则「没捕到」与「没打日志」
+分不开）。每种组合单独重编，测完复原并复测。
+
+| 方向 | 组合 | 实测到的诊断行 | 结果 |
+|---|---|---|---|
+| **旧 C++ + 新页面**（载荷多一个它不认识的字段） | `origin/dev` 的 `WebViewEditor.{h,cpp}` + `BridgeApi.h`，本 PR 的 `web/index.html` | `first-frame signal after N ms (still parked)`（**旧格式、无后缀**）×5 | 多出来的字段被**静默忽略**；`webview revealed (firstFrame)` 5/5；无崩、无 timeout、无 fallback |
+| **新 C++ + 旧页面**（载荷里没有这个字段） | 本 PR 的 C++，`origin/dev` 的 `web/index.html`（`payload: {}`） | `first-frame signal after N ms (still parked) (no paint record)` ×5 | 走 `(no paint record)` 分支；`webview revealed (firstFrame)` 5/5；无崩、无 timeout、无 fallback |
+| （对照）新 C++ + 新页面 | 本 PR HEAD | `... (signal-firstPaint +15..+18 ms)` ×5，复原后复测 `+14..+17 ms` ×3 | 新路确实生效（信号落在 first-paint 之后）；`firstFrame` 8/8 |
+
+⇒ 两个方向都**不改变放行行为、不崩、不退化成超时兜底**，`none` 属实。
+
 ## 落地清单
 
 - [x] `BRIDGE_CONTRACT.md` §一 那条「时序/诊断面信号不进本表」的指路已补上本文档
       （§二/§五协议内容零改动，无 §五 变更记录可写）；§三 VERSION 行随插件版本同步。
 - [x] `CHANGELOG.md` 「[未发布]」已记录（SL-433 词条，含「不涉及契约变更」声明）。
-- [ ] PR 描述已含 `contract-impact: none` 申报并 @ 主仓维护者同步（告知性同步：无 wire 变化，无需主仓动作）。
+- [x] PR 描述已含 `contract-impact: none` 申报；PR 已加 `status/frozen-contract` 标签
+      （本仓口径：冻结契约面变更 = 变更文档 **+** 该标签）。
+      **@ 主仓维护者：不适用** —— `none` 级、wire 零变化、不涉桥 #2，闭源网页端零感知，无需主仓动作
+      （对照 `20260914-sl386-reveal-gate.md` 那份是「告知性同步」，本次连告知面都没有）。
 - [ ] 维护者已在 PR 里批准（本文档是 `branch-gate` 认的唯一机器凭据，标签不参与判定）。

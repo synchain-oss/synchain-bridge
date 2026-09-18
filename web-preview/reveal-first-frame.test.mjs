@@ -19,7 +19,9 @@
 //      (断生效不断在场:PerformanceObserver 在场 + buffered 落在 .observe 实参对象里 +
 //      回调体里真的调 armOnce + DOMContentLoaded 全块恰好一次且在 catch 里);
 //      (d) 回落路与保险定时器在场,且保险**排在 try 之前**、回调**直接发信号不绕 rAF**、
-//      撤网落在 signal() 里;(e) 载荷诊断字段 timing::FirstFramePaintDeltaKey 逐字同源且
+//      撤网落在 signal() 里、**且撤网与去重都排在 postMessage 之后**(第 1 轮复审:只断
+//      「落在 signal() 里」时,排在 __JUCE__ 守卫之前的写法照样全绿,而那条路上信号一个字节
+//      都没发出去、网却已经撤了);(e) 载荷诊断字段 timing::FirstFramePaintDeltaKey 逐字同源且
 //      算式接上;(f) **C++ 那一侧**真的经该常量读了它并拼进诊断行(跨边界字面量双向对拍 ——
 //      任一侧漂了都只会打 `(no paint record)`,而那与合法回落路在日志里逐字同形)。
 //      外加原有的 __JUCE__ 在场守卫与 try 包裹两条。
@@ -102,6 +104,62 @@ function braceBodyFrom(code, at, label) {
   assert.fail(`${label} 的大括号到文件尾都没配平(源钉不许在这里静默放过)`);
 }
 
+/**
+ * [SL-433 第 1 轮复审 · A3] 剥掉 C++ 注释,**保留字符串字面量**。
+ *
+ * ③ ⑤ 那一套是「先把字符串整体占位成 `""`、再剥注释」——它要的是代码骨架,而占位之后
+ * **任何字面量断言都会永远绿**,所以「不许另写这个字段名的字面量」那条不能用它。
+ * 反过来,直接对原文跑「行注释正则」又会吃掉字符串里的 `//`(如 `"https://..."`),
+ * 把那一行从截点起整段删掉 —— 方向是 **fail-open**(真有字面量藏在同一行后半段就扫不到)。
+ * (这里不写出那条正则的字面形态:它含有 `*` 加 `/` 的相邻组合,写进块注释会把注释提前收尾 ——
+ *  本卡实测踩过一次。)
+ *
+ * 所以这里按字符走一遍,只在**字符串外**认注释:两个坑各避各的,不靠正则碰运气。
+ * 已知边界(写明):不处理原始字符串字面量 `R"(...)"`;本仓 C++ 里没有,真出现时它的内容
+ * 会被当普通代码扫,方向是**更严**(判负),不是更松。
+ */
+function stripCppCommentsKeepStrings(src) {
+  let out = "";
+  let i = 0;
+  while (i < src.length) {
+    const c = src[i];
+    const d = src[i + 1];
+    if (c === '"' || c === "'") {
+      const quote = c;
+      out += c;
+      i++;
+      while (i < src.length) {
+        out += src[i];
+        if (src[i] === "\\") {
+          // 转义对:整对照抄,免得 \" 被当成收尾引号。
+          if (i + 1 < src.length) out += src[i + 1];
+          i += 2;
+          continue;
+        }
+        if (src[i] === quote) {
+          i++;
+          break;
+        }
+        i++;
+      }
+      continue;
+    }
+    if (c === "/" && d === "/") {
+      while (i < src.length && src[i] !== "\n") i++;
+      continue;
+    }
+    if (c === "/" && d === "*") {
+      i += 2;
+      while (i < src.length && !(src[i] === "*" && src[i + 1] === "/")) i++;
+      i += 2;
+      continue;
+    }
+    out += c;
+    i++;
+  }
+  return out;
+}
+
 function functionBodyAt(code, headRe, label) {
   const at = code.search(headRe);
   assert.ok(
@@ -161,6 +219,11 @@ test("① 占位底三处同源:css token == 内联 html 底 == C++ 色标", () 
 /**
  * [SL-433] 在**剥完 JS 注释**的信号脚本块里,按 `re` 找到一处、切出其后第一个大括号配对块。
  * fail-closed 同 functionBodyAt:锚点找不到即 assert 红,绝不 `return ""`。
+ *
+ * ⚠ 已知边界(第 1 轮复审 B5,写明、**不再加正则去兜**):调用方把锚点写成 `function` 形态时,
+ *   改成箭头函数(`setTimeout(() => {...})`)会落进本函数的 fail-closed ⇒ **判负**。
+ *   这是**有意的方向**:配对一旦滑到无关的块上,红就会落在别的断言上(本卡实测过一次,
+ *   见 D6/D6b)。要换写法就连同锚点一起改。
  */
 function jsBodyAt(code, re, label) {
   const at = code.search(re);
@@ -193,8 +256,13 @@ test("② 信号名/载荷字段名两处同源 + 内联脚本由 paint 记录�
   // buffered / DOMContentLoaded / setTimeout / signal)在这段脚本的说明注释里逐字出现过,
   // 不剥的话**注释自己就替实现发了合格证** —— SCVB 同族卡实测过:删掉 `buffered: true` 这个
   // 实参,判据照样全绿。行尾 `//` 也要剥(把关键词挪进行尾注释是同一个洞的另一侧)。
-  // ⚠ 已知边界(写明,不假装没有):字符串字面量里的裸 `//`(如 `"a//b"`)会被误剥。本块里
-  // 没有这种写法;真要有,后果是**判据更严**(实现文本被剥掉 ⇒ 判负),方向是 fail-closed。
+  // ⚠ 已知边界两条(写明,**不再加正则去兜** —— 判例 SL-431):
+  //   · 字符串字面量里的裸 `//`(如 `"a//b"`)会被误剥。本块里没有这种写法;真要有,后果是
+  //     **判据更严**(实现文本被剥掉 ⇒ 判负),方向是 fail-closed;
+  //   · 行尾那条用「`//` 前必须有一个字符且不是 `:`」避开 `https://`,代价是 `x: //注释`
+  //     这种形态剥不掉(第 1 轮复审 B5)。方向是 fail-open,但本块里没有这种写法,而且
+  //     下面 (c) 的 buffered 断言另外还要求它落在 `.observe({...})` 的**实参对象**里 ——
+  //     两道各自独立,任一道单独失效都不会让那一格空过。
   const body = script[1]
     .replace(/\/\*[\s\S]*?\*\//g, "")
     .replace(/^[ \t]*\/\/.*$/gm, "")
@@ -312,6 +380,26 @@ test("② 信号名/载荷字段名两处同源 + 内联脚本由 paint 记录�
     "撤网必须落在 signal() 里:落在 armOnce() 里的话,网在信号真发出去之前就撤了," +
       "而撤网后剩下的正是两层 rAF",
   );
+  // [SL-433 第 1 轮复审] 「落在 signal() 里」还不够 —— 上一版就是落在 signal() 里、却排在
+  // `try` 之前,也就是排在「__JUCE__ 在不在」那道守卫之前:守卫命中 return(或 postMessage
+  // 抛异常)时信号一个字节没发出去,网却已经撤了。**注释宣称的保证,代码给不到** —— 而上面
+  // 那两条断言当时全是绿的。所以这里按**位置**钉死那句不变式的两半:撤网与去重都必须排在
+  // `postMessage` 之后。用下标比较而不是再加正则(判据面别再长胖,判例 SL-431)。
+  const postAt = signalBody.search(/postMessage\s*\(/);
+  assert.ok(
+    postAt >= 0,
+    "signal() 里必须有 postMessage((源钉找不到发送点即判红)",
+  );
+  assert.ok(
+    signalBody.search(/clearTimeout\s*\(/) > postAt,
+    "撤网(clearTimeout)必须排在 postMessage **之后**:排在前面时,__JUCE__ 不在场或 postMessage" +
+      " 抛异常这两条路上信号根本没发出去,网却已经撤了 —— 保险就白挂了",
+  );
+  assert.ok(
+    signalBody.search(/sent\s*=\s*true/) > postAt,
+    "去重置位(sent = true)必须排在 postMessage **之后**:排在前面时,一次没发出去的尝试" +
+      "会把后面那次真能发出去的短路掉",
+  );
 
   // --- (e) [SL-433] 载荷里的诊断字段:字段名逐字同源 + 算式真的接上了 ---
   // 两条各守一件:①`p.<字段名> = Math.round(performance.now() - paintStartMs)` 的算式形态
@@ -379,8 +467,14 @@ test("② 信号名/载荷字段名两处同源 + 内联脚本由 paint 记录�
     /logDiag\([^;]*paintNote/,
     "差值必须真的拼进那行诊断(算出来却不打 = 用户那份日志里什么都没多)",
   );
+  // ⚠ [SL-433 第 1 轮复审 · A3] 这一条**不能**扫上面那份 `code`:它把字符串整体占位成 `""`,
+  // 字面量断言会**永远绿**(判据自己给自己发合格证)。也不能直接扫原文 `src`:
+  // `handleFirstFrame` 上面那段注释本来就在逐字讨论这个字段名(现在写的是反引号才没红),
+  // 哪天有人改成双引号就是一条**假红**。所以扫「只剥注释、保留字符串」的那一份。
   assert.ok(
-    !new RegExp('"' + paintDeltaKey + '"').test(src),
+    !new RegExp('"' + paintDeltaKey + '"').test(
+      stripCppCommentsKeepStrings(src),
+    ),
     `src/WebViewEditor.cpp 里不许出现 "${paintDeltaKey}" 字面量(字段名只有 BridgeApi.h 一个真源)`,
   );
 });

@@ -464,6 +464,8 @@ void SynchainBridgeWebEditor::onNavigationFinished(const juce::String& url)
 // **反过来不成立**：页面侧的去重落在 signal() 里，保险定时器的回调不再查 armed ⇒
 // 「paint 已到、两层 rAF 还没跑完就到保险时限」这一路会**带着一个真实的差值**由保险发出。
 // ⇒ 判「走的是不是保险路」要看 `after N ms` 的量级，不是看这个字段在不在。
+// [SL-433 第 1 轮复审] 「字段在场、但读不出来」**不打这一行**，打 `(paint delta unreadable)`
+// —— 它的含义是「真源没漂、载荷坏了」，与本行要查的地方不是一处（见下面 else if 分支）。
 // 字段名的真源是 BridgeApi.h 的 timing::FirstFramePaintDeltaKey，web/index.html 逐字引用，
 // 由 web-preview/reveal-first-frame.test.mjs 第 ② 格逐字对拍（理由见该常量的注释：
 // 打错字母的失败形态与合法回落路在日志里同形）。
@@ -484,6 +486,15 @@ void SynchainBridgeWebEditor::handleFirstFrame(const juce::var& payload)
         // 的可表示范围内 ⇒ 下面这次窄化不再触碰 UB。
         const auto n = static_cast<int>(juce::jlimit(-60000.0, 60000.0, static_cast<double>(delta)));
         paintNote = juce::String(" (signal-firstPaint ") + (n >= 0 ? "+" : "") + juce::String(n) + " ms)";
+    }
+    else if (!delta.isVoid())
+    {
+        // [SL-433 第 1 轮复审] **第三种形态要与前两种分开**:字段**在场、但读不出来**
+        //(类型不对 / 非有限 double)。它与 `(no paint record)` 的含义完全不同 ——
+        // 后者是「页面没带这个字段」(走了回落路 / 保险路,或者真源名字漂了),
+        // 前者是「真源没漂、载荷坏了」,要查的地方不是一处。立这个常量的全部理由就是
+        // 「别让几种成因在日志里同形」,那就不该自己再把第三种并进去。
+        paintNote = " (paint delta unreadable)";
     }
 
     // 先记「信号到了」，再谈放行 —— 两件事分开数：信号可能在 3s 兜底或兜底面板之后才到，
