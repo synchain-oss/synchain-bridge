@@ -494,6 +494,10 @@ void SynchainBridgeWebEditor::handleFirstFrame(const juce::var& payload)
         // 后者是「页面没带这个字段」(走了回落路 / 保险路,或者真源名字漂了),
         // 前者是「真源没漂、载荷坏了」,要查的地方不是一处。立这个常量的全部理由就是
         // 「别让几种成因在日志里同形」,那就不该自己再把第三种并进去。
+        // ⚠ **这个三态划分还剩一个已知口子,本轮有意没收**(第 3/4 轮复审【建议】,转 **SL-438**):
+        // `payload` **整个不是对象**(载荷是数组 / 字符串)或字段是 JSON `null` 时,getProperty
+        // 的返回与「字段压根不在」不可分 ⇒ 仍落进上面那行 `(no paint record)`。纯诊断面、
+        // 不影响任何判定,故不搭在收口推上 —— 但**要改这段的人得知道它在**。
         paintNote = " (paint delta unreadable)";
     }
 

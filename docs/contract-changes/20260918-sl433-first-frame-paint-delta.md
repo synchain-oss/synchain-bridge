@@ -60,12 +60,14 @@
 |---|---|---|---|
 | **旧 C++ + 新页面**（载荷多一个它不认识的字段） | `origin/dev` 的 `WebViewEditor.{h,cpp}` + `BridgeApi.h`，本 PR 的 `web/index.html` | `first-frame signal after N ms (still parked)`（**旧格式、无后缀**）×5 | 多出来的字段被**静默忽略**；`webview revealed (firstFrame)` 5/5；无崩、无 timeout、无 fallback |
 | **新 C++ + 旧页面**（载荷里没有这个字段） | 本 PR 的 C++，`origin/dev` 的 `web/index.html`（`payload: {}`） | `first-frame signal after N ms (still parked) (no paint record)` ×5 | 走 `(no paint record)` 分支；`webview revealed (firstFrame)` 5/5；无崩、无 timeout、无 fallback |
-| （对照）新 C++ + 新页面 | 本 PR HEAD | 基线 `+15..+18 ms` ×5；**本表这一批**测完的复原复测 `+17/+14/+17` ×3 | 新路确实生效（信号落在 first-paint 之后）；`firstFrame` 8/8 |
+| （对照）新 C++ + 新页面 | 本 PR HEAD | 基线 `+15..+18 ms` ×5；**本表这一批**测完的复原复测 `+17/+14/+17` ×3 | 新路确实生效（信号落在 first-paint 之后）；`firstFrame` **8/8（= 本行这两批 5+3，不是全 PR 合计的 11）** |
 
 > ⚠ 记账口径：本 PR 一共跑过**三批**复测，数各不相同（基线 ×5、本表这一批的复原复测 ×3、
 > 以及后来那次「改前时序」测量的复原复测 ×3 = `+18/+17/+18`，见 `CHANGELOG.md`）。
-> **每批各带自己的标签与 n，别合并成一个「复原后复测 ×3」** —— 第 3 轮复审正是因为两处共用
-> 这个标签而读出了矛盾。
+> **每批各带自己的标签与 n，别合并成一个「复原后复测 ×3」，也别把某一批的 n 配上合计的区间**
+> —— 本卡在这一族记账上**连栽四次**（两处共用标签、订正时漏掉第三处、`8/8` 配 `+14~18` 的合计区间、
+> 「8/8 都有 paint 记录」漏算第三批）。全 PR 合计是**三批 11 次**，逐批清单在 `CHANGELOG.md` 的
+> SL-433 词条;**改任何一处这类数,先回去把三批对一遍**。
 
 ⇒ 两个方向都**不改变放行行为、不崩、不退化成超时兜底**，`none` 属实。
 

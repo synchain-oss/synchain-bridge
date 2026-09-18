@@ -85,8 +85,8 @@
       `PerformanceObserver`),不是本条判据说的那一档。
   - ⚠ **一条自陈:遮挡闸在 `pageAboutToLoad` 就把 widget 挪到与可视区零交集的位置,所以新路
     等于新引入一个依赖 —— 「这种状态下 Chromium 必须照常记 paint 记录」。** 本机在真 WebView2
-    宿主(pluginval)上实测 8/8 都有 paint 记录(`after N ms` ≈ 710~780 ms,不是保险路的 ≈2500),
-    ⇒ 本机上成立。但**那不是用户的 DAW**,所以上面那条回滚判据照写不误。
+    宿主(pluginval)上实测**三批 11 次全有 paint 记录**(`after N ms` ≈ 710~780 ms,不是保险路的
+    ≈2500)⇒ 本机上成立。但**那不是用户的 DAW**,所以上面那条回滚判据照写不误。
   判据:`web-preview/reveal-first-frame.test.mjs` 第 ② 格由「`DOMContentLoaded` + 两层 rAF 在场」
   升级成六条(a~f),断的是**接线生效**不是片段在场 —— 「把 `PerformanceObserver` 留成死代码、
   武装改回 DCL」这种全片段在场的绕法必须红;保险的形态(排在 `try` 之前 / 回调直接发信号 /
