@@ -27,8 +27,11 @@
 //      外加原有的 __JUCE__ 在场守卫与 try 包裹两条。
 //   ③ 接线删除式源钉(src/WebViewEditor.cpp):webView 的 setVisible(false) 只允许出现在
 //      showFallback(兜底面板路径,SL-386 保留);遮挡闸放行链的调用点必须在场。
-//   ④ 插件路径关掉卡片入场动画(layoutForMode 的 isPlugin 段 animation:"none"),
-//      且它早于首帧信号生效。
+//   ④ 插件路径关掉卡片入场动画(layoutForMode 的 isPlugin 段 animation:"none")。
+//      ⚠ [SL-433] 本格**只钉「关了动画」这一件**,**不再声称它早于首帧信号** ——
+//      信号改由 paint 记录触发后,boot() 与 first-paint 的先后是**竞态**(见 web/index.html
+//      layoutForMode 处注释),静态判据接不住;那一档已进 src/WebViewRevealGate.h 的
+//      「真机回验的症状清单」。
 //   ⑤ [SL-421] WebView2 的 DefaultBackgroundColor 那一层接上了(makeOptions 的
 //      withBackgroundColour),取值经 placeholderMidArgb() 从 kPlaceholderStops 现算、
 //      不另写色值字面量,且「这一层在不在」的诊断行打在 goToURL 之前。
@@ -334,6 +337,11 @@ test("② 信号名/载荷字段名两处同源 + 内联脚本由 paint 记录�
     /buffered\s*:\s*true/,
     "buffered: true 必须落在 .observe 的**实参对象**里(写进注释不算)",
   );
+  // ⚠ 已知边界(第 2 轮复审提过,第 3 轮指出这一处没补上,现补):本条数的是**剥完注释、
+  // 但未剥字符串**的文本,所以**字符串字面量里的 `DOMContentLoaded` 也会被计入**。
+  // 今天块里唯一那次就是 addEventListener 的实参,计数正好;将来若在这段脚本里另写一个
+  // 含该词的字符串(例如日志文案),本条会**假红**。方向是 fail-closed,届时改锚点即可 ——
+  // 别为它在这里加剥字符串那一层(会让其它几条字面量断言永远绿,判例 SL-431)。
   assert.equal(
     (body.match(/DOMContentLoaded/g) || []).length,
     1,
@@ -617,12 +625,14 @@ test("③ 接线源钉:webView 的 setVisible(false) 只许在 showFallback(兜�
   );
 });
 
-test("④ 插件路径关掉卡片入场动画,且早于首帧信号生效(源钉,fail-closed)", () => {
+test("④ 插件路径关掉卡片入场动画(源钉,fail-closed)", () => {
   const html = read("web/index.html");
 
-  // 主脚本必须是 type="module":整条时序保证依赖它 —— module 脚本在文档解析完
-  // (readyState === "interactive")时求值,早于 DOMContentLoaded 派发。删除式:去掉
-  // type="module" ⇒ 本格红(module 求值点变了,boot() 的执行时机不再由构造保证)。
+  // 主脚本必须是 type="module":**boot() 早于 DOMContentLoaded 派发**这一条依赖它 ——
+  // module 脚本在文档解析完(readyState === "interactive")时求值。删除式:去掉
+  // type="module" ⇒ 本格红(module 求值点变了,boot() 的执行时机不再由构造决定)。
+  // ⚠ 这条**只管 boot() 与 DCL 的先后**;[SL-433] 之后它已经推不出「boot() 早于首帧信号」,
+  // 理由见下面那段。
   const moduleAt = html.search(/<script\s+type="module">/);
   assert.ok(
     moduleAt >= 0,
@@ -633,14 +643,19 @@ test("④ 插件路径关掉卡片入场动画,且早于首帧信号生效(源�
   // [第 4 推 R2] 含 boot() 的脚本必须是那个 module 脚本(boot 定义在 module 开标签之后)。
   assert.ok(
     html.search(/function\s+boot\s*\(/) > moduleAt,
-    "boot() 必须定义在 type=module 脚本内(时序保证的前半句)",
+    "boot() 必须定义在 type=module 脚本内(「boot() 早于 DCL 派发」那一条的前半句)",
   );
 
   // [第 3 推 R1 改准] 时序:boot() 在**模块求值时**(readyState === "interactive")已执行、
   // 早于 DOMContentLoaded 派发 —— 不是「DOMContentLoaded 派发中同步执行」(module 脚本在
   // 解析完、DOMContentLoaded 事件之前求值,此刻 readyState 已是 interactive,走的是
-  // readyState !== "loading" 的立即分支)。首帧信号则在 DOMContentLoaded 之后等两层 rAF,
-  // 故「先关动画、后发信号」由构造保证。删除式双向:
+  // readyState !== "loading" 的立即分支)。以上**仍然成立**,它只说 boot() 与 DCL 的先后。
+  // ⚠ [SL-433] 但**「先关动画、后发信号」不再由构造保证** —— 首帧信号已不是 DCL 触发,
+  // 改由 paint 记录触发,而 boot() 与 first-paint 是**竞态**(模块求值要等 bridge.js +
+  // i18n.js 两次往返,first-paint 只等渲染阻塞的 styles.css 一次;本机未量)。
+  // 本格因此**只钉「关了动画」**,不钉先后;那一档的症状(放行瞬间卡片还在 vbUp 淡入头几帧)
+  // 落在 src/WebViewRevealGate.h 的「真机回验的症状清单」里,静态判据接不住。
+  // 删除式双向:
   //   · 去掉 isPlugin 段里的 animation: "none" ⇒ 本格红;
   //   · 把那句搬到 else(预览)分支 ⇒ 本格红(第 1/2 推的整函数断言对搬家假绿,已实测)。
   const fnAt = html.search(/function\s+layoutForMode\s*\(/);
