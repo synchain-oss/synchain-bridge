@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 // src/WebViewRevealGate.h 的纯逻辑自测（[SL-386] 开窗遮挡闸）:只认首帧放行 / navFinished
-// 只记账 / settle 双条件(tick 数 ∧ 32ms 毫秒下界,回绕安全)/ 3s 超时兜底 / 挪窗几何 /
+// 只记账 / settle 双条件(tick 数 ∧ kRevealSettleMs 毫秒下界,回绕安全)/ 3s 超时兜底 / 挪窗几何 /
 // 占位渐变(CSS 同形)的 C++ 侧 golden;[SL-421] 起还含 WebView2 DefaultBackgroundColor
 // 那一层的两件纯逻辑:占位渐变轴中点色 golden、与「这一层在不在」的版本判定三态。
 // 只 include 那一个头 + 标准库,不链接 JUCE /
@@ -75,7 +75,7 @@ int main()
     // ------------------------------------------------------------------
     // 常量关系(与 WebViewEditor.h 的 static_assert 同族的本文件可测半边)。
     // ------------------------------------------------------------------
-    checkEqInt(kRevealSettleMs, 32, "kRevealSettleMs = 32(一个 60Hz 合成帧再加约一帧余量)", __LINE__);
+    checkEqInt(kRevealSettleMs, 64, "kRevealSettleMs = 64([SL-436] 旧值 32 的两倍,用户 2026-09-19 拍板)", __LINE__);
     check(kRevealSettleMs > 0, "毫秒下界必须为正(只数 tick 的下界是 0)", __LINE__);
     check(kRevealSettleTicks >= 1, "settle 至少要再回一次消息循环", __LINE__);
     check(kRevealFallbackMs < 5000, "kRevealFallbackMs 必须早于看门狗 5s(常量关系;前提见 beginLoadAttempt)", __LINE__);
@@ -174,7 +174,8 @@ int main()
     // ------------------------------------------------------------------
     // [SL-376] 毫秒下界也要**回绕安全**(与超时判定同一手法)。
     // 删除式:把 msDone 改成加法式 nowMs >= settleAtMs_ + (uint32)kRevealSettleMs ——
-    // settleAtMs_ + 32 溢出成极小值,「信号后 1ms 来 tick」那一格当场误放行 ⇒ 红。
+    // settleAtMs_ + 64([SL-436] 现值)溢出成极小值,「信号后 1ms 来 tick」那一格当场
+    // 误放行 ⇒ 红。
     // ------------------------------------------------------------------
     {
         RevealGate gate;

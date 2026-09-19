@@ -38,7 +38,7 @@ namespace synchain
 // 两层用同一组 kPlaceholderStops（成品可见底同形）。前端在 **paint 记录到达**（[SL-433]；
 // SL-386 原来是 DOMContentLoaded，那个触发条件不保证页面已经画过一帧）后再走两层 rAF 发
 // 首帧信号（timing::FirstFrameSignal），**只认首帧放行**（navFinished 只记账），信号后再压
-// tick ∧ 32ms 一拍才挪回；3s 超时兜底，兜底面板逻辑不变。挪窗激活只在 Windows
+// tick ∧ kRevealSettleMs 一拍才挪回；3s 超时兜底，兜底面板逻辑不变。挪窗激活只在 Windows
 // （#if JUCE_WINDOWS）；mac 路径保持现状。
 //
 // [SL-421] 开窗那几帧的**分层地图**（SCVB 三层，本仓此前只有其中两层）：
