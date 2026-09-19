@@ -507,7 +507,7 @@ void SynchainBridgeWebEditor::handleFirstFrame(const juce::var& payload)
     logDiag(juce::String("first-frame signal after ") +
             juce::String(static_cast<int>(juce::Time::getMillisecondCounter() - mStartMs)) + " ms" +
             (mRevealGate.parked() ? juce::String(" (still parked)") : juce::String(" (already revealed)")) + paintNote);
-    // onFirstFrame 只武装不放行（tick ∧ 32ms 一拍在 timerCallback 的 onTick 里结算）；
+    // onFirstFrame 只武装不放行（tick ∧ 64ms[SL-436] 一拍在 timerCallback 的 onTick 里结算）；
     // 传 nowMs 是因为毫秒下界要从信号到达那一刻起算。
     // 防御性保留，效果为零 —— 信号在 settling 期到达时 noteRevealed() 的 parked() 条件早退；
     // 信号在兜底/超时放行之后才到（onFirstFrame 的 !parked_ 分支）时 mRevealLogged 已置位。
@@ -844,7 +844,7 @@ juce::var SynchainBridgeWebEditor::buildSnapshot() const
 void SynchainBridgeWebEditor::timerCallback()
 {
     // [SL-386] 遮挡闸在这个 tick 上做两件事，都收在 mRevealGate.onTick 里：
-    //   · 首帧信号已到时结算那一拍（tick 数 ∧ 32ms 毫秒下界）——「信号 = 帧已提交」，
+    //   · 首帧信号已到时结算那一拍（tick 数 ∧ 64ms[SL-436] 毫秒下界）——「信号 = 帧已提交」，
     //     提交到上屏还差一拍，所以放行落在这里而不是 handleFirstFrame 里；
     //   · 信号没来时到点强制放行（kRevealFallbackMs），绝不允许「永远挪在外面」——
     //     那会是一块彻底不动的占位板，比白闪坏得多。
