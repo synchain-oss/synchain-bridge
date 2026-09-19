@@ -132,8 +132,21 @@
 // 回调才在后续任务里被调度),所以那个差值量的是**回调调度延迟**,不是「合成上屏还要多久」
 // 的安全裕度;它测不出、也管不了本常量要兜的那一段,不能拿来当"余量充足"的证据。
 // 64 ms 是旧值(32 ms)的两倍——把可容忍的合成延迟窗口整体翻倍。
-// 代价:旧值(32)时上界 ≈ 32 + 一个 25Hz tick(40 ms)≈ 72 ms;改成 64 后上界
-// ≈ 64 + 40 ≈ 104 ms,多约 32 ms(每次开窗占位段多停这么久)。
+//
+// 【代价上界的推导 —— 通用公式,不是凑数】下面 onTick() 里,`ticksDone` 与 `msDone`
+// 都成立才放行:
+//     const bool ticksDone = (++settleTicksSeen_ >= kRevealSettleTicks); // kRevealSettleTicks = 1
+//     const bool msDone = (nowMs - settleAtMs_ >= kRevealSettleMs);
+// `kRevealSettleTicks = 1` ⇒ **任何** φ>0 的第一次 tick,`ticksDone` 就已经成立
+// (`settleTicksSeen_` 从 0 累加,首次调用即 `>=1`)——它不会额外强迫多等一个 tick,
+// 真正卡住放行的只有 `msDone`。设信号到达时刻为 t=0,tick 周期 P=25Hz≈40 ms,下一次
+// tick 相对它的相位 φ ∈ (0, P]。`msDone` 首次成立那次 tick,其时刻必然 **< kRevealSettleMs + P**
+// ——因为"上一次没满足"意味着那次 tick 时刻 < kRevealSettleMs,下一次 tick 只隔 P。
+// 这个界能被 φ 任意逼近(φ 取到刚好比 kRevealSettleMs mod P 差一点点),**收不紧**,
+// 与 kRevealSettleTicks 是 1 还是几无关(只要不超过实际经过的 tick 数,这里恒成立)。
+// 即:**worst_case = kRevealSettleMs + P**,是紧界。
+// 代入:旧值(32)时 32+40=**72 ms**;改成 64 后 64+40=**104 ms**,多约 32 ms
+// (每次开窗占位段多停这么久)。
 //
 // 【SL-386 与 SCVB 的口径差】挪窗激活与占位铺色只在 Windows(#if JUCE_WINDOWS,调用点在
 // WebViewEditor.cpp);mac 路径保持现状(WKWebView 不挪窗、不铺占位),纯逻辑闸本身
