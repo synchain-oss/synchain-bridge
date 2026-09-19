@@ -128,9 +128,14 @@
 // 兜住这段风险的东西,paint 记录 + 两层 rAF 只保证「提交给合成器」,不保证「已经上屏」。
 // ⚠ **一个常见的读错**:如果测到 `signal − first-paint` 这类差值是几毫秒到十几毫秒的
 // 小正数,并据此觉得"现有窗口早就绰绰有余、可以调小" —— 这是把两个不同的量混了。
-// `PerformanceObserver` 的 paint 回调**结构上不可能**跑在 paint 记录存在之前(记录先入队,
-// 回调才在后续任务里被调度),所以那个差值量的是**回调调度延迟**,不是「合成上屏还要多久」
-// 的安全裕度;它测不出、也管不了本常量要兜的那一段,不能拿来当"余量充足"的证据。
+// 这个差值的完整分解是 **回调调度延迟 + 前端两层 rAF 的耗时**(+ `postMessage` 前的
+// 一点点):`web/index.html` 的 paint 路是 observer 回调 → `armOnce()` → `arm()` 里
+// 的两层 `requestAnimationFrame` → `signal()`,`paintDeltaMs` 在 `signal()` 里才取,
+// 中间隔着两层 rAF,不是只有回调那一段。`PerformanceObserver` 的 paint 回调
+// **结构上不可能**跑在 paint 记录存在之前(记录先入队,回调才在后续任务里被调度),
+// 两层 rAF 耗时同样非负 ⇒ 结论仍然成立:这个差值**测不出、也管不了**本常量要兜的
+// 那一段合成上屏延迟,不能拿来当"余量充足"的证据——但只说"回调调度延迟"是把分解
+// 写漏了一项,写全才不会让人拿这个差值去反推 rAF 开销时发现对不上。
 // 64 ms 是旧值(32 ms)的两倍——把可容忍的合成延迟窗口整体翻倍。
 //
 // 【代价上界的推导 —— 通用公式,不是凑数】下面 onTick() 里,`ticksDone` 与 `msDone`
@@ -142,11 +147,21 @@
 // 真正卡住放行的只有 `msDone`。设信号到达时刻为 t=0,tick 周期 P=25Hz≈40 ms,下一次
 // tick 相对它的相位 φ ∈ (0, P]。`msDone` 首次成立那次 tick,其时刻必然 **< kRevealSettleMs + P**
 // ——因为"上一次没满足"意味着那次 tick 时刻 < kRevealSettleMs,下一次 tick 只隔 P。
-// 这个界能被 φ 任意逼近(φ 取到刚好比 kRevealSettleMs mod P 差一点点),**收不紧**,
-// 与 kRevealSettleTicks 是 1 还是几无关(只要不超过实际经过的 tick 数,这里恒成立)。
+// 这个界能被 φ 任意逼近(φ 取到刚好比 kRevealSettleMs mod P 差一点点),**收不紧**。
 // 即:**worst_case = kRevealSettleMs + P**,是紧界。
-// 代入:旧值(32)时 32+40=**72 ms**;改成 64 后 64+40=**104 ms**,多约 32 ms
-// (每次开窗占位段多停这么久)。
+// ⚠ **这个界的前提是本仓 `kRevealSettleTicks = 1`**(见下面常量定义)——`T>1` 时放行
+// 时刻是 `max(首个 ≥ kRevealSettleMs 的 tick, 第 T 个 tick)`,第 T 个 tick 最多到
+// `T·P`,`kRevealSettleMs + P` 这个界只在 `(T-1)·P ≤ kRevealSettleMs` 时继续成立
+// (现值 T=1:`0 ≤ kRevealSettleMs` 恒真);否则通式是
+// `worst_case = max(T·P, kRevealSettleMs + P)`。**改 `kRevealSettleTicks` 要回来重推这一段**,
+// 别直接套用上面那句"是紧界"。
+// ⚠ 上面"紧界"还假设 tick **严格**以周期 P 到达;实际驱动是 `WebViewEditor.cpp` 的
+// `startTimerHz(25)`,message 线程上的 best-effort 定时器,宿主 UI 忙时会迟到 ——
+// 真实上界是 `kRevealSettleMs + max(实际 tick 间隔)`,不是恒定的 `+40`。这不影响
+// **正确性**(迟到只会让占位多停一会,不会误放行),只是"紧界"这个说法要限定在
+// tick 准时的理想模型下,别拿具体的 104 ms 当硬上界去推别的东西。
+// 代入(理想模型):旧值(32)时 32+40=**72 ms**;改成 64 后 64+40=**104 ms**,
+// 多约 32 ms(每次开窗占位段多停这么久)。
 //
 // 【SL-386 与 SCVB 的口径差】挪窗激活与占位铺色只在 Windows(#if JUCE_WINDOWS,调用点在
 // WebViewEditor.cpp);mac 路径保持现状(WKWebView 不挪窗、不铺占位),纯逻辑闸本身

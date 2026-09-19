@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 // src/WebViewRevealGate.h 的纯逻辑自测（[SL-386] 开窗遮挡闸）:只认首帧放行 / navFinished
-// 只记账 / settle 双条件(tick 数 ∧ 64ms[SL-436] 毫秒下界,回绕安全)/ 3s 超时兜底 / 挪窗几何 /
+// 只记账 / settle 双条件(tick 数 ∧ kRevealSettleMs 毫秒下界,回绕安全)/ 3s 超时兜底 / 挪窗几何 /
 // 占位渐变(CSS 同形)的 C++ 侧 golden;[SL-421] 起还含 WebView2 DefaultBackgroundColor
 // 那一层的两件纯逻辑:占位渐变轴中点色 golden、与「这一层在不在」的版本判定三态。
 // 只 include 那一个头 + 标准库,不链接 JUCE /
