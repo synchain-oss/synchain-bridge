@@ -57,8 +57,8 @@
   （v1.0.231 自带的 Claude Code 不认 `claude-opus-5-5`）；等 v1 发布 ≥ 1.0.232 后换回 tag。
 - `actions/checkout` 保留 v4 / v6 两条 major 线，是**刻意不动版本**：本次只把可变 ref 换成
   等价的 SHA，不顺手升级——升级要单独走 PR 并跑一遍 CI，混进 pin 里会让「绿变红」无从归因。
-- 已 pin 的三个（claude-code-action / pr-agent / action-gh-release）SHA 未动，只把注释补成
-  具体版本号；`# pin SHA` 这类注释说不出是哪一版，dependabot 与人都无从判断该不该升。
+- 已 pin 的三个（claude-code-action / pr-agent / action-gh-release）在 2026-09-01 那次 SHA 未动，只把注释补成
+  具体版本号（claude-code-action 其后在 Claude 复审两处改钉，见上一条「例外」）；`# pin SHA` 这类注释说不出是哪一版，dependabot 与人都无从判断该不该升。
 
 复核断言（应为「21 条全部 40 位 hex，无 unpinned」）：
 
