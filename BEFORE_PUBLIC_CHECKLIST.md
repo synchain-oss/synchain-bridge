@@ -43,7 +43,8 @@
 | `actions/cache` | `0057852bfaa89a56745cba8c7296529d2fc39830` | v4.3.0 | ci / release |
 | `actions/upload-artifact` | `ea165f8d65b6e75b540449e92b4886f43607fa02` | v4.6.2 | ci（5 处） |
 | `actions/github-script` | `f28e40c7f34bde8b3046d885e986cb6290c5673b` | v7.1.0 | contract-guard |
-| `anthropics/claude-code-action` | `239e3a730883eeb5c53db12b0fc9573b3024b126` | v1.0.191 | claude-review / deepseek-review / review-dispatch |
+| `anthropics/claude-code-action` | `9ca9355b36297178e28d37c799d1c9c8a28e6507` | main(Claude Code 2.1.280,非 tag) | claude-review / review-dispatch |
+| `anthropics/claude-code-action` | `239e3a730883eeb5c53db12b0fc9573b3024b126` | v1.0.191 | deepseek-review |
 | `qodo-ai/pr-agent` | `8e4d32e5497defd43c023a404f73560c62728961` | v0.39.0 | pr-agent |
 | `softprops/action-gh-release` | `3bb12739c298aeb8a4eeaf626c5b8d85266b0e65` | v2.6.2 | release |
 
@@ -52,6 +53,8 @@
 - 每个 SHA 均由 `gh api repos/<owner>/<repo>/git/ref/tags/<tag>` 现场解析；annotated tag
   （`anthropics/claude-code-action`）再经 `gh api repos/<o>/<r>/git/tags/<sha>` 解一层取
   `object.sha`。**不凭记忆写 SHA**：写错一位就是钉到一个不存在或不受控的对象上。
+  例外：Claude 复审两处的 `9ca9355b…` 是 main 上「bump Claude Code to 2.1.280」那个 commit，不是 tag
+  （v1.0.231 自带的 Claude Code 不认 `claude-opus-5-5`）；等 v1 发布 ≥ 1.0.232 后换回 tag。
 - `actions/checkout` 保留 v4 / v6 两条 major 线，是**刻意不动版本**：本次只把可变 ref 换成
   等价的 SHA，不顺手升级——升级要单独走 PR 并跑一遍 CI，混进 pin 里会让「绿变红」无从归因。
 - 已 pin 的三个（claude-code-action / pr-agent / action-gh-release）SHA 未动，只把注释补成
