@@ -42,8 +42,9 @@ jobs:
           config.model: anthropic/deepseek-flash
           config.fallback_models: anthropic/deepseek-v4-flash
           config.custom_model_max_tokens: 1000000   # 1M 档;换成不带 1M 上下文的 id 时改回 131072
-          config.max_model_tokens: 850000           # 输入与输出共用 1M 上下文,给输出留出 131072 以上;届时改回 120000
+          config.max_model_tokens: 850000           # 输入与输出共用 1M 上下文,给输出留出 131072 以上;换 131072 档时这三项一起改成 131072 / 98304 / 32768
           config.max_output_tokens: "131072"        # deepseek-flash 带推理,推理与正文共用输出上限;0 则请求不带输出上限、由服务端默认值兜底,实测约 4K 就截断导致审查空跑;32768 在约 270K token 的 PR 上也不够;按实际用量计费,上限高不额外花钱
+          config.ai_timeout: 300 # 默认 120s;输出上限抬到 131072 且带推理后,大 PR 单次生成可能超过 120s,超时同样是「不出内容而 job 报绿」
           # 必须显式含 "synchronize",否则 push 更新 PR 不复审(action runner 源码默认不处理 synchronize)
           github_action_config.pr_actions: '["opened", "reopened", "ready_for_review", "synchronize"]'
           github_action_config.auto_review: "true"
