@@ -16,8 +16,10 @@
 
 `Synchain Bridge.vst3` 是 **bundle 目录**（不是单文件），二选一：
 
-- **系统目录（需管理员）**：整个文件夹拷到 `C:\Program Files\Common Files\VST3\`
+- **系统目录（需管理员）**：整个文件夹拷到 `C:\Program Files\Common Files\VST3\`。换版本测试前先删除旧文件夹 ——
+  `Copy-Item -Force` 会合并进已有 bundle，留下旧版本的文件：
   ```powershell
+  Remove-Item "C:\Program Files\Common Files\VST3\Synchain Bridge.vst3" -Recurse -Force -ErrorAction SilentlyContinue
   Copy-Item "<解压路径>\Synchain Bridge.vst3" "C:\Program Files\Common Files\VST3\" -Recurse -Force
   ```
 - **免管理员**：放任意目录，在 DAW 里把该目录加为 VST3 扫描路径后重扫
