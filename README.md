@@ -82,8 +82,9 @@ The plugin uses dedicated manufacturer/plugin codes (`Snch` / `Snb1`), so DAWs s
 
 The build produces (or the zip contains) `Synchain Bridge.vst3` — a **bundle directory**, not a single file. Install either way:
 
-- **System directory (admin)**: copy the whole `Synchain Bridge.vst3` folder to `C:\Program Files\Common Files\VST3\`
+- **System directory (admin)**: copy the whole `Synchain Bridge.vst3` folder to `C:\Program Files\Common Files\VST3\`. When upgrading, delete the previous folder first — `Copy-Item -Force` *merges* into an existing bundle and would leave files from the old version behind:
   ```powershell
+  Remove-Item "C:\Program Files\Common Files\VST3\Synchain Bridge.vst3" -Recurse -Force -ErrorAction SilentlyContinue
   Copy-Item "<path>\Synchain Bridge.vst3" "C:\Program Files\Common Files\VST3\" -Recurse -Force
   ```
 - **No admin**: put the `.vst3` anywhere and add that folder as a VST3 scan path in your DAW (Reaper: Options → Preferences → Plug-ins/VST → Add path → rescan).

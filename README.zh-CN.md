@@ -82,8 +82,9 @@ macOS:
 
 构建产物(或解压后得到的)`Synchain Bridge.vst3` 是一个 **bundle 目录**(不是单文件),二选一安装:
 
-- **系统目录(需管理员)**:把整个 `Synchain Bridge.vst3` 文件夹拷到 `C:\Program Files\Common Files\VST3\`
+- **系统目录(需管理员)**:把整个 `Synchain Bridge.vst3` 文件夹拷到 `C:\Program Files\Common Files\VST3\`。升级时先删除旧文件夹 —— `Copy-Item -Force` 会**合并**进已有 bundle,留下旧版本的文件:
   ```powershell
+  Remove-Item "C:\Program Files\Common Files\VST3\Synchain Bridge.vst3" -Recurse -Force -ErrorAction SilentlyContinue
   Copy-Item "<产物路径>\Synchain Bridge.vst3" "C:\Program Files\Common Files\VST3\" -Recurse -Force
   ```
 - **免管理员**:把 `.vst3` 放任意目录,在 DAW 里把该目录加为 VST3 扫描路径后重扫(Reaper:选项 → 偏好 → 插件/VST → 添加路径 → 重新扫描)。

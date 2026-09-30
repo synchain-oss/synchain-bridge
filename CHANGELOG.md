@@ -288,7 +288,9 @@
 
 ### 兼容性
 
-- 无契约变更(wire 协议零改动);1.5.0 → 1.5.3 直接覆盖安装即可,不需要先卸载。
+- 无契约变更(wire 协议零改动),1.5.0 → 1.5.3 无需任何迁移。两个平台都建议先删除旧的 bundle 再放入新的:
+  Windows 删除旧的 `Synchain Bridge.vst3` 文件夹后再复制(`Copy-Item -Recurse -Force` 覆盖同样是合并,会留下旧版本已删除的文件);
+  macOS 照 README 的 Install / 安装 一节先删除旧的 `.vst3` / `.component` 再 `ditto` 新的(`ditto` 同样会合并进已有 bundle)。
 
 ## [1.5.0] — 2026-09-05
 
