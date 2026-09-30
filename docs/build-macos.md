@@ -67,7 +67,7 @@ killall -9 AudioComponentRegistrar
 ```
 
 本地构建出来的 bundle **不带** `com.apple.quarantine`，按本页装完可直接用。只有**下载来的**产物才带该属性
-需要解除隔离（Releases 目前尚无 mac 产物；命令见 [README](../README.md#install) 的 macOS 小节）。
+需要解除隔离（自 v1.5.0 起 Releases 附带 `SynchainBridge-VST3-AU-v<版本>-macos-arm64.zip`；命令见 [README](../README.md#install) 的 macOS 小节）。
 
 ## 验证
 
