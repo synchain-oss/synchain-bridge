@@ -15,12 +15,6 @@
 > **三批都不涉及契约变更**(wire 协议零改动;`__bridge__firstFrame` 时序信号及其载荷里的诊断字段
 > 均为非契约面,判定与兼容性承诺见 `docs/contract-changes/20260914-sl386-reveal-gate.md` 与
 > `docs/contract-changes/20260918-sl433-first-frame-paint-delta.md`)。
->
-> 本段另收 v1.5.0 tag 之后、2026-09-06 经 PR #30(含 #27 / #28 / #29)合入 `dev` 的工程条目(下面「内部工程」
-> 「构建」「持续集成」「发布 / 分发」四个小节):v1.5.0 tag 的树里没有 `src/PcmFrame.h` 与 `vcpkg.json`,这些改动不在
-> v1.5.0 的发布产物里、实际随 1.5.3 发出。它们此前误记在 `[1.5.0]` 段下,现原文归位,另补记同批漏记的一条
-> `memcpy` 保护。这一批同样**不涉及契约变更**(`docs/contract-changes/20260906-pcm-frame-header-extraction.md`,
-> `contract-impact: none`)。
 
 ### 修复
 
@@ -294,9 +288,7 @@
 
 ### 兼容性
 
-- 无契约变更(wire 协议零改动);厂商码/插件码(`Snch` / `Snb1`)与 `BUNDLE_ID`(`com.synchain.bridge`)未变,
-  已有 DAW 工程无需重建。1.5.0 → 1.5.3 直接覆盖安装即可,没有额外的卸载或迁移步骤(macOS 照旧按 README
-  「安装」一节先删旧 bundle 再 `ditto` —— 那是 `ditto` 合并语义的通用要求,每次更新都一样)。
+- 无契约变更(wire 协议零改动);1.5.0 → 1.5.3 直接覆盖安装即可,不需要先卸载。
 
 ## [1.5.0] — 2026-09-05
 
