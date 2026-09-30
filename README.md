@@ -198,4 +198,4 @@ Complete corresponding source for every released binary is available in this rep
 
 ## Status
 
-Windows x64 (VST3) shipped first. macOS on Apple Silicon (VST3 + AU) arrives in v1.5.0 and is published as a prebuilt Release asset alongside the Windows zip — unsigned and arm64 only; signing/notarization comes in a later release. See [`CHANGELOG.md`](CHANGELOG.md) for the version history.
+Windows x64 (VST3) shipped first. macOS on Apple Silicon (VST3 + AU) has been published since v1.5.0 as a prebuilt Release asset alongside the Windows zip — unsigned and arm64 only; signing/notarization comes in a later release. See [`CHANGELOG.md`](CHANGELOG.md) for the version history.
