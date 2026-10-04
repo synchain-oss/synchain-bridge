@@ -141,7 +141,7 @@ zip 里的 `INSTALL-AAX.txt` 是同一组命令。
 | T09 | 保存工程后重开 | 端口、主音量、缩放、语言等设置恢复 | — |
 | T10 | 离线 bounce | bounce 期间网页侧收不到帧；bounce 结束后实时推流恢复 | `host non-realtime on (wrapper=AAX)` → 结束后 `… off (wrapper=AAX)`（处理器侧 30 Hz 轮询，极短的切换可能漏记） |
 | T11 | 对 Stream Master 写自动化再回放 | 插件滑块与网页音量都随自动化变化 | — |
-| T12 | 改 H/W 缓冲（64–1024）和采样率（44.1 / 48 / 96 kHz） | 面板读数更新、不崩溃、推流不断 | 采样率变化时 `audio: sampleRate=… channels=… latencyMs=…`（缓冲读数恒按 1024 计） |
+| T12 | 改 H/W 缓冲（64–1024）和采样率（44.1 / 48 / 96 kHz） | 面板读数更新、不崩溃、推流不断 | 先打开插件窗口再改：采样率变化时 `audio: sampleRate=… channels=… latencyMs=…`（这行由编辑器写，窗口关着时不会出现；缓冲读数恒按 1024 计） |
 | T13 | 移除实例 | 端口被释放（Windows：`netstat -ano \| findstr 9420`；macOS：`lsof -iTCP:9420`，都查不到），新实例重新拿到 9420 | — |
 | 可选 | AAX Validator | 把结果附在 PR 描述里（工具与日志不入库；接入方式见 [build-windows.md](build-windows.md#可选aax-validatortodo-aaxval)） | — |
 

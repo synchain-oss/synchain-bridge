@@ -148,7 +148,7 @@ Restart Pro Tools and look the plug-in up by name (**Synchain Bridge**) in an in
 - **Signing.** Release AAX files carry the maintainer's PACE signature, which retail Pro Tools requires. On Windows the code-signing certificate is self-signed, so Properties → Digital Signatures shows an untrusted signer; this is expected. On macOS the bundle is **not notarized**, so the `sudo xattr` step above is required.
 - **Apple Silicon only, native Pro Tools.** The macOS AAX has an arm64 slice only; Pro Tools must run natively, not under Rosetta.
 - **Unsigned builds** (anything you build yourself, or a `*-UNSIGNED.zip`) can only be loaded by Pro Tools Developer.
-- **Diagnostics.** The plugin writes a few event-driven diagnostic lines prefixed `SynchainBridge:` (editor opened, a UI-scale resize the host refused, audio settings changed, host non-realtime on/off). On Windows, view them with Sysinternals DebugView (Capture Win32) and filter on that prefix; on macOS they go to Pro Tools' standard error, so start Pro Tools from Terminal to see them.
+- **Diagnostics.** The plugin writes event-driven diagnostic lines prefixed `SynchainBridge:`; the ones most useful in Pro Tools are editor opened, a UI-scale resize the host refused, audio settings changed (these three only while the plug-in window is open) and host non-realtime on/off. On Windows, view them with Sysinternals DebugView (Capture Win32) and filter on that prefix; on macOS they go to Pro Tools' standard error, so start Pro Tools from Terminal to see them.
 
 ## Quick start
 

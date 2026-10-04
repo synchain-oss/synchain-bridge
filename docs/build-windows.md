@@ -217,13 +217,14 @@ pfx 必须放在仓库目录之外（脚本会拒绝仓库内路径），口令�
 
 插件在少数事件上经 JUCE `Logger` 写一行诊断，前缀统一为 `SynchainBridge:`，全部在 message 线程、音频线程零日志。
 没有设置 Logger 时落到 `OutputDebugString`，Release 构建同样可见：用 Sysinternals DebugView（Capture → Capture Win32）
-按 `SynchainBridge:` 过滤。与 Pro Tools 排障相关的四行：
+按 `SynchainBridge:` 过滤。日志不止下表几行（例如 WebView 首帧放行的 `webview revealed (…)`），与 Pro Tools 排障最相关的是这四行 ——
+前三行由编辑器写，**只在插件窗口开着时**出现；最后一行由处理器的 30 Hz timer 写，窗口关着也会出现（极短的切换可能漏记）：
 
 | 时机 | 文案（`…` 为实际值） |
 |---|---|
 | 打开编辑器 | `SynchainBridge: editor opened: host=… wrapper=… size=WxH uiScale=… io=<入>/<出> desktopScale=…`（Pro Tools 下 `host=ProTools wrapper=AAX`） |
 | 缩放档位被宿主拒绝（只在实际尺寸 ≠ 请求尺寸时） | `SynchainBridge: ui scale resize not applied by host: requested WxH, got wxh` |
-| 采样率 / 声道变化（只在变化时） | `SynchainBridge: audio: sampleRate=… channels=… latencyMs=…` |
+| 插件窗口开着时，采样率 / 声道变化（只在变化时） | `SynchainBridge: audio: sampleRate=… channels=… latencyMs=…` |
 | 宿主 non-realtime（离线渲染）状态切换 | `SynchainBridge: host non-realtime on (wrapper=AAX)` / `… off (wrapper=AAX)` |
 
 ### 可选：AAX Validator（TODO-AAXVAL）
@@ -234,7 +235,7 @@ AAX Validator / DigiShell 是 Avid 向 AAX 开发者提供的工具，**不入�
 未实测填写前 5e 恒为 SKIP「调用方式未实测」，不会假绿；填好后输出 Tee 到 `<构建目录>\gates-aaxval.log`，以输出标记判定、
 退出码只作参考。首次接入时按下面的步骤自己摸清（TODO-AAXVAL，owner 实测后回填三个常量并删掉本段 TODO）：
 
-1. 把工具包解压到**仓库外**，例如 `$env:USERPROFILEvid-tools\`。
+1. 把工具包解压到**仓库外**，例如 `$env:USERPROFILE\avid-tools\`。
 2. 用 `Get-ChildItem -Recurse` 找到可执行入口（`dsh.exe`）、aaxval 模块和随包文档。
 3. 依次试 `-h`、`--help`、`/?`；进入交互环境后试 `help`，再确认加载 aaxval 模块的命令（推测，待验证）。
 4. 弄清是否要先把插件装进 Avid 的 Plug-Ins 目录、是否要求签名件或 iLok。

@@ -148,7 +148,7 @@ sudo xattr -dr com.apple.quarantine "/Library/Application Support/Avid/Audio/Plu
 - **签名。** 发行版 AAX 带维护者的 PACE 签名,这是零售版 Pro Tools 的要求。Windows 侧的代码签名证书是自签名的,「属性 → 数字签名」里会显示不受信任的签名者,属预期。macOS 侧**未经公证**,所以上面的 `sudo xattr` 步骤不能省。
 - **仅 Apple Silicon,且 Pro Tools 须原生运行。** macOS 的 AAX 只有 arm64 slice,Pro Tools 必须原生运行,不能走 Rosetta。
 - **未签名件**(自己构建的,或 `*-UNSIGNED.zip`)只能被 Pro Tools Developer 加载。
-- **诊断日志。** 插件会在少数事件上写一行以 `SynchainBridge:` 开头的诊断(编辑器打开、缩放尺寸被宿主拒绝、音频设置变化、宿主 non-realtime 状态切换)。Windows 上用 Sysinternals DebugView(开 Capture Win32)按该前缀过滤查看;macOS 上这些行写到 Pro Tools 的标准错误输出,需要从「终端」启动 Pro Tools 才看得到。
+- **诊断日志。** 插件按事件写以 `SynchainBridge:` 开头的诊断行;在 Pro Tools 里最有用的是:编辑器打开、缩放尺寸被宿主拒绝、音频设置变化(这三类只在插件窗口开着时出现)和宿主 non-realtime 状态切换。Windows 上用 Sysinternals DebugView(开 Capture Win32)按该前缀过滤查看;macOS 上这些行写到 Pro Tools 的标准错误输出,需要从「终端」启动 Pro Tools 才看得到。
 
 ## 快速上手
 
