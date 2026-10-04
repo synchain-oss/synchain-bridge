@@ -6,6 +6,52 @@
 
 ## [未发布]
 
+<!-- AAX 线(feature/aax)的小节骨架:各子分支只往自己负责的小节追加,不新增/重排小节;
+     切版时把仍为空的小节删掉。 -->
+
+### 新增
+
+- **AAX(Avid Pro Tools)格式,Beta**:Windows x64 与 macOS arm64 都构建 AAX 目标(CMake 选项
+  `SYNCHAIN_BRIDGE_AAX`,两平台默认 ON,`-DSYNCHAIN_BRIDGE_AAX=OFF` 可整体关掉)。SDK 用 JUCE 8.0.8
+  自带的 AAX SDK 2.8.0(GPLv3 选项),不引外部 SDK、构建零 secret。产物**未签名**:PACE 签名之前只有
+  Pro Tools Developer 能加载。JUCE 不支持 AAX 的平台照常静默跳过;若开关打开、平台也支持、目标却没建出来
+  (例如升 JUCE 后过滤逻辑变了),configure 直接 FATAL,不会静默丢格式。
+  - 身份:`AAX_IDENTIFIER com.synchain.bridge`,厂商/产品码沿用 `Snch` / `Snb1`;类别
+    `AAX_ePlugInCategory_None`(SDK 没有 Analyzer/Utility 类,Pro Tools 按类别组织菜单时归入 "Other");
+    禁用 multi-mono(否则立体声/环绕轨会按声道各开一个实例、各起一个 WebSocket 服务);不注册 AudioSuite
+    (`JucePlugin_AAXDisableAudioSuite=1`,只加在 AAX wrapper 目标上)。
+  - 声道:AAX 下只接受 mono→mono 与 stereo→stereo,即只登记 PlugIn ID `jcbb` / `jccc` 两个 stem 组合。
+    PlugIn ID 会写进 Pro Tools 会话,**发布后只能加、不能删**。
+  - 离线渲染:AAX 下宿主进入 non-realtime(offline bounce / Track Commit / Freeze)期间,音频原样直通,
+    不计量、不推流,避免快于实时的数据灌进推流队列把接收端冲乱。
+  - 诊断:新增 4 条按事件触发、只在 message 线程写的日志(前缀 `SynchainBridge:`,Windows 下经
+    `OutputDebugString`,DebugView 可见)—— 开窗时的宿主 / 封装格式 / 尺寸 / 缩放 / 声道 / 全局缩放;
+    缩放档位被宿主拒绝;音频设置(采样率 / 声道 / 延迟)变化;宿主 non-realtime 状态切换。音频线程零改动。
+- 插件界面文案不再写死格式与旧版本号:副标题 `VST3 · AUDIO BRIDGE` → `DAW · AUDIO BRIDGE`;
+  角标 `Synchain VST · v…` → `Synchain Bridge · v…`,首帧占位不再显示写死的 `v1.3.1`。
+
+### 安全
+
+### 构建
+
+### 持续集成
+
+### 发布 / 分发(对下游可见)
+
+### 兼容性
+
+- **无契约变更**:桥 #1 / 桥 #2 的 wire 协议、Init 键与 `BRIDGE_CONTRACT_VERSION` 均零改动,握手里不带
+  格式字段;七个契约文件未触碰。
+- **VST3 / AU 行为与 1.5.3 一致**:声道布局判定对 VST3 / AU 仍恒为接受(与 JUCE 默认逐字等价,已存工程的
+  声道协商结果不变);离线早退只对 AAX 生效;`Snch` / `Snb1` / `BUNDLE_ID` 未变,已有 DAW 工程无需重建。
+- AAX 是**新增格式**,不存在旧实例迁移问题。
+- 从源码构建:`cmake --build` 默认会多编 AAX 目标(共享代码多一个 `JucePlugin_Build_AAX=1`,首次构建全量
+  重编);configure 状态行改为 `Building Synchain Bridge for Windows: VST3 + AAX (static CRT, WebView2)` /
+  `Building Synchain Bridge for macOS: VST3 + AU + AAX, …`。只要 VST3 / AU 的话加 `-DSYNCHAIN_BRIDGE_AAX=OFF`,
+  状态行与产物都回到 1.5.3 的样子(Windows 行的措辞除外)。
+
+### 文档 / 合规
+
 ## [1.5.3] — 2026-09-30
 
 > 版本号由 1.5.0 升至 **1.5.3**(唯一真源 `CMakeLists.txt` 的 `project(... VERSION)`,四镜像同步:
