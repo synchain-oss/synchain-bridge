@@ -36,6 +36,20 @@
 
 ### 持续集成
 
+- **`ci.yml` 两个 build job 各加三步 AAX 打包**(触发面一字不改,不加 secret,不加新 action,上传沿用已 pin 的
+  `upload-artifact` v4.6.2 SHA):
+  - **AAX 打包冒烟**(Windows 6c / macOS 8c,产物丢弃,与 VST3/AU 的 6b / 8b 同构):`-UNSIGNED` 模式按
+    `0.0.0-ci → 0.0.0-ci2 → 0.0.0-ci` 三连跑,`.sha256` 字节形态与 summary 按段去重的断言逐字照搬 6b / 8b;另做一道
+    独立于脚本自检的绊线 —— zip 层级、(mac)可执行位、`INSTALL-AAX.txt` 必须带 `(UNSIGNED)` 横幅。
+    **反向断言**:同一个未签名 bundle 用 Signed 模式打包必须失败,且输出目录里不得出现发行名 zip ——
+    「未签名件不可能长得像发行资产」由机器保证,而不是靠人记得。
+  - **Package AAX (unsigned)**(6d / 8d):版本 = CMake `VERSION` + `-ci.<head 短 sha>`,`INSTALL-AAX.txt` 的源码链接钉
+    head 全 sha(经 env 间接读入;PR 事件取 head 侧 sha,不取合并提交);随后断言产物名逐字等于预期(mac 侧顺带在
+    BSD sed 上验证脚本从 `CMakeLists.txt` 回落读版本)。
+  - **Upload**(6e / 8e):artifact `aax-unsigned-win64` / `aax-unsigned-macos-arm64`(内含 `-UNSIGNED.zip` + `.sha256`),
+    PR 保留 14 天、其余 30 天。名字刻意不叫 `dist-*`:`release.yml` 的 `publish` 只从 `dist-*` 取件,未签名件进不了 Release。
+    上传步骤不带事件条件,`workflow_dispatch` 同样产出 —— 在子分支上 dispatch 一次即可取到 Pro Tools Developer 测试件。
+
 ### 发布 / 分发(对下游可见)
 
 - **新增 AAX 打包脚本 `scripts/package-aax.ps1`(Windows x64)与 `scripts/package-aax-macos.sh`(macOS arm64)**,是 AAX
