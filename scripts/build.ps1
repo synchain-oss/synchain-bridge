@@ -294,7 +294,16 @@ if ($InstallAax) {
     New-Item -ItemType Directory -Force -Path $aaxDir | Out-Null
     # 先删旧版再整体复制:目标已存在时 Copy-Item 是合并,旧版残留文件会混进来。-Force:bundle 根目录的 desktop.ini
     # 带 System / Hidden 属性,不带 -Force 的递归拷贝会跳过它
-    if (Test-Path -LiteralPath $targetAax) { Remove-Item -LiteralPath $targetAax -Recurse -Force }
+    # 删到一半失败(资源管理器开着 bundle 目录、desktop.ini 被占用……)时目标只剩半个旧版:给出可操作的提示再失败,
+    # 不让用户只看到一条原始异常
+    if (Test-Path -LiteralPath $targetAax) {
+        try {
+            Remove-Item -LiteralPath $targetAax -Recurse -Force
+        } catch {
+            Write-Host ('旧版 .aaxplugin 只删掉了一部分(' + $_.Exception.Message + ')。请关闭打开着该目录的资源管理器窗口并退出 Pro Tools 后重跑;目标: ' + $targetAax) -ForegroundColor Red
+            exit 1
+        }
+    }
     Copy-Item -LiteralPath $aaxBundle -Destination $targetAax -Recurse -Force
     Write-Host ('  AAX 安装到: ' + $targetAax) -ForegroundColor Green
     Write-Host '[INFO] 本地构建的 AAX 未经 PACE 签名:只有 Pro Tools Developer 能加载,零售版 Pro Tools 只认 PACE 签名的 AAX。' -ForegroundColor Yellow

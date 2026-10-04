@@ -33,7 +33,7 @@ param(
     [string]$BuildDir = 'build',
     # 新参数一律追加在末尾:脚本参数默认按声明顺序可按位置绑定,插在中间会让既有的按位置调用错绑
     [switch]$IncludeAax,             # 跑 AAX gate 5c/5d/5e(默认关;gate 3h 不受此开关控制,恒跑)
-    [string]$AaxValidatorPath = ''   # Avid AAX Validator(DigiShell)可执行文件,必须在仓库外;给了即隐含 -IncludeAax
+    [string]$AaxValidatorPath = ''   # Avid AAX Validator(DigiShell)可执行文件,必须在仓库外、请传绝对路径;给了即隐含 -IncludeAax
 )
 
 $ErrorActionPreference = 'Stop'
@@ -53,6 +53,8 @@ $RunAax = $IncludeAax.IsPresent -or $AaxValidatorGiven
 #   AaxValidatorPassPattern —— 输出里出现即视为通过的标记(.NET 正则,Multiline,大小写敏感)。
 #   AaxValidatorFailPattern —— 输出里出现即判失败的标记(同上),优先于 PassPattern。
 # 判定与 auval 同口径:以输出标记为准,退出码只记进结果明细作参考。只记录我们自己写的命令和判据,不抄 Avid 文档原文。
+# 回填时顺带确认工具的输出编码:输出经 Tee-Object 落盘后再读回来匹配,若工具输出 UTF-16 或夹带控制字符,正则可能
+# 永远匹配不到(表现为恒 FAIL「没有通过标记」)—— 先实测 gates-aaxval.log 的内容,必要时在匹配前转码 / 剔控制字符。
 $script:AaxValidatorArgs        = $null   # TODO-AAXVAL(owner 实测后填写),形如 @('<子命令>', '{bundle}')
 $script:AaxValidatorPassPattern = $null   # TODO-AAXVAL(owner 实测后填写)
 $script:AaxValidatorFailPattern = $null   # TODO-AAXVAL(owner 实测后填写)
@@ -469,6 +471,9 @@ function Test-PcmFrameWiring {
 #      只跑 ① 就看不见仓库里躺着的证书 —— 可签名材料本就必须在仓库外(签名脚本与证书助手同样拒绝仓库内路径),
 #      被忽略只是让它在 `git status` 里隐身,一次 `git add -f` 或 .gitignore 改动就会入库。
 # git 本身失败(不是仓库、git 不在 PATH)一律 FAIL:枚举不出来不等于没有。只读、秒级,恒跑(不挂 -IncludeAax)。
+# 第 ② 轮会进 node_modules/ 等被忽略的目录,依赖升级后可能撞上第三方自带的 .pfx / .p12 测试证书(TLS 类 npm 包常见)。
+# 命中明细里是完整的仓库相对路径,一眼可见落在哪个顶层目录。确认是第三方测试夹具时,只按**完整相对路径**逐条精确豁免
+# (在下面的循环里跳过该路径并写明理由),不要放宽正则、不要跳过第 ② 轮、不要整目录豁免。
 $script:SigningMaterialPattern = '(?i)\.(pfx|p12|pvk)$|(^|/)dsh\.exe$|(digishell|aax[ _-]?validator).*\.(exe|dll|zip|msi|dmg|pkg|pdf)$|test[ _-]?plan.*\.pdf$'
 function Test-SigningMaterial {
     $label = '签名材料 / Avid 评估工具不入库 (pfx/p12/pvk、DigiShell、AAX Validator、测试计划)'
@@ -741,7 +746,9 @@ function Test-AaxValidator([bool]$bundleOk) {
     $full = [System.IO.Path]::GetFullPath((Resolve-RepoPath $AaxValidatorPath))
     $root = [System.IO.Path]::GetFullPath($RepoRoot).TrimEnd('\', '/') + '\'
     if ($full.StartsWith($root, [System.StringComparison]::OrdinalIgnoreCase)) {
-        Add-Result $label 'FAIL' ('-AaxValidatorPath 在仓库内: ' + $full + '(Avid 评估许可工具必须放仓库外,例如 $env:USERPROFILE\avid-tools\)')
+        # 相对路径与 -BuildDir 同规则按仓库根解析(不按当前目录),所以在别处传了相对路径也会落到这里 —— 提示传绝对路径
+        Add-Result $label 'FAIL' ('-AaxValidatorPath 在仓库内: ' + $full + '(Avid 评估许可工具必须放仓库外,例如 $env:USERPROFILE\avid-tools\;' +
+            '相对路径按仓库根解析,请传绝对路径)')
         return $false
     }
     if (-not (Test-Path -LiteralPath $full -PathType Leaf)) {
