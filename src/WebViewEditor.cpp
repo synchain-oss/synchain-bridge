@@ -280,6 +280,15 @@ SynchainBridgeWebEditor::SynchainBridgeWebEditor(SynchainBridgeAudioProcessor& p
         setSize(juce::roundToInt(kDesignW * s), juce::roundToInt(kDesignH * s));
     }
 
+    // [AAX 诊断] 开窗时一次性记下宿主 / 封装格式 / 尺寸 / 缩放 / 声道协商结果 / 全局缩放：Pro Tools 下
+    // 出问题时据此分清是哪一层（宿主名在 PT 下为 ProTools）。message 线程、每次开窗一行。
+    logDiag(juce::String("editor opened: host=") + juce::PluginHostType().getHostDescription() +
+            " wrapper=" + juce::AudioProcessor::getWrapperTypeDescription(mProcessor.wrapperType) +
+            " size=" + juce::String(getWidth()) + "x" + juce::String(getHeight()) + " uiScale=" +
+            juce::String(mProcessor.getUiScale(), 2) + " io=" + juce::String(mProcessor.getMainBusNumInputChannels()) +
+            "/" + juce::String(mProcessor.getMainBusNumOutputChannels()) +
+            " desktopScale=" + juce::String(juce::Desktop::getInstance().getGlobalScaleFactor(), 2));
+
     // 先探测 WebView2 运行时：有则正常加载（看门狗容忍冷启动）；无则直接给可操作的兜底面板，
     // 并引导一次性安装，不做无意义等待。加载路径收进 beginLoadAttempt（构造 / retry 共用，
     // [SL-386] 含遮挡闸重新武装），missing 分支里 showFallback 自己会 setVisible(false)。
@@ -797,7 +806,14 @@ void SynchainBridgeWebEditor::handleSetUiScale(const juce::Array<juce::var>& arg
     // 仅缩放编辑器窗口为 DESIGN×s（实时预览）；web 侧卡片用 (100/s)%+zoom:s 相对窗口自适应铺满（DPI 无关）。
     // 注意：这里**不**写全局默认——防呆确认「保持」时才经 commitUiScale 落盘，避免未确认的极端档位
     // 在用户 10s 内关窗（revert 定时器随 WebView 销毁而失效）时污染全局、导致新实例仍开大（v1.2.5 修）。
-    setSize(juce::roundToInt(kDesignW * s), juce::roundToInt(kDesignH * s));
+    const int wantW = juce::roundToInt(kDesignW * s);
+    const int wantH = juce::roundToInt(kDesignH * s);
+    setSize(wantW, wantH);
+    // [AAX 诊断] 宿主可能拒绝改尺寸（AAX 下 JUCE 会同步把编辑器退回原尺寸），下面照样回 ok:true +
+    // 退回后的 w/h；只在不一致时记一行，便于在 Pro Tools 里分清「缩放没生效」是谁拒的。
+    if (getWidth() != wantW || getHeight() != wantH)
+        logDiag("ui scale resize not applied by host: requested " + juce::String(wantW) + "x" + juce::String(wantH) +
+                ", got " + juce::String(getWidth()) + "x" + juce::String(getHeight()));
 
     auto* obj = new juce::DynamicObject();
     obj->setProperty("ok", true);
@@ -921,6 +937,9 @@ void SynchainBridgeWebEditor::timerCallback()
         a->setProperty("channels", channels);
         a->setProperty("latencyMs", mProcessor.latencyMs());
         mWebView->emitEventIfBrowserIsVisible(juce::Identifier(bridge::Event::Audio), juce::var(a));
+        // [AAX 诊断] 只在变化时记一行：看得出 mono/stereo 协商结果与块大小口径（AAX 恒按 1024 prepare）。
+        logDiag("audio: sampleRate=" + juce::String(sampleRate) + " channels=" + juce::String(channels) +
+                " latencyMs=" + juce::String(mProcessor.latencyMs(), 2));
         mLastSampleRate = sampleRate;
         mLastChannels = channels;
     }
