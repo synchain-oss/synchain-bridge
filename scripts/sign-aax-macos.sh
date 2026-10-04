@@ -15,7 +15,8 @@
 #   预检 2 从文件名解析版本:SynchainBridge-AAX-v<版本>-macos-arm64-UNSIGNED.zip
 #   预检 3 检出对应该版本:-ci.<sha> 版本要求 HEAD 以该 sha 开头(source ref = 完整 HEAD);其余版本要求 HEAD 上有
 #          tag v<版本>;LICENSE / THIRD-PARTY-NOTICES.md / LICENSES / scripts 无未提交改动
-#   预检 3b 来源(--source-run-id):该 run 属于本仓库(非 fork)、是 ci.yml / release.yml、结论 success、head_sha = HEAD;
+#   预检 3b 来源(--source-run-id):该 run 属于本仓库(非 fork)、是 ci.yml / release.yml、结论 success、事件为 push / workflow_dispatch
+#          (pull_request 构建的是合并提交,不认)、head_sha = HEAD;
 #          再用 gh run download 取回它的 aax-unsigned-* artifact,其中同名 zip 必须与输入 zip 字节相同。
 #          这是「哪些字节会被盖上签名」的信任根;不给 --source-run-id 只记 WARN(本地自建件没有 run 可核对)
 #   预检 4 security find-identity -p codesigning(不加 -v,TO-VALIDATE V6)里名字与 --signid 完全相等的身份恰好 1 个
@@ -309,10 +310,15 @@ else
             p3b_err="run $SOURCE_RUN_ID 的 workflow 是 '$r_path',只接受 ci.yml / release.yml 的产物"
         elif [ "$r_concl" != "success" ]; then
             p3b_err="run $SOURCE_RUN_ID 的结论是 '$r_status/$r_concl',只接受成功完成的构建"
+        elif [ "$r_event" != "push" ] && [ "$r_event" != "workflow_dispatch" ]; then
+            # pull_request 事件下 ci.yml 构建的是合并提交 refs/pull/N/merge,run 的 head_sha 却是 PR head:对上也不代表字节由
+            # 当前检出构建。只认 push / workflow_dispatch(这两种事件构建的就是 head_sha)
+            p3b_err="run $SOURCE_RUN_ID 的事件是 '$r_event':pull_request 构建的是合并提交,不是当前检出;只接受 push / workflow_dispatch 的 run(要签某个分支的件,对该分支 gh workflow run ci.yml --ref <分支> 再取它的 artifact)"
         elif [ "$r_sha" != "$HEAD_COMMIT" ]; then
             p3b_err="run $SOURCE_RUN_ID 构建的是 $r_sha,当前检出是 $HEAD_COMMIT:zip 与检出不是同一个 commit"
         else
-            # 取回该 run 的 aax-unsigned-* artifact(ci.yml / release.yml 的命名都以此开头),其中同名 zip 必须与输入字节相同
+            # 取回该 run 的 aax-unsigned-* artifact,其中同名 zip 必须与输入字节相同。目前只有 ci.yml 6e / 8e 产出它;release.yml 的
+            # 同名 artifact 由 AAX-13 接入(tag 版本的件只能从 release run 来),接入前传 release run 会在「找到 0 个 zip」处 FAIL
             PROV_DIR="$(mktemp -d "${TMPDIR:-/tmp}/synchain-aax-provenance.XXXXXX")"
             if ! dl_out="$(gh run download "$SOURCE_RUN_ID" -R "$UPLOAD_REPO" -p 'aax-unsigned-*' -D "$PROV_DIR" 2>&1)"; then
                 p3b_err="gh run download $SOURCE_RUN_ID 失败(artifact 过期了?):$dl_out"
@@ -546,7 +552,8 @@ redact_stream() {
     local line s
     while IFS= read -r line || [ -n "$line" ]; do
         for s in "$@"; do
-            if [ -n "$s" ]; then line="${line//"$s"/****}"; fi   # 引号内的模式按字面匹配,不当通配
+            # 引号内的模式按字面匹配,不当通配;子串替换,账号很短或是常见词时会连带替换无关文字,只影响可读性
+            if [ -n "$s" ]; then line="${line//"$s"/****}"; fi
         done
         printf '%s\n' "$line"
     done

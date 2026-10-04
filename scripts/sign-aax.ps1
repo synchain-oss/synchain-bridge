@@ -11,7 +11,8 @@
     预检 2 从文件名解析版本:SynchainBridge-AAX-v<版本>-win64-UNSIGNED.zip
     预检 3 检出对应该版本:-ci.<sha> 版本要求 HEAD 以该 sha 开头(SourceRef = 完整 HEAD);其余版本要求 HEAD 上有
            tag v<版本>(SourceRef = v<版本>);LICENSE / THIRD-PARTY-NOTICES.md / LICENSES / scripts 无未提交改动
-    预检 3b 来源(-SourceRunId):该 run 属于本仓库(非 fork)、是 ci.yml / release.yml、结论 success、head_sha = HEAD;
+    预检 3b 来源(-SourceRunId):该 run 属于本仓库(非 fork)、是 ci.yml / release.yml、结论 success、事件为 push / workflow_dispatch
+           (pull_request 构建的是合并提交,不认)、head_sha = HEAD;
            再用 gh run download 取回它的 aax-unsigned-* artifact,其中同名 zip 必须与输入 zip 字节相同。
            这是「哪些字节会被盖上签名」的信任根;不给 -SourceRunId 只记 WARN(本地自建件没有 run 可核对)
     预检 4 KeyFile 存在,且解析后的完整路径不在仓库目录下(路径前缀 + git 公共目录两道判定,覆盖本仓库的其他 worktree)
@@ -123,7 +124,8 @@ function Invoke-Wraptool([string[]]$Arguments, [string[]]$Display = $null, [swit
     $secrets = @($Redact | Where-Object { $_ })
     & $script:Wraptool @Arguments 2>&1 | ForEach-Object {
         $line = "$_"
-        foreach ($s in $secrets) { $line = $line.Replace($s, '****') }   # String.Replace:字面替换,不经正则
+        # String.Replace:字面子串替换,不经正则。账号很短或是常见词时会连带替换无关文字,只影响可读性(TO-VALIDATE V1 时顺带看)
+        foreach ($s in $secrets) { $line = $line.Replace($s, '****') }
         Write-Host "  $line"
     }
     return [pscustomobject]@{ ExitCode = $LASTEXITCODE; Output = '' }
@@ -297,10 +299,17 @@ try {
             if ([string]$run.conclusion -cne 'success') {
                 throw "run $SourceRunId 的结论是 '$($run.status)/$($run.conclusion)',只接受成功完成的构建"
             }
+            # pull_request 事件下 ci.yml 的 checkout 构建的是合并提交 refs/pull/N/merge(head + 当时的 base),run 的 head_sha
+            # 却是 PR head —— head_sha 对上也不代表字节由当前检出构建。只认 push / workflow_dispatch:这两种事件构建的就是 head_sha
+            if (@('push', 'workflow_dispatch') -cnotcontains [string]$run.event) {
+                throw ("run $SourceRunId 的事件是 '$($run.event)':pull_request 构建的是合并提交,不是当前检出;只接受 push / " +
+                    "workflow_dispatch 的 run(要签某个分支的件,对该分支 gh workflow run ci.yml --ref <分支> 再取它的 artifact)")
+            }
             if ([string]$run.head_sha -cne $headCommit) {
                 throw "run $SourceRunId 构建的是 $($run.head_sha),当前检出是 ${headCommit}:zip 与检出不是同一个 commit"
             }
-            # 取回该 run 的 aax-unsigned-* artifact(ci.yml 6e / release.yml 的命名都以此开头),其中同名 zip 必须与输入字节相同
+            # 取回该 run 的 aax-unsigned-* artifact,其中同名 zip 必须与输入字节相同。目前只有 ci.yml 6e / 8e 产出它;release.yml 的
+            # 同名 artifact 由 AAX-13 接入(tag 版本的件只能从 release run 来),接入前传 release run 会在「找到 0 个 zip」处 FAIL
             $prov = Join-Path ([System.IO.Path]::GetTempPath()) ('synchain-aax-provenance-' + [guid]::NewGuid().ToString('N'))
             $d = Invoke-Gh @('run', 'download', $SourceRunId, '-R', $UploadRepo, '-p', 'aax-unsigned-*', '-D', $prov)
             if ($d.ExitCode -ne 0) { throw "gh run download $SourceRunId 失败(exit $($d.ExitCode);artifact 过期了?):$($d.Err)" }

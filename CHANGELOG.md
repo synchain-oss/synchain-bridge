@@ -44,9 +44,9 @@
   - 预检(任一失败即退出 1):`.sha256` 逐字节格式 + 哈希(**只验完整性**:与 zip 同一份下载,防不了替换);从文件名解析版本;
     检出必须对应该版本(`-ci.<sha>` 件要求 HEAD 以该 sha 开头,其余版本要求 HEAD 上有 `v<版本>` tag),合规文件与 `scripts/`
     无未提交改动;**来源核对**(`-SourceRunId` / `--source-run-id`,可选,不给记 WARN):该 run 属于本仓库(非 fork)、是
-    `ci.yml` / `release.yml`、结论 success、`head_sha` 等于当前检出,再用 `gh run download` 取回它的 `aax-unsigned-*` artifact,
-    同名 zip 必须与输入字节相同;wraptool 存在且 `help sign`
-    列出所需 flag;输入件确实未签名(Windows DLL 为 `NotSigned`;macOS arm64-only、无签名 Authority),且 `wraptool verify`
+    `ci.yml` / `release.yml`、结论 success、事件为 push / workflow_dispatch(pull_request 构建的是合并提交,不认)、
+    `head_sha` 等于当前检出,再用 `gh run download` 取回它的 `aax-unsigned-*` artifact,同名 zip 必须与输入字节相同;
+    wraptool 存在且 `help sign` 列出所需 flag;输入件确实未签名(Windows DLL 为 `NotSigned`;macOS arm64-only、无签名 Authority),且 `wraptool verify`
     必须失败(已签过的件重签会报错)。macOS 另要求钥匙串里与 `--signid` 同名的代码签名身份恰好 1 个。
   - 后检:`wraptool verify`;Windows 的 Authenticode 签名者指纹必须等于 pfx 指纹、默认要求带时间戳(`-AllowNoTimestamp`
     显式放行;拿不到也不事后用 signtool 补 —— 签名必须是最后一次修改);macOS `codesign --verify --deep --strict` 通过、
