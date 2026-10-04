@@ -31,7 +31,7 @@ workflow 分四个 job：版本门禁独立前置，两个平台并行构建，�
 | Windows x64（AAX，**签名后手工上传**，§7） | `SynchainBridge-AAX-v<版本>-win64.zip` | `Synchain Bridge.aaxplugin`（PACE 签名）+ 合规文件 |
 | macOS arm64（AAX，**签名后手工上传**，§7） | `SynchainBridge-AAX-v<版本>-macos-arm64.zip` | `Synchain Bridge.aaxplugin`（PACE 签名）+ 合规文件 |
 
-前两行由 `publish` 自动挂到 draft；AAX 两行不是 CI 产物 —— `release.yml` 只产出带 `-UNSIGNED` 后缀的签名输入件（`SynchainBridge-AAX-v<版本>-{win64,macos-arm64}-UNSIGNED.zip` + `.sha256`，分别在 artifact `aax-unsigned-win64` / `aax-unsigned-macos-arm64` 里，保留 30 天），它们**不是发行资产**，永远不进 Release。
+前两行由 `publish` 自动挂到 draft；AAX 两行不是 CI 产物 —— `release.yml` 只产出带 `-UNSIGNED` 后缀的签名输入件（`SynchainBridge-AAX-v<版本>-{win64,macos-arm64}-UNSIGNED.zip` + `.sha256`，分别在 artifact `aax-unsigned-win64` / `aax-unsigned-macos-arm64` 里，保留 30 天，且受仓库 / org 的 artifact 保留上限约束），它们**不是发行资产**，永远不进 Release。
 
 所有 zip 的「合规文件」都是同一组：`LICENSE.txt` + `THIRD-PARTY-NOTICES.md` + `LICENSES/OFL-1.1.txt` + 安装说明。VST3 / AU 包的安装说明叫 `INSTALL.txt`（按平台各写各的）；AAX 包用 `INSTALL-AAX.txt`（同样按平台各写各的，与 VST3 包解压到同一目录时互不覆盖）。
 
@@ -268,4 +268,4 @@ git tag v1.5.0 && git push origin v1.5.0
 - **本机签名失败不影响 draft**：修掉原因后从同一个 `-UNSIGNED.zip` 重跑即可。签名脚本每次都解压到一个新的临时工作目录，从不修改输入件；失败时保留工作目录并打印路径（里面只有 bundle，没有秘密），排查完直接删掉。
 - **签名必须是对 bundle 的最后一次修改**：签完之后再改 bundle 里的任何文件都会让签名失效，所以也**不要事后用 signtool 补时间戳**。Windows 签名件没带时间戳时 `sign-aax.ps1` 默认判失败；确认接受无时间戳的签名，再显式加 `-AllowNoTimestamp` 从原始 `-UNSIGNED.zip` 重跑（TO-VALIDATE：wraptool 能否带时间戳）。
 - **正式发布之后也能补传 AAX**：同样用第 5 步的 `gh release upload`，并在 Release notes 里注明补发。
-- **artifact 30 天后过期**：只能在第 3 步的 tag 检出里本机重新构建（[build-windows.md](build-windows.md) / [build-macos.md](build-macos.md)），用 §4 的 AAX 打包命令以 Unsigned 模式（`-Version <X.Y.Z>`，源码链接默认指向 `v<X.Y.Z>`）重新打出 `-UNSIGNED.zip`，再从第 4 步继续。本机工具链与 CI 不同，须在 Release notes 里注明。
+- **artifact 30 天后过期**：只能在第 3 步的 tag 检出里本机重新构建（[build-windows.md](build-windows.md) / [build-macos.md](build-macos.md)），用 §4 的 AAX 打包命令以 Unsigned 模式（`-Version <X.Y.Z>`，源码链接默认指向 `v<X.Y.Z>`）重新打出 `-UNSIGNED.zip`，再从第 4 步继续。本机工具链与 CI 不同，须在 Release notes 里注明。**不要用 Re-run 重跑这次 tag 的 release run 来续 artifact**：GitHub 只允许在原 run 发起后 30 天内重跑（与 artifact 保留期一样长，过期时已经不能重跑）；而且重跑任何构建 job 都会连带重跑依赖它的 `publish`，对同一个 tag 的 Release 再执行一次建 / 改 draft 的动作。
