@@ -156,6 +156,9 @@
 
 ### 文档 / 合规
 
+- **补 AAX(Pro Tools)文档与合规声明**:README(中英)新增「Pro Tools (AAX) 安装」「Pro Tools (AAX) 已知限制」「AAX (Pro Tools) 源码构建」三节并同步徽章、安装表、许可证与商标声明;`docs/build-windows.md` / `docs/build-macos.md` 新增 AAX 段(含 AAX Validator 探查步骤,标 TODO-AAXVAL);`docs/DAW_TEST_GUIDE.md` 新增 Pro Tools 实测一节(P-mac、T01–T13,措辞为本项目自拟);`CLAUDE.md` / `CONTRIBUTING.md` 同步 AAX 支线、签名例外与分发链路。
+- **`THIRD-PARTY-NOTICES.md`**:新增 Avid AAX SDK 2.8.0 一行(GPL-3.0-only 选项,仅 AAX 产物);闭包差集句改写为 Windows VST3 / Windows AAX / macOS VST3+AU / macOS AAX 四个闭包;补三条说明(AAX 二进制整体按 GPLv3 分发、PACE wraptool 与 iLok 只在维护者本机使用、Avid 评估工具不入库)。不新增 `LICENSES/GPL-3.0-only.txt`。
+
 ## [1.5.3] — 2026-09-30
 
 > 版本号由 1.5.0 升至 **1.5.3**(唯一真源 `CMakeLists.txt` 的 `project(... VERSION)`,四镜像同步:

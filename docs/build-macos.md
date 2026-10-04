@@ -197,6 +197,52 @@ mac 上建议用 Chrome / Edge / Firefox 打开 Creative Space；注意这些浏
   **勾「使用 Rosetta 打开」也加载不了**——请以原生 arm64 方式启动 DAW。
 - **插件窗口是英文兜底面板**：WKWebView 加载超时（多见于首次冷启动）。点 Retry，或关掉插件窗口重开。
 
+## AAX（Pro Tools）
+
+AAX SDK（2.8.0）随 JUCE 8.0.8 自带，不需要另外下载；上面的配置 + 构建会一并产出 AAX 目标。
+
+### 产物与自检
+
+```
+build/SynchainBridgeVST_artefacts/Release/AAX/Synchain Bridge.aaxplugin
+```
+
+```bash
+lipo -archs "build/SynchainBridgeVST_artefacts/Release/AAX/Synchain Bridge.aaxplugin/Contents/MacOS/Synchain Bridge"   # 期望只有 arm64
+codesign -dv --verbose=4 "build/SynchainBridgeVST_artefacts/Release/AAX/Synchain Bridge.aaxplugin" 2>&1 | grep -E 'Authority|Signature'
+```
+
+自己构建的件只带链接器自动加的 ad-hoc 签名（`Signature=adhoc`、没有 `Authority=` 行），因此是**未签名件**，只有 Pro Tools Developer 能加载。
+
+### 打包未签名件
+
+```bash
+bash scripts/package-aax-macos.sh --mode unsigned --build-dir build
+# 产物：dist/aax/SynchainBridge-AAX-v<版本>-macos-arm64-UNSIGNED.zip（+ .sha256）
+```
+
+`--mode` 必须显式给出；`-UNSIGNED` 件不是发行版。脚本不调用签名工具、不碰凭据。
+
+### 安装
+
+Pro Tools 只扫描 `/Library/Application Support/Avid/Audio/Plug-Ins/`，需要管理员权限：
+
+```bash
+sudo rm -rf "/Library/Application Support/Avid/Audio/Plug-Ins/Synchain Bridge.aaxplugin"
+sudo ditto "<产物路径>/Synchain Bridge.aaxplugin" "/Library/Application Support/Avid/Audio/Plug-Ins/Synchain Bridge.aaxplugin"
+sudo xattr -dr com.apple.quarantine "/Library/Application Support/Avid/Audio/Plug-Ins/Synchain Bridge.aaxplugin"
+```
+
+发行版带 PACE 签名，但**没有经过 Apple 公证**；从浏览器或 AirDrop 拿到的 zip 带隔离属性，不执行最后一条 `xattr`，Pro Tools 会拒载。去掉隔离属性不影响签名。
+
+### Pro Tools 必须原生运行
+
+插件只有 arm64 slice。在「显示简介」里确认 Pro Tools 没有勾「使用 Rosetta 打开」，活动监视器里它的「种类」应为 Apple。Rosetta 下的 Pro Tools 加载不了 arm64 插件。
+
+### 借用 Mac 做签名的注意事项
+
+签名由维护者在本机完成（流程见 [release.md](release.md) 第 7 节）。若需借用别人的 Mac：只在签名那一次导入 Keychain 身份，用完删除身份和临时 keychain，退出 iLok 登录；不要在共用机器上留下任何凭据或 pfx。签名后用 `codesign --verify --deep --strict --verbose=2` 和 `codesign -dv --verbose=4`（应有 `Authority=`、没有 `adhoc`）自检。
+
 ## CI 对照
 
 `.github/workflows/ci.yml` 的 `build-and-validate-macos`（`macos-15`，arm64 原生）跑的是本页流程的
@@ -209,6 +255,8 @@ mac 上建议用 Chrome / Edge / Firefox 打开 Creative Space；注意这些浏
 （无桌面会话的托管 runner 托不住 WKWebView 编辑器，与 Windows 侧 WebView2 同一原因）；② `.component`
 （AU）的 `pluginval` —— CI 对 AU 只跑 `auval`，而 `auval` 只覆盖 AU 的宿主契约。这两条请 mac 贡献者
 按本页在本机跑；CI 的 zip artifact 可直接下来做真机冒烟。
+
+AAX 方面，同一个 job 还会：对 `.aaxplugin` 做 bundle 结构与 arm64 单架构断言，跑 `package-aax-macos.sh --mode unsigned` 打包冒烟（含对 `--mode signed` 的反向断言：只有 ad-hoc 签名的件必须被拒），并上传 `-UNSIGNED` zip 作为 artifact。pluginval 与 `auval` 都无法验收 AAX，Pro Tools 里的验收靠手工，见 [DAW_TEST_GUIDE.md](DAW_TEST_GUIDE.md)。
 
 `scripts/gates.ps1`（CLAUDE.md §2 的本地门禁）仍是纯 Windows 实现（依赖 vswhere / VS 生成器 / nuget /
 `pluginval.exe`），mac 上跑不了；等价的 mac 门禁脚本是待跟进项（见 CHANGELOG「文档 / 合规」的遗留说明）。

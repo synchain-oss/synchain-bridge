@@ -1,7 +1,7 @@
 **English** | [简体中文](README.zh-CN.md)
 
 [![License: GPL-3.0-or-later](https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg)](LICENSE)
-![Platform: Windows x64 VST3 / macOS arm64 VST3 + AU](https://img.shields.io/badge/platform-Windows%20x64%20%C2%B7%20macOS%20arm64-lightgrey.svg)
+![Platform: Windows x64 VST3 + AAX / macOS arm64 VST3 + AU + AAX](https://img.shields.io/badge/platform-Windows%20x64%20%C2%B7%20macOS%20arm64-lightgrey.svg)
 
 # Synchain Bridge
 
@@ -9,7 +9,7 @@
 
 ## What it does
 
-Synchain Bridge is an **audio plugin** — VST3 on Windows and macOS, plus Audio Unit (AU) on macOS — that captures a stereo bus from your DAW and streams it, losslessly as PCM, to remote collaborators over a local WebSocket:
+Synchain Bridge is an **audio plugin** — VST3 on Windows and macOS, Audio Unit (AU) on macOS, and AAX for Avid Pro Tools on both — that captures a stereo bus from your DAW and streams it, losslessly as PCM, to remote collaborators over a local WebSocket:
 
 ```
 DAW → Synchain Bridge (PCM float32) → WebSocket (127.0.0.1) → browser → AudioWorklet → LiveKit Opus → server
@@ -67,16 +67,20 @@ macOS:
 
 ## Install
 
-Prebuilt builds for both platforms are on [GitHub Releases](https://github.com/synchain-oss/synchain-bridge/releases), each Release build validated in CI (pluginval strictness 5, plus `auval` for the AU):
+Prebuilt builds for both platforms are on [GitHub Releases](https://github.com/synchain-oss/synchain-bridge/releases), each Release build validated in CI (pluginval strictness 5, plus `auval` for the AU). AAX is the exception: CI only asserts bundle structure and architecture (pluginval cannot host AAX), and Pro Tools acceptance is done by hand:
 
 | Platform | Asset | Contents |
 |---|---|---|
 | Windows x64 | `SynchainBridge-VST3-vX.Y.Z-win64.zip` | `Synchain Bridge.vst3` |
 | macOS arm64 | `SynchainBridge-VST3-AU-vX.Y.Z-macos-arm64.zip` | `Synchain Bridge.vst3` + `Synchain Bridge.component` |
+| Windows x64 (Pro Tools) | `SynchainBridge-AAX-vX.Y.Z-win64.zip` | `Synchain Bridge.aaxplugin` |
+| macOS arm64 (Pro Tools) | `SynchainBridge-AAX-vX.Y.Z-macos-arm64.zip` | `Synchain Bridge.aaxplugin` |
 
 Every asset ships a matching `.sha256`. The macOS build is **Apple Silicon only and is neither signed nor notarized** — see [Known limitations on macOS](#known-limitations-on-macos) and the quarantine step below.
 
-The plugin uses dedicated manufacturer/plugin codes (`Snch` / `Snb1`), so DAWs see it as an independent plugin. Changing these codes would generate a new VST3 unique ID (and a new AU component identity) and orphan existing projects — **never alter them, on either platform**.
+The AAX zips are signed by the maintainer on a local machine and uploaded by hand after the VST3/AU assets, so they appear slightly later than the VST3/AU zips of the same release. A file named `*-UNSIGNED.zip` is the unsigned input to that signing step, **not a release** — retail Pro Tools will not load it.
+
+The plugin uses dedicated manufacturer/plugin codes (`Snch` / `Snb1`), so DAWs see it as an independent plugin. Changing these codes would generate a new VST3 unique ID (and a new AU component identity) and orphan existing projects — **never alter them, on either platform**. The AAX plugin ID is derived from the same codes and bundle ID, so the same rule applies to AAX.
 
 ### Windows
 
@@ -108,11 +112,43 @@ xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/VST3/"Synchain Bridge.vs
 xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/Components/"Synchain Bridge.component"
 ```
 
+### Pro Tools (AAX)
+
+Pro Tools scans a single system directory (there is no per-user directory), so installing needs administrator rights. Close Pro Tools first. The `.aaxplugin` is a **bundle directory**; delete the previous copy before copying, because a copy over an existing bundle *merges*.
+
+Windows (administrator PowerShell):
+
+```powershell
+Remove-Item "C:\Program Files\Common Files\Avid\Audio\Plug-Ins\Synchain Bridge.aaxplugin" -Recurse -Force -ErrorAction SilentlyContinue
+Copy-Item "<path>\Synchain Bridge.aaxplugin" "C:\Program Files\Common Files\Avid\Audio\Plug-Ins\" -Recurse -Force
+```
+
+macOS (Apple Silicon):
+
+```bash
+sudo rm -rf "/Library/Application Support/Avid/Audio/Plug-Ins/Synchain Bridge.aaxplugin"
+sudo ditto "<path>/Synchain Bridge.aaxplugin" "/Library/Application Support/Avid/Audio/Plug-Ins/Synchain Bridge.aaxplugin"
+sudo xattr -dr com.apple.quarantine "/Library/Application Support/Avid/Audio/Plug-Ins/Synchain Bridge.aaxplugin"
+```
+
+Restart Pro Tools and look the plug-in up by name (**Synchain Bridge**) in an insert slot. It is registered with the "None" category, so in the insert menu it may be listed under *Other* rather than a themed group. Signing is the maintainer's step; do not modify any file inside the bundle after it is signed — copy the whole folder as is.
+
 ## Known limitations on macOS
 
 - **Apple Silicon (arm64) only.** There is no x86_64 slice, so Intel Macs are not supported — and on an Apple Silicon Mac, ticking **"Open using Rosetta"** on your DAW **will not make it load either**: a Rosetta (x86_64) host cannot load an arm64 plugin. Launch the DAW natively. This is the failure most often mistaken for a broken plugin.
 - **GarageBand may refuse the AU.** GarageBand only loads AUs that declare themselves sandbox-safe. This plugin listens on a local socket and hosts a WebView, neither of which works inside the AU sandbox, so it does not make that declaration. Use Logic, Reaper, Live or another host that loads non-sandboxed AUs.
 - **Safari is expected not to reach the bridge (not yet verified on a real Mac).** The web app is served over https while bridge #2 is a plain `ws://127.0.0.1` socket; unlike Chromium, Safari is not known to grant a mixed-content exemption for loopback, so the handshake should be blocked before it ever reaches the plugin. Prefer Chrome, Edge or Firefox on macOS — and note those may still show a *local network access* permission prompt the first time. Both halves of this are inferred from browser behaviour, not measured here; if you test it, please report what you see in an issue.
+
+## Known limitations in Pro Tools (AAX)
+
+- **Mono and stereo inserts only.** There is no AudioSuite version and no multi-mono variant.
+- **Offline bounce does not stream.** During an offline bounce / commit / freeze the audio passes through untouched and nothing is pushed to the browser; live streaming resumes once the render ends. (AAX only.)
+- **Dynamic Plug-in Processing may pause the stream.** When a track is muted or has no audio, Pro Tools can stop calling the plug-in, so streaming can pause until audio flows again.
+- **Latency readout.** In AAX the host always prepares the plug-in with a 1024-sample block, so the panel's buffer / latency reading reflects 1024 samples (about 21 ms at 48 kHz), not your hardware buffer size.
+- **Signing.** Release AAX files are signed with the maintainer's PACE signature, which is what retail Pro Tools requires. On Windows the code-signing certificate is self-signed, so the Properties → Digital Signatures tab shows an untrusted signer; this is expected and does not stop Pro Tools from loading it. On macOS the bundle is **not notarized**, so the `sudo xattr` step above is required.
+- **Apple Silicon only, native Pro Tools.** The macOS AAX has an arm64 slice only; Pro Tools must run natively, not under Rosetta.
+- **Unsigned builds** (anything you build yourself, or a `*-UNSIGNED.zip`) can only be loaded by Pro Tools Developer.
+- **Editor diagnostics.** If the editor misbehaves on Windows, view the diagnostic log with Sysinternals DebugView (Capture Win32) and filter on the `SynchainBridge:` prefix.
 
 ## Quick start
 
@@ -165,10 +201,22 @@ No vcpkg, NuGet or WebView2 needed — CMake fetches ixwebsocket at configure ti
 
 CI (`.github/workflows/ci.yml`, job `build-and-validate-macos`, `macos-15`) restores JUCE and the pinned ixwebsocket source from `actions/cache` (cloning on a miss and asserting the checkout equals the pinned SHA), builds both formats, asserts the binaries are arm64-only, runs pluginval `--skip-gui-tests` (strictness 5) against the VST3 and `auval` against the AU, and uploads a `ditto` zip of both bundles. The GUI pluginval run — and pluginval against the AU — remain local gates.
 
+### AAX (Pro Tools)
+
+The AAX SDK ships inside JUCE 8.0.8, so no extra download is needed; the normal configure + build above also produces the AAX target.
+
+```
+build/SynchainBridgeVST_artefacts/Release/AAX/Synchain Bridge.aaxplugin
+```
+
+A build from source is **unsigned**: it loads only in Pro Tools Developer, and the outside contributor path ends there. To package it, use `pwsh scripts/package-aax.ps1 -Mode Unsigned` (Windows) or `bash scripts/package-aax-macos.sh --mode unsigned` (macOS), which produce a `*-UNSIGNED.zip`. Signing needs the maintainer's PACE credentials and is done by hand on a local machine — see §7 of [`docs/release.md`](docs/release.md). Per-platform details: [`docs/build-windows.md`](docs/build-windows.md), [`docs/build-macos.md`](docs/build-macos.md).
+
+CI builds the AAX target on both platforms, runs structure and architecture assertions plus a packaging smoke test, and uploads an unsigned artifact. It does not run pluginval on AAX.
+
 ## Documentation
 
 - [`BRIDGE_CONTRACT.md`](BRIDGE_CONTRACT.md) — the wire protocol (bridge #1 + bridge #2), frozen contract.
-- [`docs/DAW_TEST_GUIDE.md`](docs/DAW_TEST_GUIDE.md) — end-to-end DAW test guide (Windows).
+- [`docs/DAW_TEST_GUIDE.md`](docs/DAW_TEST_GUIDE.md) — end-to-end DAW test guide (Windows; Pro Tools section for both platforms).
 - [`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md) — third-party license notices.
 - [`CHANGELOG.md`](CHANGELOG.md) — release history.
 - [`docs/build-windows.md`](docs/build-windows.md) — Windows build from source (deps, configure, pitfalls).
@@ -189,6 +237,10 @@ It builds on the **JUCE Framework**, dual-licensed under AGPLv3 and a commercial
 
 VST is a trademark of Steinberg Media Technologies GmbH. The **VST3 SDK** is distributed under the MIT licence since November 2025.
 
+The AAX build additionally includes the **Avid AAX SDK 2.8.0** (bundled with JUCE 8.0.8), used under its GPLv3 option, so the AAX binaries as a whole are distributed under GPL-3.0 (see [`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md)).
+
+Avid, Pro Tools and AAX are trademarks or registered trademarks of Avid Technology, Inc. Synchain Bridge is an independent project, not affiliated with, sponsored or endorsed by Avid. PACE and iLok are trademarks of PACE Anti-Piracy, Inc.
+
 Complete corresponding source for every released binary is available in this repository.
 
 ## Related projects
@@ -199,4 +251,4 @@ Complete corresponding source for every released binary is available in this rep
 
 ## Status
 
-Windows x64 (VST3) shipped first. macOS on Apple Silicon (VST3 + AU) has been published since v1.5.0 as a prebuilt Release asset alongside the Windows zip — unsigned and arm64 only; signing/notarization comes in a later release. See [`CHANGELOG.md`](CHANGELOG.md) for the version history.
+Windows x64 (VST3) shipped first. macOS on Apple Silicon (VST3 + AU) has been published since v1.5.0 as a prebuilt Release asset alongside the Windows zip — unsigned and arm64 only; signing/notarization comes in a later release. AAX (Pro Tools) support for both platforms is in development on the `feature/aax` branch; the AAX files are signed by the maintainer and uploaded by hand. See [`CHANGELOG.md`](CHANGELOG.md) for the version history.

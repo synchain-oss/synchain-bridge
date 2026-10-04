@@ -1,4 +1,4 @@
-# Synchain Bridge —— DAW 端到端实测指南（Windows）
+# Synchain Bridge —— DAW 端到端实测指南
 
 目标：在真实 DAW 里插入 **Synchain Bridge**，把 DAW 播放的声音经本地 WebSocket → 浏览器 → LiveKit 推到 Creative Space 房间，验证「另一名参与者能听到你 DAW 的声音」。
 
@@ -73,6 +73,66 @@
 - **Origin 被拒 / 连不上**：WS 服务端只接受确切白名单来源（`localhost` / `127.0.0.1` / `[::1]`、`https://synchain.cn`|`.ca`、`https://www.synchain.cn`|`.ca`、`https://dev.synchain.cn`|`.ca`，以及无 Origin 的原生客户端）。**预览部署等额外来源不写进源码，由构建期注入**（配置时传 `-DBRIDGE_EXTRA_ALLOWED_ORIGIN_HOSTS`，见 [build-windows.md](build-windows.md)）——**公开仓的默认构建不放行任何额外来源**，装的若是默认构建，预览域名一律连不上（安全收窄，见 Synchain issue 167）。不在白名单的域名打开会被 4403 拒——请用 `localhost`/`127.0.0.1` 或上述 Synchain 域访问。
 - **电平不跳 / 无信号**：确认插件插在**有音频经过**的轨 / 母线上，且 DAW 正在播放；主音量滑块只影响推流副本，若为 0% 则推流静音。
 - **听不到声音但轨道已出现**：确认协作者已加入同一房间、未静音该轨；第二会话建议用不同账号 / 设备，避免同机回声抑制影响判断。
+
+---
+
+## Pro Tools（AAX）实测（Windows / macOS）
+
+本节只用于 AAX 版本，两个平台通用。表中的检查项和期望结果是本项目自己的验收口径，不是任何第三方测试计划的转述。
+
+### 前置条件
+
+- Pro Tools **原生**运行（macOS 上不得勾 Rosetta）。零售版 Pro Tools 只加载签名件，所以要测 Release 里的签名 AAX；本地自己构建的**未签名件只能在 Pro Tools Developer 里加载**。
+- 同上文的 Synchain 账号、项目成员身份和一条有信号的轨道。
+- Windows 上另开 Sysinternals DebugView（Capture Win32），过滤 `SynchainBridge:`，用来核对编辑器诊断日志。
+
+### 安装
+
+从 Releases 下载签名的 `SynchainBridge-AAX-<版本>-win64.zip` 或 `-macos-arm64.zip`，先校验 `.sha256`，解压后整体复制，不要改动 bundle 里的任何文件。
+
+- **Windows（管理员 PowerShell，先关 Pro Tools）**：
+  ```powershell
+  Remove-Item "$env:CommonProgramFiles\Avid\Audio\Plug-Ins\Synchain Bridge.aaxplugin" -Recurse -Force -ErrorAction SilentlyContinue
+  Copy-Item "<解压路径>\Synchain Bridge.aaxplugin" "$env:CommonProgramFiles\Avid\Audio\Plug-Ins\" -Recurse -Force
+  ```
+- **macOS（先退出 Pro Tools）**：
+  ```bash
+  sudo rm -rf "/Library/Application Support/Avid/Audio/Plug-Ins/Synchain Bridge.aaxplugin"
+  sudo ditto "<解压路径>/Synchain Bridge.aaxplugin" "/Library/Application Support/Avid/Audio/Plug-Ins/Synchain Bridge.aaxplugin"
+  sudo xattr -dr com.apple.quarantine "/Library/Application Support/Avid/Audio/Plug-Ins/Synchain Bridge.aaxplugin"
+  ```
+
+重启 Pro Tools 后，在插入点按名称查找 **Synchain Bridge**。插件类别登记为 None，插入菜单里可能出现在 *Other* 下，而不是某个分类组。
+
+### 已知口径（测试时不要误报为缺陷）
+
+- 只有 mono / stereo insert；没有 AudioSuite、没有 multi-mono。
+- 离线 bounce 期间不向网页推流，渲染结束后恢复。
+- Dynamic Plug-in Processing（DPP）开启时，轨道静音可能让 Pro Tools 停止调用插件，推流随之暂停。
+- AAX 下宿主恒以 1024 采样初始化插件，面板的缓冲延迟读数按 1024 计（48 kHz 约 21.3 ms），与硬件缓冲无关。
+- Windows 的签名证书是自签名的，「数字签名」页显示不受信任属预期；macOS 未经公证，需要 `sudo xattr`。
+
+### 检查表
+
+步骤 4–6 指上文「步骤」一节里的浏览器与房间操作。
+
+| ID | 测试项 | 期望结果 |
+|---|---|---|
+| P-mac | Pro Tools 原生运行（仅 macOS） | 「显示简介」里没勾 Rosetta；活动监视器里「种类」为 Apple |
+| T01 | 扫描与分类 | 名称 Synchain Bridge、厂商 Synchain；类别与登记值（None）一致；没有签名或授权报错 |
+| T02 | mono 轨和 stereo 轨各插一个 | 电平条数分别为 1 / 2；网页 DAW 卡的声道显示为单声道 / 立体声 |
+| T03 | 可用形态 | AudioSuite 里找不到；插入菜单里没有 multi-mono 形态 |
+| T04 | 编辑器开关 ×10 | 无白闪、无崩溃，内存基本稳定 |
+| T05 | 显示缩放 100 / 150 / 200%（macOS 用 Retina 屏和外接屏各试） | 无滚动条、无白边；缩放档位正常生效 |
+| T06 | 端口框输入 | 数字、空格、回车不会被 Pro Tools 的快捷键吞掉；回车后端口生效 |
+| T07 | 推流 | 按步骤 4–6 操作，房间里出现音轨，协作者能听到 |
+| T08 | 同时开两个实例 | 第二个实例显示 9421（避让范围 9420–9429） |
+| T09 | 保存工程后重开 | 端口、主音量、缩放、语言等设置恢复 |
+| T10 | 离线 bounce | bounce 期间网页侧收不到帧；bounce 结束后实时推流恢复 |
+| T11 | 对 Stream Master 写自动化再回放 | 插件滑块与网页音量都随自动化变化 |
+| T12 | 改 H/W 缓冲（64–1024）和采样率（44.1 / 48 / 96 kHz） | 面板读数更新、不崩溃、推流不断 |
+| T13 | 移除实例 | 端口被释放（Windows：`netstat -ano \| findstr 9420`；macOS：`lsof -iTCP:9420`，都查不到），新实例重新拿到 9420 |
+| 可选 | AAX Validator | 把结果附在 PR 描述里（工具与日志不入库） |
 
 ---
 

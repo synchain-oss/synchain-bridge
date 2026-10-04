@@ -3,6 +3,7 @@
 > 面向 Windows x64 + Visual Studio 2022。产物是 `Synchain Bridge.vst3`（一个 **bundle 目录**，不是单文件）。
 > 只想下载预编译版并插进 DAW 的读者，请看 [README](../README.md) 的 Install 一节。
 > macOS（Apple Silicon，VST3 + AU）另见 [build-macos.md](build-macos.md)。
+> Pro Tools（AAX）的产物、打包与安装见本文末尾的「AAX（Pro Tools）」一节。
 
 ## 前置依赖
 
@@ -128,6 +129,68 @@ ixwebsocket 用静态 triplet 编译（内嵌 mbedtls，无需单独 OpenSSL）�
 - **`无法打开此页 https://juce.backend`**（运行期，非构建期）：未显式选 WebView2 后端，回退到了旧 IE 控件。见 [webview-ui-pattern.md](webview-ui-pattern.md) 条目 2。
 - **插件窗口是英文兜底面板**：WebView2 Runtime 缺失或加载超时。装 Runtime 后重开插件窗口。
 
+## AAX(Pro Tools)
+
+AAX SDK（2.8.0）随 JUCE 8.0.8 自带，不需要另外下载；上面的配置 + 构建会一并产出 AAX 目标，不需要额外 CMake 参数。
+
+### 产物
+
+```
+build/SynchainBridgeVST_artefacts/Release/AAX/Synchain Bridge.aaxplugin/
+├── desktop.ini
+├── Plugin.ico
+└── Contents/x64/Synchain Bridge.aaxplugin     # 主体 DLL（单个文件，后缀同样是 .aaxplugin）
+```
+
+注意 bundle 根目录带 `system` 属性，用 PowerShell 枚举时要加 `-Force`。
+
+### 打包未签名件
+
+```powershell
+pwsh scripts/package-aax.ps1 -Mode Unsigned -BuildDir build
+# 产物：dist/aax/SynchainBridge-AAX-v<版本>-win64-UNSIGNED.zip（+ .sha256）
+```
+
+`-Mode` 必须显式给出。`Unsigned` 产出的文件名带 `-UNSIGNED`，只用来做签名输入或在 Pro Tools Developer 里自测，**不是发行版**。脚本不调用任何签名工具、不碰凭据。
+
+### 自签名证书助手
+
+Windows 侧代码签名用的是自签名证书（Pro Tools 加载靠 PACE 签名，Authenticode 在这里只是附加层）。生成证书用：
+
+```powershell
+pwsh scripts/new-selfsigned-codesign-cert.ps1 -WhatIf   # 先预演，不写证书库
+```
+
+默认把 pfx 放在 `$env:USERPROFILE\.synchain-signing\` 下，**不要放进仓库目录**，口令不要写进任何入库文件。签名与上传的完整流程由维护者在本机执行，见 [release.md](release.md) 第 7 节。
+
+### 安装（管理员）
+
+Pro Tools 只扫描 `C:\Program Files\Common Files\Avid\Audio\Plug-Ins\`，没有用户级目录。先关 Pro Tools，管理员 PowerShell：
+
+```powershell
+Remove-Item "$env:CommonProgramFiles\Avid\Audio\Plug-Ins\Synchain Bridge.aaxplugin" -Recurse -Force -ErrorAction SilentlyContinue
+Copy-Item "<产物路径>\Synchain Bridge.aaxplugin" "$env:CommonProgramFiles\Avid\Audio\Plug-Ins\" -Recurse -Force
+```
+
+先删旧版：`Copy-Item` 对已存在的 bundle 是合并。**未签名件只有 Pro Tools Developer 能加载**，零售版 Pro Tools 会直接忽略它。
+
+### 诊断日志
+
+编辑器的诊断日志写到调试输出，不落文件。用 Sysinternals DebugView（Capture → Capture Win32），过滤关键字 `SynchainBridge:`。
+
+### 可选：AAX Validator（TODO-AAXVAL）
+
+AAX Validator 属于 Avid 的评估许可工具，**不入库、不分发、CI 不下载**。本地可选，用 `scripts/gates.ps1 -AaxValidatorPath <路径>` 接入；其命令行调用方式尚未实测，gate 在调用常量未填写前恒为 SKIP，不会假绿。首次接入时按下面的步骤自己摸清（TODO-AAXVAL，owner 实测后回填脚本头部三个常量并删掉本段 TODO）：
+
+1. 把工具包解压到**仓库外**，例如 `$env:USERPROFILE\avid-tools\`。
+2. 用 `Get-ChildItem -Recurse` 找到可执行入口（`dsh.exe`）和 aaxval 模块、随包文档。
+3. 依次试 `-h`、`--help`、`/?`；进入交互环境后试 `help`，再确认加载 aaxval 模块的命令（推测，待验证）。
+4. 弄清是否要先把插件装进 Avid 的 Plug-Ins 目录、是否要求签名件或 iLok。
+5. 定下非交互调用方式和成功/失败的输出判据，回填脚本头部常量。
+6. 只记录**我们自己写的**命令和判据；不要复制或改写 Avid 的文档与测试计划原文。
+
 ## CI 对照
 
 CI（`.github/workflows/ci.yml`，job `build-and-validate`）与上述步骤同构：clone JUCE（版本读 `.juce-version`，`actions/cache` 命中时跳过）→ 装 WebView2 Evergreen Runtime → CMake 配置（vcpkg toolchain 按 `vcpkg.json` 装 ixwebsocket，二进制缓存经 `actions/cache` 复用；随后断言装进来的版本 == `vcpkg.json` 的 override）→ 构建 → pluginval `--skip-gui-tests`（strictness 5）。缓存只是加速，miss 时照常 clone / 编译。含 WebView2 编辑器的全量 strictness-5 在真实 Win11 本地验证——无桌面的 Server runner 无法托管编辑器。
+
+AAX 方面，同一个 job 还会：对 `Synchain Bridge.aaxplugin` 做结构与 PE 架构断言、跑 `package-aax.ps1 -Mode Unsigned` 打包冒烟（含对 `-Mode Signed` 的反向断言：未签名件必须被拒），并把 `-UNSIGNED` zip 作为 artifact 上传。pluginval 无法托管 AAX，所以 CI 不对 AAX 跑它；Pro Tools 里的验收靠手工，见 [DAW_TEST_GUIDE.md](DAW_TEST_GUIDE.md)。

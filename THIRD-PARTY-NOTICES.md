@@ -7,7 +7,7 @@
 ixwebsocket / mbedtls / zlib 三行的版本、以及**闭包集合本身**(本 triplet 下 `install ok installed` 的非 feature 段不得超出这三个包,
 多出即红并打印实际闭包)另由 `scripts/assert-vcpkg-installed.ps1`(本地 gate 4b 与 CI 同一份)在每次 configure 后对照实际装进
 `vcpkg_installed` 的内容断言 —— 「机器枚举全部包」自此有机器兜底;升 `vcpkg.json` 的 baseline 时,本表与该脚本里的期望版本表同步改。
-**闭包按平台不同**:标注「仅 Windows 构建」的条目不进 macOS 产物;macOS 侧的第三方闭包见下方「说明」的 macOS 一条。
+**闭包按平台、按格式不同**:标注「仅 Windows 构建」的条目不进 macOS 产物,标注「仅 AAX 产物」的条目不进 VST3 / AU 产物;四个闭包的定义见下方「说明」的闭包一条。
 
 | 依赖 | 版本 | 许可证(SPDX) | URL | 核验来源(上游许可证原文) |
 |---|---|---|---|---|
@@ -21,6 +21,7 @@ ixwebsocket / mbedtls / zlib 三行的版本、以及**闭包集合本身**(本 
 | IBM Plex Sans(来源家族;子集按 §3 改名分发 web/fonts/BridgeSans.woff2 / family "Bridge Sans") | Google Fonts text= 子集 | OFL-1.1(Reserved Font Name "Plex") | https://github.com/google/fonts/tree/ade3d1533e06b2b1462ffcde8e08b129627ca360/ofl/ibmplexsans | 固定 commit 下的 OFL.txt:https://github.com/google/fonts/blob/ade3d1533e06b2b1462ffcde8e08b129627ca360/ofl/ibmplexsans/OFL.txt(首行「Copyright © 2017 IBM Corp. with Reserved Font Name "Plex"」) |
 | IBM Plex Mono(来源家族;子集按 §3 改名分发 web/fonts/BridgeMono.woff2 / family "Bridge Mono") | Google Fonts text= 子集 | OFL-1.1(Reserved Font Name "Plex") | https://github.com/google/fonts/tree/ade3d1533e06b2b1462ffcde8e08b129627ca360/ofl/ibmplexmono | 固定 commit 下的 OFL.txt:https://github.com/google/fonts/blob/ade3d1533e06b2b1462ffcde8e08b129627ca360/ofl/ibmplexmono/OFL.txt(首行「Copyright © 2017 IBM Corp. with Reserved Font Name "Plex"」) |
 | Noto Sans SC(子集 web/fonts/NotoSansSC.woff2) | Google Fonts text= 子集 | OFL-1.1(Reserved Font Name "Source") | https://github.com/google/fonts/tree/ade3d1533e06b2b1462ffcde8e08b129627ca360/ofl/notosanssc | 固定 commit 下的 OFL.txt:https://github.com/google/fonts/blob/ade3d1533e06b2b1462ffcde8e08b129627ca360/ofl/notosanssc/OFL.txt(首行「Copyright 2014-2021 Adobe (http://www.adobe.com/), with Reserved Font Name 'Source'」) |
+| Avid AAX SDK(随 JUCE 8.0.8 位于 `modules/juce_audio_plugin_client/AAX/SDK`,静态编进 AAX 产物;**仅 AAX 产物**) | 2.8.0(`AAX_SDK_CURRENT_REVISION 20208000`) | GPL-3.0-only(双授权:Avid 商业许可 / GPLv3;本项目取 GPLv3) | https://developer.avid.com/aax | tag 8.0.8 的 SDK LICENSE.txt:https://github.com/juce-framework/JUCE/blob/8.0.8/modules/juce_audio_plugin_client/AAX/SDK/LICENSE.txt(原文:"Or: You may also use this code under the terms of the GPL v3") |
 | pluginval(仅 CI 下载执行) | v1.0.4 | GPL-3.0-or-later | https://github.com/Tracktion/pluginval | 仅 CI 使用,不链接进 .vst3、不分发(08 §3.1 定论) |
 
 ## 说明
@@ -29,10 +30,15 @@ ixwebsocket / mbedtls / zlib 三行的版本、以及**闭包集合本身**(本 
   WebView2 Runtime(Windows 平台组件 / 系统库,运行时由微软 Evergreen 引导器安装),故 Runtime 不进第三方声明闭包。
   这与 U2「不附 LICENSE-EXCEPTION.md,依赖 GPLv3 系统库例外默认解释」一致。
 - **macOS 构建的第三方闭包**(与 Windows 不同,按平台核算):
-  - **闭包按差集派生,不另行枚举**:**macOS 闭包 = 上表全部条目 − 标注「仅 Windows 构建」的三项
-    (mbedtls / vcpkg zlib / Microsoft WebView2 SDK)**。即 JUCE 与 JUCE JS helper、ixwebsocket、
+  - **闭包按差集派生,不另行枚举**。分四个闭包(「仅 AAX 项」= 上表唯一标注「仅 AAX 产物」的 Avid AAX SDK):
+    - **Windows VST3** = 上表全部条目 − 仅 AAX 项;
+    - **Windows AAX** = 上表全部条目;
+    - **macOS VST3 / AU** = 上表全部条目 − 标注「仅 Windows 构建」的三项(mbedtls / vcpkg zlib /
+      Microsoft WebView2 SDK)− 仅 AAX 项;
+    - **macOS AAX** = 上表全部条目 − 标注「仅 Windows 构建」的三项。
+    其中 JUCE 与 JUCE JS helper、ixwebsocket、
     以及四份 OFL-1.1 字体子集(SpaceGrotesk / BridgeSans / BridgeMono / NotoSansSC)**同样进 macOS 的
-    `.vst3` 与 `.component`**并随之分发 —— `juce_add_binary_data(SynchainBridgeWebAssets ...)`
+    `.vst3`、`.component` 与 `.aaxplugin`**并随之分发 —— `juce_add_binary_data(SynchainBridgeWebAssets ...)`
     与 `target_sources` 都不按平台分支,web 资源(含字体与 AGPL 的 JUCE JS helper)两平台完全相同。
     (`pluginval` 一项只在 CI 执行、不链接不分发,两平台皆然。)
   - 这条**刻意写成差集而非正向清单**:正向枚举一旦漏项,读者据此做 OFL §3 / AGPL 的分发合规判断就会漏项;
@@ -85,3 +91,9 @@ ixwebsocket / mbedtls / zlib 三行的版本、以及**闭包集合本身**(本 
     这两条编号写反(本仓字体改名的 `chore(fonts)` 提交 message 同,见 CHANGELOG「[未发布] → 文档 /
     合规」的字体条目),现已更正。
 - 字体 OFL 全文见 LICENSES/OFL-1.1.txt;各家族版权行以上表末列固定 commit 下的上游 OFL.txt 为准。
+- **AAX 二进制整体按 GPLv3 分发**:Avid AAX SDK 只给出商业许可与 GPLv3 两种选项,本项目取 GPLv3,
+  所以含 SDK 的 AAX 产物整体按 GPL 第 3 版分发;GPL 全文即 AAX zip 根目录里的 `LICENSE.txt`。
+  (仓库不另放 GPL-3.0-only 的许可证文本文件:没有任何源文件声明这个 SPDX 标识,放进去只会让 `reuse lint` 报未使用的许可证。)
+- **PACE wraptool 与 iLok** 只在维护者本机做签名时使用:不链接进任何产物、不分发、不进 CI,更不入库。
+- **Avid DigiShell / AAX Validator 与相关测试计划**属于评估许可的材料:不入库、不分发,CI 不下载;
+  仓库只保留我们自己写的调用方式与判据说明。
