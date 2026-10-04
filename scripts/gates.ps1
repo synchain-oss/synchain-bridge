@@ -12,11 +12,17 @@
   字体 name 表 RFN 断言(gate 3b2,与 compliance.yml 同参)、PCM 帧头组帧接线断言(gate 3f:
   src/VstBridgeServer.cpp 必须经 src/PcmFrame.h 组帧,与 compliance.yml 同构)与零依赖纯逻辑自测
   (gate 5b:Origin 白名单 + PCM 帧头 golden,与 compliance.yml 同源同用例)。
+  签名材料 / Avid 评估工具不入库(gate 3h:pfx/p12/pvk、DigiShell / AAX Validator、测试计划 PDF;只读、秒级,恒跑)。
+  -IncludeAax 时另跑 AAX 三道 gate(selftest 之后、pluginval 之前):5c bundle 结构(PE x64 / desktop.ini / Plugin.ico)、
+  5d 打包冒烟(scripts/package-aax.ps1 Unsigned + Signed 反向断言)、5e AAX Validator(可选,需 -AaxValidatorPath)。
   任一 gate FAIL 即以非零码退出,最后打印一张可直接粘进 PR 描述的表格。
 .EXAMPLE   pwsh scripts/gates.ps1                         # 全量(含 GUI pluginval)
 .EXAMPLE   pwsh scripts/gates.ps1 -PluginOnly             # 跳过 GUI pluginval(与 CI 等价)
 .EXAMPLE   pwsh scripts/gates.ps1 -Quick                  # 跳过 pluginval,快速回环
 .EXAMPLE   pwsh scripts/gates.ps1 -BuildDir build-B11     # 并行 agent:各用各的构建目录
+.EXAMPLE   pwsh scripts/gates.ps1 -PluginOnly -IncludeAax -BuildDir build-aax   # 加跑 AAX gate 5c/5d/5e
+.EXAMPLE   pwsh scripts/gates.ps1 -PluginOnly -AaxValidatorPath "$env:USERPROFILE\avid-tools\<解压目录>\dsh.exe"
+           # 给了 Validator 路径即隐含 -IncludeAax;工具必须放仓库外(Avid 评估许可,不入库)
 #>
 [CmdletBinding()]
 param(
@@ -24,10 +30,34 @@ param(
     [switch]$PluginOnly,     # 跳过 GUI pluginval(gate 7)
     [string]$Config   = 'Release',
     [string]$JucePath = $env:JUCE_PATH,
-    [string]$BuildDir = 'build'
+    [string]$BuildDir = 'build',
+    # 新参数一律追加在末尾:脚本参数默认按声明顺序可按位置绑定,插在中间会让既有的按位置调用错绑
+    [switch]$IncludeAax,             # 跑 AAX gate 5c/5d/5e(默认关;gate 3h 不受此开关控制,恒跑)
+    [string]$AaxValidatorPath = ''   # Avid AAX Validator(DigiShell)可执行文件,必须在仓库外、请传绝对路径;给了即隐含 -IncludeAax
 )
 
 $ErrorActionPreference = 'Stop'
+
+# -AaxValidatorPath 给了即隐含 -IncludeAax。「显式传了空串」同样算给了:那是调用方没算出路径(例如引用了未设置的
+# 环境变量),静默 SKIP 等于把 5e 从门禁里悄悄删掉 —— 交给 5e 报 FAIL(与 package-aax.ps1 拒收空串同一纪律)。
+$AaxValidatorGiven = $PSBoundParameters.ContainsKey('AaxValidatorPath')
+$RunAax = $IncludeAax.IsPresent -or $AaxValidatorGiven
+
+# ---- gate 5e 的 AAX Validator 调用常量 ----
+# TODO-AAXVAL(owner 实测后填写):三个常量要等 owner 拿到 Avid 评估工具、按 docs/build-windows.md 的 AAX Validator
+# 探查步骤实测出非交互调用方式与判据后回填,填完删掉本标记。任一为 $null 时 gate 5e 恒 SKIP
+# 「TODO-AAXVAL:调用方式未实测」—— 宁可 SKIP,绝不假绿。
+#   AaxValidatorArgs        —— 传给 -AaxValidatorPath 的参数数组;其中的 '{bundle}' 替换为待测 .aaxplugin 目录的绝对路径。
+#                              若工具只能交互或只认脚本文件:改成先把命令写进 $BuildDir 下的临时脚本,再在这里传
+#                              脚本路径,gate 结构不变。
+#   AaxValidatorPassPattern —— 输出里出现即视为通过的标记(.NET 正则,Multiline,大小写敏感)。
+#   AaxValidatorFailPattern —— 输出里出现即判失败的标记(同上),优先于 PassPattern。
+# 判定与 auval 同口径:以输出标记为准,退出码只记进结果明细作参考。只记录我们自己写的命令和判据,不抄 Avid 文档原文。
+# 回填时顺带确认工具的输出编码:输出经 Tee-Object 落盘后再读回来匹配,若工具输出 UTF-16 或夹带控制字符,正则可能
+# 永远匹配不到(表现为恒 FAIL「没有通过标记」)—— 先实测 gates-aaxval.log 的内容,必要时在匹配前转码 / 剔控制字符。
+$script:AaxValidatorArgs        = $null   # TODO-AAXVAL(owner 实测后填写),形如 @('<子命令>', '{bundle}')
+$script:AaxValidatorPassPattern = $null   # TODO-AAXVAL(owner 实测后填写)
+$script:AaxValidatorFailPattern = $null   # TODO-AAXVAL(owner 实测后填写)
 
 # 仓库根 = 本脚本上一级目录(与调用时的 CWD 无关)
 $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
@@ -432,6 +462,53 @@ function Test-PcmFrameWiring {
     return $ok
 }
 
+# ---- gate 3h:签名材料 / Avid 评估工具不入库 ----
+# 代码签名材料(pfx / p12 / pvk)是签名凭据(CLAUDE.md §0 铁律 1),Avid DigiShell / AAX Validator 及其安装包、测试计划
+# 属评估许可、不得再分发 —— 两类都只能放仓库外。只按「扩展名 + 文件名」匹配:文档文件名里出现 validator 不会误报。
+# 两轮枚举(-z:NUL 分隔、不做 core.quotePath 转义,否则非 ASCII 文件名会被包成带引号的 "\346..." 而让 $ 锚定失配):
+#   ① --cached --others --exclude-standard:已跟踪的 + `git add .` 会带进去的未跟踪文件;
+#   ② --others --ignored --exclude-standard:被 .gitignore 藏起来的文件。.gitignore 已忽略 *.pfx / *.p12 / *.pvk,
+#      只跑 ① 就看不见仓库里躺着的证书 —— 可签名材料本就必须在仓库外(签名脚本与证书助手同样拒绝仓库内路径),
+#      被忽略只是让它在 `git status` 里隐身,一次 `git add -f` 或 .gitignore 改动就会入库。
+# git 本身失败(不是仓库、git 不在 PATH)一律 FAIL:枚举不出来不等于没有。只读、秒级,恒跑(不挂 -IncludeAax)。
+# 第 ② 轮会进 node_modules/ 等被忽略的目录,依赖升级后可能撞上第三方自带的 .pfx / .p12 测试证书(TLS 类 npm 包常见)。
+# 命中明细里是完整的仓库相对路径,一眼可见落在哪个顶层目录。确认是第三方测试夹具时,只按**完整相对路径**逐条精确豁免
+# (在下面的循环里跳过该路径并写明理由),不要放宽正则、不要跳过第 ② 轮、不要整目录豁免。
+$script:SigningMaterialPattern = '(?i)\.(pfx|p12|pvk)$|(^|/)dsh\.exe$|(digishell|aax[ _-]?validator).*\.(exe|dll|zip|msi|dmg|pkg|pdf)$|test[ _-]?plan.*\.pdf$'
+function Test-SigningMaterial {
+    $label = '签名材料 / Avid 评估工具不入库 (pfx/p12/pvk、DigiShell、AAX Validator、测试计划)'
+    $ok = $true
+    $detail = ''
+    $hits = New-Object System.Collections.Generic.List[string]
+    try {
+        foreach ($pass in @(
+                @{ Tag = ''; Args = @('--cached', '--others', '--exclude-standard') },
+                @{ Tag = '(被 .gitignore 隐藏)'; Args = @('--others', '--ignored', '--exclude-standard') })) {
+            $raw = & git -C $RepoRoot -c core.quotePath=false ls-files -z @($pass.Args)
+            if ($LASTEXITCODE -ne 0) { throw ('git ls-files ' + ($pass.Args -join ' ') + ' 失败 (exit ' + $LASTEXITCODE + ')') }
+            # 原生命令输出按行切成数组;-z 下只有文件名里自带的换行才会被切开,先按 LF 拼回再按 NUL 切
+            foreach ($f in (@($raw) -join "`n") -split "`0") {
+                if ($f -and [regex]::IsMatch($f, $script:SigningMaterialPattern) -and -not $hits.Contains($f + $pass.Tag)) {
+                    $hits.Add($f + $pass.Tag)
+                }
+            }
+        }
+    } catch {
+        $ok = $false; $detail = ('枚举仓库文件失败: ' + $_.Exception.Message)
+    }
+    if ($ok -and $hits.Count -gt 0) {
+        $ok = $false
+        foreach ($h in $hits) { Write-Host ('      命中: ' + $h) -ForegroundColor Red }
+        $detail = ('仓库内有 ' + $hits.Count + ' 个签名材料 / Avid 评估工具文件,必须移到仓库外(已入库的还要按 ' +
+            'BEFORE_PUBLIC_CHECKLIST.md §5 处置历史): ' + (@($hits | Select-Object -First 5) -join '; ') +
+            $(if ($hits.Count -gt 5) { ' …' } else { '' }))
+    } elseif ($ok) {
+        $detail = '已跟踪 / 未跟踪 / 被忽略的文件均无命中'
+    }
+    Add-Result $label ($(if ($ok) { 'PASS' } else { 'FAIL' })) $detail
+    return $ok
+}
+
 # ---- gate 4:cmake 配置 ----
 function Test-Configure {
     $ok = $true
@@ -538,6 +615,178 @@ function Test-Selftests {
     return $all
 }
 
+# ---- gate 5c/5d/5e:AAX(仅 -IncludeAax;selftest 之后、pluginval 之前)----
+# 路径与 gate 6 的 VST3 同法写死(JUCE 产物布局):主体 DLL 是 bundle 内的 Contents\x64\Synchain Bridge.aaxplugin
+# (一个文件,后缀也是 .aaxplugin)。pluginval 托管不了 AAX,本机能自动化的只有结构 / 打包 / (可选)Validator 三道。
+$script:AaxBundleLabel    = 'AAX bundle 结构 (PE x64 / desktop.ini / Plugin.ico / 已构建恰好 1 个)'
+$script:AaxPackageLabel   = 'AAX 打包冒烟 (package-aax.ps1 Unsigned + Signed 反向断言)'
+$script:AaxValidatorLabel = 'AAX Validator (可选,-AaxValidatorPath)'
+function Add-AaxSkips([string]$why) {
+    foreach ($l in @($script:AaxBundleLabel, $script:AaxPackageLabel, $script:AaxValidatorLabel)) { Add-Result $l 'SKIP' $why }
+}
+function Get-AaxBundlePath { return (Join-Path $BuildDir ('SynchainBridgeVST_artefacts\' + $Config + '\AAX\Synchain Bridge.aaxplugin')) }
+
+# PE 头 Machine 字段:MZ → 偏移 0x3C 处的 e_lfanew → 'PE\0\0' → 紧随其后的 UInt16(与 package-aax.ps1 同一读法)
+function Get-PeMachine([string]$path) {
+    $fs = [System.IO.File]::OpenRead($path)
+    try {
+        $br = New-Object System.IO.BinaryReader($fs)
+        if ($fs.Length -lt 0x40 -or $br.ReadUInt16() -ne 0x5A4D) { throw '不是 PE 映像(无 MZ 头)' }
+        $fs.Position = 0x3C
+        $peOffset = [int64]$br.ReadUInt32()
+        if ($peOffset + 6 -gt $fs.Length) { throw 'PE 头被截断' }
+        $fs.Position = $peOffset
+        if ($br.ReadUInt32() -ne 0x00004550) { throw "不是 PE 映像(无 'PE\0\0' 签名)" }
+        return [int]$br.ReadUInt16()
+    } finally {
+        $fs.Dispose()
+    }
+}
+
+# gate 5c:结构断言。「已构建恰好 1 个」只计含 Contents\ 的 *.aaxplugin 目录:VS 多配置生成器在 generate 期就为每个配置
+# 各建一个只有 desktop.ini 的空壳目录(JUCE 的 file(GENERATE)),它们不是产物(与 package-aax.ps1 的定位同口径)。
+# 枚举必须带 -Force:JUCE 给 bundle 目录设了 attrib +s,不带 -Force 可能被滤掉。
+function Test-AaxBundle {
+    $bad = @()
+    $bundle = Get-AaxBundlePath
+    $dll = Join-Path $bundle 'Contents\x64\Synchain Bridge.aaxplugin'
+    if (-not (Test-Path -LiteralPath $dll -PathType Leaf)) {
+        $bad += ('未找到 AAX 主体 DLL ' + $dll + '(CMake 缓存里 SYNCHAIN_BRIDGE_AAX 是否被关掉?)')
+    } else {
+        try {
+            $m = Get-PeMachine $dll
+            if ($m -ne 0x8664) { $bad += ('主体 DLL 的 PE Machine = 0x{0:X4},应为 0x8664 (x64)' -f $m) }
+        } catch {
+            $bad += ('主体 DLL 读 PE 头失败: ' + $_.Exception.Message)
+        }
+    }
+    foreach ($f in 'desktop.ini', 'Plugin.ico') {
+        if (-not (Test-Path -LiteralPath (Join-Path $bundle $f) -PathType Leaf)) { $bad += ('bundle 根目录缺 ' + $f) }
+    }
+    $all = @(Get-ChildItem -LiteralPath $BuildDir -Recurse -Directory -Filter '*.aaxplugin' -Force -ErrorAction SilentlyContinue)
+    $built = @($all | Where-Object { Test-Path -LiteralPath (Join-Path $_.FullName 'Contents') -PathType Container })
+    if ($built.Count -ne 1) {
+        $bad += ('BuildDir 下已构建(含 Contents\)的 .aaxplugin 应恰好 1 个,实际 ' + $built.Count + ' 个' +
+            $(if ($built.Count) { ': ' + (@($built | ForEach-Object { $_.FullName }) -join '; ') } else { '' }) +
+            '(CI 的 package-aax.ps1 -BuildDir 定位同样要求恰好 1 个;残留的其他配置产物请清掉)')
+    }
+    $ok = ($bad.Count -eq 0)
+    $detail = if ($ok) { 'Contents\x64 主体 DLL 为 x64 PE,desktop.ini / Plugin.ico 齐全,已构建 bundle 恰好 1 个' } else { $bad -join '; ' }
+    Add-Result $script:AaxBundleLabel ($(if ($ok) { 'PASS' } else { 'FAIL' })) $detail
+    return $ok
+}
+
+# gate 5d:打包冒烟。走 -BundlePath(不走 BuildDir 搜索,免得本地残留目录干扰计数);输出目录按 BuildDir 区分
+# (dist\gates-aax-<BuildDir 名>:并行 agent 互不干扰,且在 dist/ 下 —— 已被 .gitignore 与 .gitleaks.toml 覆盖),
+# 每次先清空,断言不受上一次残留影响。版本固定为 0.0.0-gates(一眼看出是冒烟件,与 CI 的 0.0.0-ci 同思路)。
+#   Unsigned 跑一次:zip 与 .sha256 都产出,.sha256 与 ci.yml 的 AAX 冒烟逐字同一套字节断言;
+#   Signed 反向断言:同一个未签名 bundle 必须被拒,且失败原因必须是签名检查(前置检查先挂掉不算数),输出目录里
+#   不得出现发行名 zip。
+function Test-AaxPackage {
+    $ok = $true
+    $detail = ''
+    $bundle = Get-AaxBundlePath
+    $out = Join-Path $RepoRoot ('dist\gates-aax-' + (Split-Path $BuildDir -Leaf))
+    $neg = Join-Path $out 'neg'
+    $ver = '0.0.0-gates'
+    $zip = 'SynchainBridge-AAX-v' + $ver + '-win64-UNSIGNED.zip'
+    $releaseZip = 'SynchainBridge-AAX-v' + $ver + '-win64.zip'
+    $pkg = Join-Path $PSScriptRoot 'package-aax.ps1'
+    try {
+        if (Test-Path -LiteralPath $out) { Remove-Item -LiteralPath $out -Recurse -Force }
+        & $pkg -Mode Unsigned -Version $ver -BundlePath $bundle -OutDir $out 2>&1 | ForEach-Object { Write-Host $_ }
+        foreach ($f in @($zip, ($zip + '.sha256'), 'package-summary.md')) {
+            if (-not (Test-Path -LiteralPath (Join-Path $out $f) -PathType Leaf)) { throw ('Unsigned 打包没产出 ' + $f) }
+        }
+        # 读原始字节:无 BOM、恰为 `<64 位小写 hex><两个空格><zip 基名>` + 一个 LF(\z 不放过结尾双换行),hash 与现算一致
+        $bytes = [System.IO.File]::ReadAllBytes((Join-Path $out ($zip + '.sha256')))
+        $raw = [System.Text.Encoding]::ASCII.GetString($bytes)
+        if ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) { throw ($zip + '.sha256 以 UTF-8 BOM 开头') }
+        if ($raw -cnotmatch ('^[0-9a-f]{64}  ' + [regex]::Escape($zip) + "`n\z")) {
+            throw ($zip + '.sha256 不是恰好 "<64 hex>  ' + $zip + '" + 一个 LF(无 CR / 无多余空行): ' + [BitConverter]::ToString($bytes))
+        }
+        $want = (Get-FileHash -LiteralPath (Join-Path $out $zip) -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($raw.TrimEnd("`n") -cne ($want + '  ' + $zip)) { throw ($zip + '.sha256 与 zip 现算的 hash ' + $want + ' 不一致') }
+
+        $rejected = $false
+        try {
+            & $pkg -Mode Signed -Version $ver -BundlePath $bundle -OutDir $neg 2>&1 | ForEach-Object { Write-Host $_ }
+        } catch {
+            $msg = $_.Exception.Message
+            if ($msg -cnotlike '*refusing to package an unsigned bundle under a release name*') {
+                throw ('Signed 反向断言因无关原因失败(签名检查根本没执行到): ' + $msg)
+            }
+            $rejected = $true
+            Write-Host ('      预期的拒收: ' + $msg)
+        }
+        if (-not $rejected) { throw 'package-aax.ps1 -Mode Signed 接受了未签名 bundle' }
+        if (Test-Path -LiteralPath (Join-Path $neg $releaseZip)) { throw ('未签名 bundle 产出了发行名 zip ' + $releaseZip) }
+        $detail = ($zip + ' + .sha256 字节形态正确;Signed 模式拒收未签名 bundle、未留发行名 zip(输出 ' + $out + ')')
+    } catch {
+        $ok = $false
+        $detail = $_.Exception.Message
+    }
+    Add-Result $script:AaxPackageLabel ($(if ($ok) { 'PASS' } else { 'FAIL' })) $detail
+    return $ok
+}
+
+# gate 5e:AAX Validator(可选)。判定顺序:没给路径 → SKIP;路径是空串 / 在仓库内 / 不存在 → FAIL(参数错误与 bundle
+# 状态无关,先报);TODO-AAXVAL 常量未填 → SKIP;5c 失败 → SKIP;否则真跑,输出 Tee 到 $BuildDir\gates-aaxval.log,
+# 以输出标记判定(FailPattern 优先,PassPattern 必须出现),退出码只作参考。
+function Test-AaxValidator([bool]$bundleOk) {
+    $label = $script:AaxValidatorLabel
+    if (-not $AaxValidatorGiven) {
+        Add-Result $label 'SKIP' '未提供 -AaxValidatorPath(Avid 评估许可工具,不入库)'
+        return $true
+    }
+    if (-not $AaxValidatorPath) {
+        Add-Result $label 'FAIL' '-AaxValidatorPath 传了空串(调用方没算出路径?不跑 Validator 就别传这个参数)'
+        return $false
+    }
+    $full = [System.IO.Path]::GetFullPath((Resolve-RepoPath $AaxValidatorPath))
+    $root = [System.IO.Path]::GetFullPath($RepoRoot).TrimEnd('\', '/') + '\'
+    if ($full.StartsWith($root, [System.StringComparison]::OrdinalIgnoreCase)) {
+        # 相对路径与 -BuildDir 同规则按仓库根解析(不按当前目录),所以在别处传了相对路径也会落到这里 —— 提示传绝对路径
+        Add-Result $label 'FAIL' ('-AaxValidatorPath 在仓库内: ' + $full + '(Avid 评估许可工具必须放仓库外,例如 $env:USERPROFILE\avid-tools\;' +
+            '相对路径按仓库根解析,请传绝对路径)')
+        return $false
+    }
+    if (-not (Test-Path -LiteralPath $full -PathType Leaf)) {
+        Add-Result $label 'FAIL' ('-AaxValidatorPath 不存在或不是文件: ' + $full)
+        return $false
+    }
+    if ($null -eq $script:AaxValidatorArgs -or $null -eq $script:AaxValidatorPassPattern -or $null -eq $script:AaxValidatorFailPattern) {
+        Add-Result $label 'SKIP' 'TODO-AAXVAL:调用方式未实测(gates.ps1 文件头三个常量未填)'
+        return $true
+    }
+    if (-not $bundleOk) {
+        Add-Result $label 'SKIP' 'gate 5c 失败,跳过'
+        return $true
+    }
+    $ok = $true
+    $detail = ''
+    $log = Join-Path $BuildDir 'gates-aaxval.log'
+    try {
+        $bundle = Get-AaxBundlePath
+        $valArgs = @($script:AaxValidatorArgs | ForEach-Object { ([string]$_).Replace('{bundle}', $bundle) })
+        & $full @valArgs 2>&1 | Tee-Object -FilePath $log | ForEach-Object { Write-Host $_ }
+        $code = $LASTEXITCODE
+        $text = [string](Get-Content -LiteralPath $log -Raw)
+        $opt = [System.Text.RegularExpressions.RegexOptions]::Multiline
+        if ([regex]::IsMatch($text, $script:AaxValidatorFailPattern, $opt)) {
+            $ok = $false; $detail = ('输出命中失败标记(exit ' + $code + '),日志见 ' + $log)
+        } elseif (-not [regex]::IsMatch($text, $script:AaxValidatorPassPattern, $opt)) {
+            $ok = $false; $detail = ('输出里没有通过标记(exit ' + $code + '),日志见 ' + $log)
+        } else {
+            $detail = ('输出命中通过标记(exit ' + $code + ',退出码仅供参考),日志见 ' + $log)
+        }
+    } catch {
+        $ok = $false; $detail = ('运行 AAX Validator 失败: ' + $_.Exception.Message)
+    }
+    Add-Result $label ($(if ($ok) { 'PASS' } else { 'FAIL' })) $detail
+    return $ok
+}
+
 # ---- gate 6/7:pluginval(single bundle) ----
 function Test-Pluginval([bool]$gui) {
     $label = if ($gui) { 'pluginval 全量含 GUI (本地真机)' } else { 'pluginval 非 GUI (strict 5)' }
@@ -578,9 +827,12 @@ Write-Host '== Synchain Bridge gates ==' -ForegroundColor Cyan
 Write-Host ('  Config  : ' + $Config)
 Write-Host ('  BuildDir: ' + $BuildDir)
 Write-Host ('  Mode    : ' + $(if ($Quick) { 'Quick(跳过 pluginval)' } elseif ($PluginOnly) { 'PluginOnly(跳过 GUI pluginval)' } else { '全量(含 GUI pluginval)' }))
+Write-Host ('  AAX     : ' + $(if ($RunAax) {
+            '开(gate 5c/5d/5e;Validator ' + $(if ($AaxValidatorGiven) { '= ' + $AaxValidatorPath } else { '未提供' }) + ')'
+        } else { '关(-IncludeAax 开启 gate 5c/5d/5e)' }))
 Write-Host ''
 
-# 只读 gate(1,2,3,3b,3b2,3c,3d,3e,3f,3g)恒跑,互不依赖
+# 只读 gate(1,2,3,3b,3b2,3c,3d,3e,3f,3g,3h)恒跑,互不依赖
 $roOk = $true
 $roOk = (Test-Deps) -and $roOk
 $roOk = (Test-ClangFormat) -and $roOk
@@ -592,12 +844,14 @@ $roOk = (Test-Port) -and $roOk
 $roOk = (Test-Version) -and $roOk
 $roOk = (Test-IxwebsocketPin) -and $roOk
 $roOk = (Test-PcmFrameWiring) -and $roOk
+$roOk = (Test-SigningMaterial) -and $roOk
 
 if (-not $roOk) {
     Add-Result 'cmake 配置' 'SKIP' '只读 gate 失败,跳过'
     Add-Result 'vcpkg 安装版本 (status ↔ vcpkg.json override / THIRD-PARTY-NOTICES)' 'SKIP' '只读 gate 失败,跳过'
     Add-Result 'build (/W4, 0 warning)' 'SKIP' '只读 gate 失败,跳过'
     foreach ($t in $script:Selftests) { Add-Result $t.Label 'SKIP' '只读 gate 失败,跳过' }
+    if ($RunAax) { Add-AaxSkips '只读 gate 失败,跳过' }
     Add-Result 'pluginval 非 GUI (strict 5)' 'SKIP' '只读 gate 失败,跳过'
     Add-Result 'pluginval 全量含 GUI (本地真机)' 'SKIP' '只读 gate 失败,跳过'
 } else {
@@ -615,6 +869,17 @@ if (-not $roOk) {
         $null = Test-Selftests
     } else {
         foreach ($t in $script:Selftests) { Add-Result $t.Label 'SKIP' '构建失败,跳过' }
+    }
+    # AAX gate(5c → 5d → 5e):5c 不过时 5d 无从谈起(SKIP);5e 自己处理参数错误与 TODO-AAXVAL,bundle 不完好时 SKIP。
+    # -Quick 不影响这三道(-Quick 只跳过 pluginval)。
+    if ($RunAax) {
+        if ($cfgOk -and $buildOk) {
+            $aaxBundleOk = Test-AaxBundle
+            if ($aaxBundleOk) { $null = Test-AaxPackage } else { Add-Result $script:AaxPackageLabel 'SKIP' 'gate 5c 失败,跳过' }
+            $null = Test-AaxValidator $aaxBundleOk
+        } else {
+            Add-AaxSkips '构建失败,跳过'
+        }
     }
     if ($cfgOk -and $buildOk) {
         if ($Quick) {
