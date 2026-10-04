@@ -234,18 +234,20 @@ Windows 10/11 x64、Pro Tools(64 位、AAX Native);Microsoft Edge WebView2 Runti
 
 安装路径(需要管理员权限)
 ------------------------
-Pro Tools 只扫描下面这一个目录,没有用户级目录:
+Pro Tools 只扫描下面这一个目录(64 位的 Common Files 下),没有用户级目录:
 
-  %COMMONPROGRAMFILES%\Avid\Audio\Plug-Ins\
+  %CommonProgramW6432%\Avid\Audio\Plug-Ins\
 
 (通常为 C:\Program Files\Common Files\Avid\Audio\Plug-Ins\)
 
-先退出 Pro Tools,再以管理员身份打开 PowerShell 执行(<解压路径> 换成本压缩包解压出来的目录):
+先退出 Pro Tools,再以管理员身份打开 PowerShell 执行(<解压路径> 换成本压缩包解压出来的目录;
+`$env:CommonProgramW6432 恒指向 64 位的 Common Files,系统盘不是 C: 也适用):
 
-  Remove-Item "C:\Program Files\Common Files\Avid\Audio\Plug-Ins\$bundleWant" -Recurse -Force -ErrorAction SilentlyContinue
-  Copy-Item "<解压路径>\$bundleWant" "C:\Program Files\Common Files\Avid\Audio\Plug-Ins\" -Recurse -Force
+  Remove-Item "`$env:CommonProgramW6432\Avid\Audio\Plug-Ins\$bundleWant" -Recurse -Force -ErrorAction SilentlyContinue
+  Copy-Item "<解压路径>\$bundleWant" "`$env:CommonProgramW6432\Avid\Audio\Plug-Ins\" -Recurse -Force
 
-必须先删旧版:Copy-Item 对已存在的 bundle 是合并,旧文件会残留。
+必须先删旧版:按上面的写法(目标是父目录 Plug-Ins\),已存在同名 bundle 时 Copy-Item 是合并,旧版残留的文件
+会混进来;若把目标写成 bundle 自身的路径,还会嵌套成 ...\$bundleWant\$bundleWant。
 重启 Pro Tools,在插入点的插件菜单里按名称 Synchain Bridge 查找。
 
 商标
@@ -263,9 +265,12 @@ GPL 第 3 版分发(LICENSE.txt),详见 THIRD-PARTY-NOTICES.md。
 Complete corresponding source for this exact build: https://github.com/synchain-oss/synchain-bridge/tree/$SourceRef
 "@
 
-# 8) staging + 压缩 + 断言。从这里起任何失败都删掉本次的 zip / .sha256(硬要求 #9):
-#    Signed 模式下失败路径上绝不能留下发行名 zip;Unsigned 同样不留半成品。
+# 8) staging + 压缩 + 断言 + .sha256 + summary。从这里起任何失败都删掉本次的 zip / .sha256(硬要求 #9):
+#    Signed 模式下失败路径上绝不能留下发行名 zip;Unsigned 同样不留半成品。与 mac 侧的 PACKAGED_OK + EXIT trap
+#    同口径:$packagedOk 只在 summary 落盘之后才置位,写 .sha256 / summary 时失败同样清理。
 $staging = Join-Path $OutDir '_staging'
+$summaryTmp = $summaryPath + '.tmp'
+$packagedOk = $false
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 foreach ($p in @($zipPath, $shaPath)) { if (Test-Path -LiteralPath $p) { Remove-Item -LiteralPath $p -Force } }
 try {
@@ -319,65 +324,66 @@ try {
             if (Test-Path -LiteralPath $readback) { Remove-Item -LiteralPath $readback -Recurse -Force }
         }
     }
-} catch {
-    foreach ($p in @($zipPath, $shaPath)) { if (Test-Path -LiteralPath $p) { Remove-Item -LiteralPath $p -Force } }
-    throw
+
+    # 10) .sha256 独立资产(硬要求 #10)—— 与 package.ps1 第 9 步逐字同口径
+    $hash = (Get-FileHash -LiteralPath $zipPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    # LF + 无 BOM:.sha256 是跨 job 被 sha256sum -c 消费、也是发给用户在 mac/Linux 上直接校验的资产,CRLF 会让
+    # 结尾的 \r 被当成文件名的一部分而校验必失败;与下面 summary 的落盘同口径。
+    [System.IO.File]::WriteAllText($shaPath, "$hash  $zipFileName`n", [System.Text.UTF8Encoding]::new($false))
+
+    $sizeBytes   = (Get-Item -LiteralPath $zipPath).Length
+    $releaseDate = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+
+    # 11) package-summary.md(硬要求 #11)—— 与 package.ps1 第 9 步逐字同构,改一处必须改全部四处。
+    # summary 以空行分段追加 + 同名段去重,与 package-macos.sh 第 10 步的 awk 语义与布局一致(issue #23):
+    # 同一个 OutDir 下可能已有别的平台或本脚本上一次运行写的段落,整文件覆盖会把它们静默抹掉。
+    #   - 切段一律按记录首行 `version:` 切,不按空行切:旧文件的段间可能没有空行,按空行切会把整个文件当一段;
+    #   - 只删 `zipFileName:` 整行逐字相等(-ceq,大小写敏感)的旧段,不用子串包含 —— 0.0.0-ci 不能误删 0.0.0-ci2;
+    #   - 首条记录之前的内容(将来若加表头)原样透传;空行只是分隔符,重排时统一重新生成;
+    #   - 布局:每个保留的旧段后补一个空行,末尾追加本次的新段 —— 段间恰一个空行、文件末尾恰一个换行,
+    #     两边字节布局相同。
+    #   - 行尾一律 LF、UTF-8 无 BOM:Set-Content 在 Windows 写的是 CRLF,mac 侧 awk 的 `$0 == z` 是逐字相等,
+    #     读到带 CR 尾的行会失配、同名段删不掉;两边共用一个 OutDir 时双向都得成立,故这里写 LF、读旧文件时
+    #     把 CRLF 归一成 LF(mac 侧 awk 同样先 sub(/\r$/, "") 再比)。
+    $zipLine = "zipFileName: $zipFileName"
+    $kept    = New-Object System.Collections.Generic.List[string]
+    if (Test-Path -LiteralPath $summaryPath) {
+        $rec = New-Object System.Collections.Generic.List[string]
+        $started = $false
+        $drop    = $false
+        $oldText = [string](Get-Content -LiteralPath $summaryPath -Raw)
+        foreach ($ln in @(($oldText -replace "`r`n", "`n") -split "`n")) {
+            if ($ln.Trim().Length -eq 0) { continue }
+            if ($ln -cmatch '^version:\s') {
+                if ($started -and -not $drop) { $kept.AddRange($rec); $kept.Add('') }
+                $rec.Clear(); $drop = $false; $started = $true
+            }
+            if (-not $started) { $kept.Add($ln); continue }
+            $rec.Add($ln)
+            if ($ln -ceq $zipLine) { $drop = $true }
+        }
+        if ($started -and -not $drop) { $kept.AddRange($rec); $kept.Add('') }
+    }
+    $kept.AddRange([string[]]@(
+        "version: $Version",
+        $zipLine,
+        "sizeBytes: $sizeBytes",
+        "sha256: $hash",
+        "releaseDate: $releaseDate"
+    ))
+    # 先写同目录 .tmp 再 Move-Item -Force 覆盖,与 mac 侧 tmp + mv 同口径:上面已把旧 summary 读进内存,
+    # 直接写原路径是「先截断再写」,中途被打断会把别的平台 / 历史版本的段落一起丢掉。
+    # 不用 Set-Content:它在 Windows 写 CRLF,且 Windows PowerShell 5.1 的 -Encoding UTF8 还会带 BOM。
+    [System.IO.File]::WriteAllText($summaryTmp, (($kept -join "`n") + "`n"), [System.Text.UTF8Encoding]::new($false))
+    Move-Item -LiteralPath $summaryTmp -Destination $summaryPath -Force
+
+    $packagedOk = $true
 } finally {
+    if (-not $packagedOk) {
+        foreach ($p in @($zipPath, $shaPath, $summaryTmp)) { if (Test-Path -LiteralPath $p) { Remove-Item -LiteralPath $p -Force } }
+    }
     if (Test-Path -LiteralPath $staging) { Remove-Item -LiteralPath $staging -Recurse -Force }
 }
-
-# 10) .sha256 独立资产(硬要求 #10)—— 与 package.ps1 第 9 步逐字同口径
-$hash = (Get-FileHash -LiteralPath $zipPath -Algorithm SHA256).Hash.ToLowerInvariant()
-# LF + 无 BOM:.sha256 是跨 job 被 sha256sum -c 消费、也是发给用户在 mac/Linux 上直接校验的资产,CRLF 会让
-# 结尾的 \r 被当成文件名的一部分而校验必失败;与下面 summary 的落盘同口径。
-[System.IO.File]::WriteAllText($shaPath, "$hash  $zipFileName`n", [System.Text.UTF8Encoding]::new($false))
-
-$sizeBytes   = (Get-Item -LiteralPath $zipPath).Length
-$releaseDate = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
-
-# 11) package-summary.md(硬要求 #11)—— 与 package.ps1 第 9 步逐字同构,改一处必须改全部四处。
-# summary 以空行分段追加 + 同名段去重,与 package-macos.sh 第 10 步的 awk 语义与布局一致(issue #23):
-# 同一个 OutDir 下可能已有别的平台或本脚本上一次运行写的段落,整文件覆盖会把它们静默抹掉。
-#   - 切段一律按记录首行 `version:` 切,不按空行切:旧文件的段间可能没有空行,按空行切会把整个文件当一段;
-#   - 只删 `zipFileName:` 整行逐字相等(-ceq,大小写敏感)的旧段,不用子串包含 —— 0.0.0-ci 不能误删 0.0.0-ci2;
-#   - 首条记录之前的内容(将来若加表头)原样透传;空行只是分隔符,重排时统一重新生成;
-#   - 布局:每个保留的旧段后补一个空行,末尾追加本次的新段 —— 段间恰一个空行、文件末尾恰一个换行,
-#     两边字节布局相同。
-#   - 行尾一律 LF、UTF-8 无 BOM:Set-Content 在 Windows 写的是 CRLF,mac 侧 awk 的 `$0 == z` 是逐字相等,
-#     读到带 CR 尾的行会失配、同名段删不掉;两边共用一个 OutDir 时双向都得成立,故这里写 LF、读旧文件时
-#     把 CRLF 归一成 LF(mac 侧 awk 同样先 sub(/\r$/, "") 再比)。
-$zipLine = "zipFileName: $zipFileName"
-$kept    = New-Object System.Collections.Generic.List[string]
-if (Test-Path -LiteralPath $summaryPath) {
-    $rec = New-Object System.Collections.Generic.List[string]
-    $started = $false
-    $drop    = $false
-    $oldText = [string](Get-Content -LiteralPath $summaryPath -Raw)
-    foreach ($ln in @(($oldText -replace "`r`n", "`n") -split "`n")) {
-        if ($ln.Trim().Length -eq 0) { continue }
-        if ($ln -cmatch '^version:\s') {
-            if ($started -and -not $drop) { $kept.AddRange($rec); $kept.Add('') }
-            $rec.Clear(); $drop = $false; $started = $true
-        }
-        if (-not $started) { $kept.Add($ln); continue }
-        $rec.Add($ln)
-        if ($ln -ceq $zipLine) { $drop = $true }
-    }
-    if ($started -and -not $drop) { $kept.AddRange($rec); $kept.Add('') }
-}
-$kept.AddRange([string[]]@(
-    "version: $Version",
-    $zipLine,
-    "sizeBytes: $sizeBytes",
-    "sha256: $hash",
-    "releaseDate: $releaseDate"
-))
-# 先写同目录 .tmp 再 Move-Item -Force 覆盖,与 mac 侧 tmp + mv 同口径:上面已把旧 summary 读进内存,
-# 直接写原路径是「先截断再写」,中途被打断会把别的平台 / 历史版本的段落一起丢掉。
-# 不用 Set-Content:它在 Windows 写 CRLF,且 Windows PowerShell 5.1 的 -Encoding UTF8 还会带 BOM。
-$summaryTmp = $summaryPath + '.tmp'
-[System.IO.File]::WriteAllText($summaryTmp, (($kept -join "`n") + "`n"), [System.Text.UTF8Encoding]::new($false))
-Move-Item -LiteralPath $summaryTmp -Destination $summaryPath -Force
 
 Write-Host "Packaged: $zipPath ($sizeBytes bytes, Mode=$Mode)"
 Write-Host "SHA256:   $hash"

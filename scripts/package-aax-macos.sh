@@ -236,7 +236,7 @@ on_exit() {
     local rc=$?
     rm -rf "$STAGING"
     [ -z "$READBACK_DIR" ] || rm -rf "$READBACK_DIR"
-    if [ "$PACKAGED_OK" -ne 1 ]; then rm -f "$ZIP_PATH" "$SHA_PATH"; fi
+    if [ "$PACKAGED_OK" -ne 1 ]; then rm -f "$ZIP_PATH" "$SHA_PATH" "$SUMMARY_PATH.tmp"; fi
     exit "$rc"
 }
 trap on_exit EXIT

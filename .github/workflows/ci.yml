@@ -305,8 +305,16 @@ jobs:
             # 只比 ASCII 片段 '(UNSIGNED)'(横幅标题行):Signed 版正文里不出现该串,且不受 runner 脚本文件编码影响
             if (-not $install.Contains('(UNSIGNED)')) { Write-Error "INSTALL-AAX.txt of an -UNSIGNED zip lacks the UNSIGNED banner"; exit 1 }
           } finally { $za.Dispose() }
+          # 反向断言只认「签名检查」这一个失败原因:前置检查(bundle 定位 / 合规文件等)先挂掉时 Signed 拒收路径根本没被执行,
+          # 只看「失败了」会让这一步假绿。
           $neg = Join-Path $env:RUNNER_TEMP 'package-aax-neg'; $rejected = $false
-          try { ./scripts/package-aax.ps1 -Mode Signed -Version 0.0.0-ci -BuildDir build -OutDir $neg } catch { $rejected = $true; Write-Host "expected rejection: $($_.Exception.Message)" }
+          try { ./scripts/package-aax.ps1 -Mode Signed -Version 0.0.0-ci -BuildDir build -OutDir $neg } catch {
+            $msg = $_.Exception.Message
+            if ($msg -cnotlike '*refusing to package an unsigned bundle under a release name*') {
+              Write-Error "package-aax.ps1 -Mode Signed failed for an unrelated reason (signature check never reached): $msg"; exit 1
+            }
+            $rejected = $true; Write-Host "expected rejection: $msg"
+          }
           if (-not $rejected) { Write-Error "package-aax.ps1 -Mode Signed accepted an unsigned bundle"; exit 1 }
           if (Test-Path (Join-Path $neg 'SynchainBridge-AAX-v0.0.0-ci-win64.zip')) { Write-Error "release-named AAX zip produced from unsigned bundle"; exit 1 }
 
@@ -802,10 +810,15 @@ jobs:
           install="$(unzip -p "$z" INSTALL-AAX.txt)"
           grep -qF '(UNSIGNED)' <<< "$install" \
             || { echo "::error::INSTALL-AAX.txt of an -UNSIGNED zip lacks the UNSIGNED banner"; exit 1; }
+          # 反向断言只认「签名检查」这一个失败原因(与 6c 同理):输出落进变量,再匹配拒收消息。
           neg="$RUNNER_TEMP/package-aax-neg"
-          if bash scripts/package-aax-macos.sh --mode signed --version 0.0.0-ci --build-dir build --out-dir "$neg"; then
+          if negout="$(bash scripts/package-aax-macos.sh --mode signed --version 0.0.0-ci --build-dir build --out-dir "$neg" 2>&1)"; then
+            printf '%s\n' "$negout"
             echo "::error::package-aax-macos.sh --mode signed accepted an unsigned (linker ad-hoc signed) bundle"; exit 1
           fi
+          printf '%s\n' "$negout"
+          grep -qF 'refusing to package an unsigned bundle under a release name' <<< "$negout" \
+            || { echo "::error::package-aax-macos.sh --mode signed failed for an unrelated reason (signature check never reached)"; exit 1; }
           echo "expected rejection observed (--mode signed refused the unsigned bundle)"
           if [ -e "$neg/SynchainBridge-AAX-v0.0.0-ci-macos-arm64.zip" ]; then
             echo "::error::release-named AAX zip produced from unsigned bundle"; exit 1

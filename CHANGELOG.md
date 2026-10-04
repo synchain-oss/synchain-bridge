@@ -41,7 +41,8 @@
   - **AAX 打包冒烟**(Windows 6c / macOS 8c,产物丢弃,与 VST3/AU 的 6b / 8b 同构):`-UNSIGNED` 模式按
     `0.0.0-ci → 0.0.0-ci2 → 0.0.0-ci` 三连跑,`.sha256` 字节形态与 summary 按段去重的断言逐字照搬 6b / 8b;另做一道
     独立于脚本自检的绊线 —— zip 层级、(mac)可执行位、`INSTALL-AAX.txt` 必须带 `(UNSIGNED)` 横幅。
-    **反向断言**:同一个未签名 bundle 用 Signed 模式打包必须失败,且输出目录里不得出现发行名 zip ——
+    **反向断言**:同一个未签名 bundle 用 Signed 模式打包必须失败、失败原因必须是签名检查(匹配拒收消息,前置检查
+    先挂掉不算数),且输出目录里不得出现发行名 zip ——
     「未签名件不可能长得像发行资产」由机器保证,而不是靠人记得。
   - **Package AAX (unsigned)**(6d / 8d):版本 = CMake `VERSION` + `-ci.<head 短 sha>`,`INSTALL-AAX.txt` 的源码链接钉
     head 全 sha(经 env 间接读入;PR 事件取 head 侧 sha,不取合并提交);随后断言产物名逐字等于预期(mac 侧顺带在
