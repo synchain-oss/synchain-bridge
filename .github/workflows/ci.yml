@@ -257,6 +257,96 @@ jobs:
             Write-Error "0.0.0-ci segment should appear exactly once after re-run"; exit 1
           }
 
+      # 6c) AAX 打包脚本冒烟(与 6b 同构,产物丢弃)。AAX bundle 由同一次 cmake --build 产出(FORMATS 含 AAX)。
+      #     三次运行(ci → ci2 → ci)验 summary 按段去重;.sha256 字节形态同 6b;再抽查 zip 层级与 UNSIGNED 横幅。
+      #     反向断言:-Mode Signed 必须拒收未签名 bundle 且不留发行名 zip(「未签名件不可能长得像发行资产」的机器保证)。
+      - name: Package AAX smoke (scripts/package-aax.ps1, artefacts discarded)
+        shell: pwsh
+        run: |
+          $out = Join-Path $env:RUNNER_TEMP 'package-aax-smoke'
+          foreach ($v in '0.0.0-ci', '0.0.0-ci2', '0.0.0-ci') {
+            ./scripts/package-aax.ps1 -Mode Unsigned -Version $v -BuildDir build -OutDir $out
+          }
+          Get-ChildItem $out | Out-Host
+          foreach ($v in '0.0.0-ci', '0.0.0-ci2') {
+            $zip = "SynchainBridge-AAX-v$v-win64-UNSIGNED.zip"
+            # 与 6b 逐字同一套字节断言:无 BOM、恰为 `<64 hex>  <zip>` + 一个 LF(\z 不放过结尾双换行)、hash 与现算一致
+            $bytes = [System.IO.File]::ReadAllBytes((Join-Path $out "$zip.sha256"))
+            $raw = [System.Text.Encoding]::ASCII.GetString($bytes)
+            if ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) {
+              Write-Error "$zip.sha256 starts with a UTF-8 BOM"; exit 1
+            }
+            if ($raw -cnotmatch "^[0-9a-f]{64}  $([regex]::Escape($zip))`n\z") {
+              Write-Error "$zip.sha256 is not exactly '<64 hex>  $zip' + one LF (no CR / no trailing blank line): $([BitConverter]::ToString($bytes))"; exit 1
+            }
+            $line = @($raw.TrimEnd("`n"))
+            $want = (Get-FileHash -LiteralPath (Join-Path $out $zip) -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($line[0] -cne "$want  $zip") { Write-Error "$zip.sha256 says '$($line[0])' but the zip hashes to $want"; exit 1 }
+          }
+          $lines = @(Get-Content (Join-Path $out 'package-summary.md'))
+          $n = @($lines | Where-Object { $_ -cmatch '^zipFileName:' }).Count
+          if ($n -ne 2) { Write-Error "package-summary.md should hold exactly 2 segments (ci + ci2), got $n"; exit 1 }
+          if (@($lines | Where-Object { $_ -ceq 'zipFileName: SynchainBridge-AAX-v0.0.0-ci2-win64-UNSIGNED.zip' }).Count -ne 1) {
+            Write-Error "re-running 0.0.0-ci wiped the unrelated 0.0.0-ci2 segment (over-deletion regression)"; exit 1
+          }
+          if (@($lines | Where-Object { $_ -ceq 'zipFileName: SynchainBridge-AAX-v0.0.0-ci-win64-UNSIGNED.zip' }).Count -ne 1) {
+            Write-Error "0.0.0-ci segment should appear exactly once after re-run"; exit 1
+          }
+          # 独立于脚本自检的绊线:zip 层级 + INSTALL-AAX.txt 必须带 UNSIGNED 横幅(脚本的断言被削弱时这里仍会红)
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $za = [System.IO.Compression.ZipFile]::OpenRead((Join-Path $out 'SynchainBridge-AAX-v0.0.0-ci-win64-UNSIGNED.zip'))
+          try {
+            $names = @($za.Entries | ForEach-Object { $_.FullName })
+            foreach ($r in 'Synchain Bridge.aaxplugin/Contents/x64/Synchain Bridge.aaxplugin', 'Synchain Bridge.aaxplugin/desktop.ini', 'INSTALL-AAX.txt', 'LICENSE.txt', 'THIRD-PARTY-NOTICES.md', 'LICENSES/OFL-1.1.txt') {
+              if ($names -cnotcontains $r) { Write-Error "AAX zip is missing '$r'"; exit 1 }
+            }
+            $sr = [System.IO.StreamReader]::new(($za.Entries | Where-Object { $_.FullName -ceq 'INSTALL-AAX.txt' }).Open(), [System.Text.Encoding]::UTF8)
+            try { $install = $sr.ReadToEnd() } finally { $sr.Dispose() }
+            # 只比 ASCII 片段 '(UNSIGNED)'(横幅标题行):Signed 版正文里不出现该串,且不受 runner 脚本文件编码影响
+            if (-not $install.Contains('(UNSIGNED)')) { Write-Error "INSTALL-AAX.txt of an -UNSIGNED zip lacks the UNSIGNED banner"; exit 1 }
+          } finally { $za.Dispose() }
+          # 反向断言只认「签名检查」这一个失败原因:前置检查(bundle 定位 / 合规文件等)先挂掉时 Signed 拒收路径根本没被执行,
+          # 只看「失败了」会让这一步假绿。
+          $neg = Join-Path $env:RUNNER_TEMP 'package-aax-neg'; $rejected = $false
+          try { ./scripts/package-aax.ps1 -Mode Signed -Version 0.0.0-ci -BuildDir build -OutDir $neg } catch {
+            $msg = $_.Exception.Message
+            if ($msg -cnotlike '*refusing to package an unsigned bundle under a release name*') {
+              Write-Error "package-aax.ps1 -Mode Signed failed for an unrelated reason (signature check never reached): $msg"; exit 1
+            }
+            $rejected = $true; Write-Host "expected rejection: $msg"
+          }
+          if (-not $rejected) { Write-Error "package-aax.ps1 -Mode Signed accepted an unsigned bundle"; exit 1 }
+          if (Test-Path (Join-Path $neg 'SynchainBridge-AAX-v0.0.0-ci-win64.zip')) { Write-Error "release-named AAX zip produced from unsigned bundle"; exit 1 }
+
+      # 6d) 未签名 AAX 件(维护者本机签名 / Pro Tools Developer 实测用)。版本 = CMake VERSION + -ci.<短 sha>,
+      #     INSTALL-AAX.txt 的源码链接钉 head sha;sha 经 env 间接读入(与 mac job 的 Resolve 步骤同口径)。
+      #     PR 事件下取 head 侧 sha(GITHUB_SHA 是合并提交,源码链接会指向一个用户看不到的 commit)。
+      - name: Package AAX (unsigned)
+        shell: pwsh
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          if ($env:HEAD_SHA -cnotmatch '^[0-9a-f]{40}$') { Write-Error "HEAD_SHA is not a 40-hex commit: '$env:HEAD_SHA'"; exit 1 }
+          $sha7 = $env:HEAD_SHA.Substring(0, 7)
+          ./scripts/package-aax.ps1 -Mode Unsigned -PrereleaseTag "ci.$sha7" -SourceRef $env:HEAD_SHA -BuildDir build -OutDir dist/aax
+          Get-ChildItem dist/aax | Out-Host
+          $zips = @(Get-ChildItem dist/aax -File -Filter 'SynchainBridge-AAX-*.zip')
+          if ($zips.Count -ne 1 -or $zips[0].Name -cnotmatch "^SynchainBridge-AAX-v[0-9]+\.[0-9]+\.[0-9]+-ci\.$sha7-win64-UNSIGNED\.zip$") {
+            Write-Error "expected exactly one SynchainBridge-AAX-v<cmake>-ci.$sha7-win64-UNSIGNED.zip in dist/aax, got: $($zips.Name -join ', ')"; exit 1
+          }
+
+      # 6e) artifact 名刻意叫 aax-unsigned-*(不是 dist-*):release.yml 的 publish 只从 dist-* 取件,未签名件进不了 Release。
+      #     无事件条件:workflow_dispatch 也会上传 —— owner 在子分支上 dispatch 即可取到 AAX 测试件。
+      - name: Upload AAX (unsigned)
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: aax-unsigned-win64
+          path: |
+            dist/aax/SynchainBridge-AAX-*-win64-UNSIGNED.zip
+            dist/aax/SynchainBridge-AAX-*-win64-UNSIGNED.zip.sha256
+          if-no-files-found: error
+          retention-days: ${{ github.event_name == 'pull_request' && 14 || 30 }}
+
       # 7) artifact(命名/保留策略见 06 §6.3;一律用 REF_SLUG,不用 github.ref_name)
       - name: Upload VST3 (PR)
         if: github.event_name == 'pull_request'
@@ -676,6 +766,96 @@ jobs:
             || { echo "::error::re-running 0.0.0-ci wiped the unrelated 0.0.0-ci2 segment (over-deletion regression)"; exit 1; }
           [ "$(grep -c '^zipFileName: SynchainBridge-VST3-AU-v0.0.0-ci-macos-arm64.zip$' "$smoke/package-summary.md")" = "1" ] \
             || { echo "::error::0.0.0-ci segment should appear exactly once after re-run"; exit 1; }
+
+      # 8c) AAX 打包脚本冒烟(与 8b 同构,产物丢弃;与 windows job 的 6c 对称)。AAX bundle 由同一次 cmake --build 产出。
+      #     三次运行(ci → ci2 → ci)验 summary 按段去重;.sha256 形态断言逐字同 8b;再抽查 zip 层级、可执行位与
+      #     UNSIGNED 横幅。反向断言:--mode signed 必须拒收只有链接器 ad-hoc 签名的 bundle,且不留发行名 zip。
+      #     这是 mac 打包脚本合入前唯一能实跑的地方(本地 gates 是纯 Windows 实现)。
+      - name: Package AAX smoke (scripts/package-aax-macos.sh, artefacts discarded)
+        shell: bash
+        run: |
+          set -euo pipefail
+          smoke="$RUNNER_TEMP/package-aax-smoke"
+          for v in 0.0.0-ci 0.0.0-ci2 0.0.0-ci; do
+            bash scripts/package-aax-macos.sh --mode unsigned --version "$v" --build-dir build --out-dir "$smoke"
+          done
+          ls -l "$smoke"
+          for v in 0.0.0-ci 0.0.0-ci2; do
+            zip="SynchainBridge-AAX-v$v-macos-arm64-UNSIGNED.zip"
+            [ "$(wc -l < "$smoke/$zip.sha256" | tr -d '[:space:]')" = "1" ] \
+              || { echo "::error::$zip.sha256 must be exactly one line"; exit 1; }
+            line="$(cat "$smoke/$zip.sha256")"
+            printf '%s\n' "$line" | grep -qE '^[0-9a-f]{64}  [^[:space:]]+$' \
+              || { echo "::error::$zip.sha256 is not '<64 hex>  <zip>' shaped: '$line'"; exit 1; }
+            want="$(shasum -a 256 "$smoke/$zip" | awk '{ print $1 }')"
+            [ "$line" = "$want  $zip" ] \
+              || { echo "::error::$zip.sha256 says '$line' but expected '$want  $zip'"; exit 1; }
+          done
+          n=$(grep -c '^zipFileName:' "$smoke/package-summary.md" || true)
+          if [ "$n" != "2" ]; then echo "::error::package-summary.md should hold exactly 2 segments (ci + ci2), got $n"; exit 1; fi
+          grep -qx 'zipFileName: SynchainBridge-AAX-v0.0.0-ci2-macos-arm64-UNSIGNED.zip' "$smoke/package-summary.md" \
+            || { echo "::error::re-running 0.0.0-ci wiped the unrelated 0.0.0-ci2 segment (over-deletion regression)"; exit 1; }
+          [ "$(grep -c '^zipFileName: SynchainBridge-AAX-v0.0.0-ci-macos-arm64-UNSIGNED.zip$' "$smoke/package-summary.md")" = "1" ] \
+            || { echo "::error::0.0.0-ci segment should appear exactly once after re-run"; exit 1; }
+          # 独立于脚本自检的绊线:zip 层级 + 可执行位 + INSTALL-AAX.txt 带 UNSIGNED 横幅(脚本的断言被削弱时这里仍会红)
+          z="$smoke/SynchainBridge-AAX-v0.0.0-ci-macos-arm64-UNSIGNED.zip"
+          names="$(unzip -Z1 "$z")"
+          for r in 'Synchain Bridge.aaxplugin/Contents/Info.plist' 'Synchain Bridge.aaxplugin/Contents/MacOS/Synchain Bridge' \
+                   'INSTALL-AAX.txt' 'LICENSE.txt' 'THIRD-PARTY-NOTICES.md' 'LICENSES/OFL-1.1.txt'; do
+            grep -qxF "$r" <<< "$names" || { echo "::error::AAX zip is missing '$r'"; exit 1; }
+          done
+          exe="$(unzip -Z "$z" | grep -F 'Synchain Bridge.aaxplugin/Contents/MacOS/Synchain Bridge' || true)"
+          grep -qE '^[-l]rwx' <<< "$exe" || { echo "::error::AAX zip lost the executable bit: '$exe'"; exit 1; }
+          # 先落进变量再匹配:`unzip -p | grep -q` 命中即退出可能给 unzip 送 SIGPIPE,pipefail 下整条管道判非零
+          install="$(unzip -p "$z" INSTALL-AAX.txt)"
+          grep -qF '(UNSIGNED)' <<< "$install" \
+            || { echo "::error::INSTALL-AAX.txt of an -UNSIGNED zip lacks the UNSIGNED banner"; exit 1; }
+          # 反向断言只认「签名检查」这一个失败原因(与 6c 同理):输出落进变量,再匹配拒收消息。
+          neg="$RUNNER_TEMP/package-aax-neg"
+          if negout="$(bash scripts/package-aax-macos.sh --mode signed --version 0.0.0-ci --build-dir build --out-dir "$neg" 2>&1)"; then
+            printf '%s\n' "$negout"
+            echo "::error::package-aax-macos.sh --mode signed accepted an unsigned (linker ad-hoc signed) bundle"; exit 1
+          fi
+          printf '%s\n' "$negout"
+          grep -qF 'refusing to package an unsigned bundle under a release name' <<< "$negout" \
+            || { echo "::error::package-aax-macos.sh --mode signed failed for an unrelated reason (signature check never reached)"; exit 1; }
+          echo "expected rejection observed (--mode signed refused the unsigned bundle)"
+          if [ -e "$neg/SynchainBridge-AAX-v0.0.0-ci-macos-arm64.zip" ]; then
+            echo "::error::release-named AAX zip produced from unsigned bundle"; exit 1
+          fi
+
+      # 8d) 未签名 AAX 件(与 windows job 的 6d 对称):版本 = CMake VERSION + -ci.<短 sha>,源码链接钉 head sha。
+      #     随后按 8b 的口径另取 cmake_ver,断言产物名逐字等于预期 —— 顺带在 BSD sed 上验证脚本从 CMake 回落读版本。
+      - name: Package AAX (unsigned)
+        shell: bash
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::HEAD_SHA is not a 40-hex commit: '$HEAD_SHA'"; exit 1; }
+          sha7="${HEAD_SHA:0:7}"
+          bash scripts/package-aax-macos.sh --mode unsigned --prerelease-tag "ci.$sha7" --source-ref "$HEAD_SHA" --build-dir build --out-dir dist/aax
+          ls -l dist/aax
+          cmake_ver="$(sed -E 's/#.*$//' CMakeLists.txt | grep -m1 -oE '^[[:space:]]*project[[:space:]]*\([[:space:]]*[^[:space:]]+[[:space:]]+VERSION[[:space:]]+[0-9]+\.[0-9]+\.[0-9]+' || true)"
+          cmake_ver="${cmake_ver##*[[:space:]]}"
+          [ -n "$cmake_ver" ] || { echo "::error::cannot read project(... VERSION) from CMakeLists.txt"; exit 1; }
+          want="SynchainBridge-AAX-v${cmake_ver}-ci.${sha7}-macos-arm64-UNSIGNED.zip"
+          { [ -f "dist/aax/$want" ] && [ -f "dist/aax/$want.sha256" ]; } \
+            || { echo "::error::expected dist/aax/$want (+ .sha256)"; exit 1; }
+          n=$(find dist/aax -maxdepth 1 -type f -name 'SynchainBridge-AAX-*.zip' | wc -l | tr -d '[:space:]')
+          [ "$n" = "1" ] || { echo "::error::expected exactly 1 AAX zip in dist/aax, found $n"; exit 1; }
+
+      # 8e) artifact 名刻意叫 aax-unsigned-*(不是 dist-*),理由同 windows job 的 6e。内层 zip 由 ditto 打,
+      #     可执行位保得住(upload-artifact 自己不保留 POSIX 权限,理由同下面第 9 步)。
+      - name: Upload AAX (unsigned)
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: aax-unsigned-macos-arm64
+          path: |
+            dist/aax/SynchainBridge-AAX-*-macos-arm64-UNSIGNED.zip
+            dist/aax/SynchainBridge-AAX-*-macos-arm64-UNSIGNED.zip.sha256
+          if-no-files-found: error
+          retention-days: ${{ github.event_name == 'pull_request' && 14 || 30 }}
 
       # 9) artifact 传输封装(**不是发行打包**):这里只解决 upload-artifact 不保留 POSIX
       #    权限位的问题 —— 直接传 bundle 目录 = 下载方拿到不可执行的死壳。合规文件 /

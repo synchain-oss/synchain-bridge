@@ -36,7 +36,46 @@
 
 ### 持续集成
 
+- **`ci.yml` 两个 build job 各加三步 AAX 打包**(触发面一字不改,不加 secret,不加新 action,上传沿用已 pin 的
+  `upload-artifact` v4.6.2 SHA):
+  - **AAX 打包冒烟**(Windows 6c / macOS 8c,产物丢弃,与 VST3/AU 的 6b / 8b 同构):`-UNSIGNED` 模式按
+    `0.0.0-ci → 0.0.0-ci2 → 0.0.0-ci` 三连跑,`.sha256` 字节形态与 summary 按段去重的断言逐字照搬 6b / 8b;另做一道
+    独立于脚本自检的绊线 —— zip 层级、(mac)可执行位、`INSTALL-AAX.txt` 必须带 `(UNSIGNED)` 横幅。
+    **反向断言**:同一个未签名 bundle 用 Signed 模式打包必须失败、失败原因必须是签名检查(匹配拒收消息,前置检查
+    先挂掉不算数),且输出目录里不得出现发行名 zip ——
+    「未签名件不可能长得像发行资产」由机器保证,而不是靠人记得。
+  - **Package AAX (unsigned)**(6d / 8d):版本 = CMake `VERSION` + `-ci.<head 短 sha>`,`INSTALL-AAX.txt` 的源码链接钉
+    head 全 sha(经 env 间接读入;PR 事件取 head 侧 sha,不取合并提交);随后断言产物名逐字等于预期(mac 侧顺带在
+    BSD sed 上验证脚本从 `CMakeLists.txt` 回落读版本)。
+  - **Upload**(6e / 8e):artifact `aax-unsigned-win64` / `aax-unsigned-macos-arm64`(内含 `-UNSIGNED.zip` + `.sha256`),
+    PR 保留 14 天、其余 30 天。名字刻意不叫 `dist-*`:`release.yml` 的 `publish` 只从 `dist-*` 取件,未签名件进不了 Release。
+    上传步骤不带事件条件,`workflow_dispatch` 同样产出 —— 在子分支上 dispatch 一次即可取到 Pro Tools Developer 测试件。
+
 ### 发布 / 分发(对下游可见)
+
+- **新增 AAX 打包脚本 `scripts/package-aax.ps1`(Windows x64)与 `scripts/package-aax-macos.sh`(macOS arm64)**,是 AAX
+  打包的唯一真源(本机签名流程与 CI 共用);现有 `package.ps1` / `package-macos.sh` 一行未改,VST3 / AU 发版链路零风险。
+  - `-Mode Unsigned|Signed`(mac:`--mode unsigned|signed`)**必填、无默认值**。**`-UNSIGNED` 约定**:未签名件一律叫
+    `SynchainBridge-AAX-v<版本>-{win64,macos-arm64}-UNSIGNED.zip`;不带后缀的发行名只在 Signed 模式、且 bundle 确实带
+    签名时才产出 —— Windows 要求 DLL 有 Authenticode 签名者证书且签名完好(`NotSigned` / `HashMismatch` 拒收;自签名证书的
+    `UnknownError` 属预期、放行),macOS 要求 `codesign --verify --strict` 通过、有 `Authority=` 且不是 ad-hoc、并有
+    `_CodeSignature/CodeResources`(arm64 链接器自动加的 ad-hoc 签名必然被拒)。Signed 模式打包后再把 zip 解到临时目录
+    **回读验签**并比对主体二进制字节;从建 staging 起任何一步失败都删掉本次的 zip / `.sha256`,失败路径上绝不留发行名 zip。
+  - 版本:`-Version` 与 `-PrereleaseTag`(`ci.<sha7>` → `<CMake VERSION>-ci.<sha7>`)互斥,显式传空串直接失败(不静默回落);
+    结果须匹配 `release.yml` 的 tag 口径。`-PrereleaseTag` 的构建必须同时给 `-SourceRef <40 位 commit>`(没有对应 tag,
+    默认的 `v<版本>` 会是死链)。`-BundlePath` 供签名流程直接指定 bundle(签名产物不在构建目录里);走构建目录时
+    Windows 只计含 `Contents\` 的已构建 bundle —— VS 多配置生成器在 generate 期就给每个配置各建一个只有 `desktop.ini`
+    的空壳 `.aaxplugin` 目录(JUCE 的 `file(GENERATE)`),它们不是产物;已构建的必须恰好 1 个。
+  - bundle 断言:Windows 为 `Contents\x64\Synchain Bridge.aaxplugin` 的 PE 头 Machine = 0x8664、根目录有 `desktop.ini` /
+    `Plugin.ico`、不含 `*.pdb/*.ilk/*.exp/*.lib`;macOS 为 arm64-only、`CFBundleIdentifier` 等于 `CMakeLists.txt` 的
+    `BUNDLE_ID`、`Contents/MacOS/Synchain Bridge` 可执行。
+  - zip 内放 `INSTALL-AAX.txt`(中文;不叫 `INSTALL.txt`,与 VST3 包解压到同一目录时互不覆盖):Unsigned 版顶部是
+    「未签名构建(UNSIGNED)—— 不是发行版」横幅,Signed 版是签名说明;两平台的 Pro Tools 插件目录安装命令(先删旧版)、
+    mac 的 arm64 / Rosetta 与解隔离说明、Avid / Pro Tools / AAX / PACE / iLok 商标声明、AAX SDK 2.8.0 的 GPLv3 说明与
+    精确到 ref 的源码链接。合规文件与现有包同一组(`LICENSE.txt` / `THIRD-PARTY-NOTICES.md` / `LICENSES/OFL-1.1.txt`)。
+  - `.sha256` 与 `package-summary.md` 的格式与现有脚本逐字一致(默认输出目录 `dist/aax`,与 VST3 的 `dist/` 分开)。
+    打包脚本**不调用 wraptool、不碰任何凭据**,所以 CI 能跑。
+- `.gitignore` 追加 `*.aaxplugin/`、`*.pfx`、`*.p12`、`*.pvk`:AAX bundle 与代码签名材料都不入库(签名证书一律放仓库外)。
 
 ### 兼容性
 
