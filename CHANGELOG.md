@@ -34,6 +34,24 @@
 
 ### 构建
 
+- **本地门禁 `scripts/gates.ps1` 加 AAX 支持**(既有 gate 与写死路径一行未动;新参数追加在参数表末尾,不改变既有的按位置调用):
+  - **gate 3h「签名材料 / Avid 评估工具不入库」,默认恒跑**(只读、秒级,不挂开关;默认结果表因此只多这一行):
+    `git ls-files` 列出已跟踪、未跟踪**以及被 `.gitignore` 忽略**的文件,命中 `*.pfx` / `*.p12` / `*.pvk`、`dsh.exe`、
+    DigiShell / AAX Validator 的可执行文件或安装包、测试计划 PDF 即 FAIL。只按扩展名 + 文件名匹配,文档文件名里出现
+    validator 不会误报。被忽略的文件也查:`.gitignore` 已忽略证书扩展名,只查「会被提交的」就看不见仓库里躺着的证书,
+    而签名材料本就必须放仓库外(签名脚本与证书助手同样拒绝仓库内路径)。
+  - **`-IncludeAax`(默认关)**:在 selftest 之后、pluginval 之前加跑三道 gate;只读 gate 失败、配置 / 构建失败时
+    这三道各记一行 SKIP,开头的 Mode 段多打印一行 `AAX : 开/关`。
+    - **5c AAX bundle 结构**:`Contents\x64\Synchain Bridge.aaxplugin` 的 PE 头 Machine = 0x8664、根目录有 `desktop.ini` /
+      `Plugin.ico`、构建目录下已构建(含 `Contents\`)的 `.aaxplugin` 恰好 1 个(VS 多配置生成器给每个配置建的空壳目录不计)。
+    - **5d AAX 打包冒烟**:以 `-BundlePath` 调 `scripts/package-aax.ps1`,输出到 `dist\gates-aax-<构建目录名>`(并行
+      worktree 互不干扰、已被忽略)。Unsigned 跑一次,`.sha256` 与 `ci.yml` 的 AAX 冒烟同一套字节断言;Signed 反向断言 ——
+      同一个未签名 bundle 必须因签名检查被拒,且不留发行名 zip。
+    - **5e AAX Validator(可选)**:`-AaxValidatorPath <仓库外的 Validator 可执行文件>`(给了即隐含 `-IncludeAax`)。
+      没给 → SKIP;给了空串、路径在仓库内或不存在 → FAIL。调用参数与通过 / 失败标记是文件头三个 `TODO-AAXVAL` 常量,
+      未实测填写前恒 SKIP「调用方式未实测」,**绝不假绿**;填好后输出 Tee 到 `<构建目录>\gates-aaxval.log`,以输出标记
+      判定、退出码只作参考(与 auval 同口径)。
+
 ### 持续集成
 
 - **`ci.yml` 两个 build job 各加三步 AAX 打包**(触发面一字不改,不加 secret,不加新 action,上传沿用已 pin 的
