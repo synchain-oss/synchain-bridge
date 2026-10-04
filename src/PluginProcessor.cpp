@@ -5,6 +5,11 @@
 #include "PluginProcessor.h"
 #include "WebViewEditor.h"
 
+// processBlock 的 AAX 离线早退读 isNonRealtime()（JUCE 里是 std::atomic<bool> 的 load）：
+// CLAUDE.md §8 只允许 is_always_lock_free 的原子量进音频线程。
+static_assert(std::atomic<bool>::is_always_lock_free,
+              "CLAUDE.md s8: the std::atomic<bool> behind isNonRealtime() must be lock-free");
+
 namespace synchain
 {
 
@@ -96,6 +101,30 @@ void SynchainBridgeAudioProcessor::timerCallback()
     // message 线程：安全 setVolumePct（setValueNotifyingHost 须在此线程）。见类注释/onVolumeChange。
     if (const int webVol = consumePendingWebVolume(); webVol >= 0)
         setVolumePct(webVol);
+
+    // [AAX 诊断] 宿主 non-realtime（离线渲染）状态切换时打一行 —— processBlock 的离线早退只能这样在
+    // 宿主里验证：音频线程绝不写日志（CLAUDE.md §8）。本 timer 编辑器关着时也跑；30Hz 轮询会漏掉短于
+    // 一拍的来回切换，诊断用途可接受。带上 wrapper：早退只对 AAX 生效，其他格式这行只是记录宿主状态。
+    // 前缀与 WebViewEditor::logDiag 一致，文案 ASCII。
+    if (const bool offline = isNonRealtime(); offline != mLoggedNonRealtime)
+    {
+        mLoggedNonRealtime = offline;
+        juce::Logger::writeToLog(juce::String("SynchainBridge: host non-realtime ") + (offline ? "on" : "off") +
+                                 " (wrapper=" + getWrapperTypeDescription(wrapperType) + ")");
+    }
+}
+
+bool SynchainBridgeAudioProcessor::isBusesLayoutSupported(const BusesLayout& layouts) const
+{
+    // VST3 / AU：保持 JUCE 默认(恒 true)，与 1.5.x 逐字等价 —— 已存工程的声道协商结果不变。
+    if (wrapperType != wrapperType_AAX)
+        return true;
+
+    // AAX：只登记 mono→mono('jcbb')、stereo→stereo('jccc') 两个 stem 组合(PlugIn ID 进会话，
+    // 发版后只许加不许删)。mono→stereo 不给：processBlock 不写 buffer，多出的输出声道无定义。
+    const auto in = layouts.getMainInputChannelSet();
+    return in == layouts.getMainOutputChannelSet() &&
+           (in == juce::AudioChannelSet::mono() || in == juce::AudioChannelSet::stereo());
 }
 
 void SynchainBridgeAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
@@ -133,6 +162,13 @@ void SynchainBridgeAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer
 
     if (!mBridgeServer.isRunning())
         return; // standby: no metering, no send
+
+    // [AAX] 离线渲染(PT offline bounce / Track Commit / Freeze，快于实时)：音频原样直通(本函数
+    // 从不写 buffer)，不计量、不推流 —— 快于实时灌 SPSC ring 只会把接收端实时播放冲成乱流、
+    // 背压丢帧计数暴涨。isNonRealtime() = std::atomic<bool> load(§8 允许，见文件头 static_assert)。
+    // 1.6.0 只对 AAX 生效：VST3/AU 的离线导出本轮未测，推广为全格式另开 issue(届时删掉前半个条件)。
+    if (wrapperType == wrapperType_AAX && isNonRealtime())
+        return;
 
     // 防越界（Synchain issue 169）：宿主可能给出比 prepareToPlay 宣告更大的块（或在 prepare 前回调）。
     // 夹取到已预分配容量上界；绝不在音频线程重新分配。numChannels<=0 无有效声道 → 早退。

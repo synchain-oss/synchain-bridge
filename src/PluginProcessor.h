@@ -35,6 +35,8 @@ public:
     bool acceptsMidi() const override { return false; }
     bool producesMidi() const override { return false; }
     double getTailLengthSeconds() const override { return 0.0; }
+    // VST3 / AU：恒 true（与 1.5.x 逐字等价）；AAX：只收 mono→mono / stereo→stereo（见 .cpp）。
+    bool isBusesLayoutSupported(const BusesLayout& layouts) const override;
 
     int getNumPrograms() override { return 1; }
     int getCurrentProgram() override { return 0; }
@@ -116,6 +118,9 @@ private:
 
     // web 下发的待应用主控音量（-1 = 无）。WS 线程写（requestWebVolume），编辑器 Timer 读并清（message 线程）。
     std::atomic<int> mPendingWebVolume{-1};
+
+    // 上次打日志时宿主的 non-realtime 状态。**只在 message 线程**（本类 timerCallback）读写，故非原子。
+    bool mLoggedNonRealtime = false;
 
     int mPort = synchain::plugin::DefaultPort;
     juce::String mLang{"zh"};

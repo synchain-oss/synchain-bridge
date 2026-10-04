@@ -38,7 +38,7 @@ cmake --build build --parallel
 配置期日志里应出现：
 
 ```
--- Building Synchain Bridge for macOS: VST3 + AU, arch=arm64, min=11.0, WKWebView
+-- Building Synchain Bridge for macOS: VST3 + AU + AAX, arch=arm64, min=11.0, WKWebView
 ```
 
 产物：
