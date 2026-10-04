@@ -68,9 +68,9 @@
 - **AAX 线终审修复(AAX-16)**:签名脚本在打包之后的步骤(回读复验等)失败时删掉本次产出的发行名 zip 与 `.sha256`;
   `sign-aax.ps1` 要求 pwsh 7.3+ 并对 wraptool 显式用 Standard 传参(含双引号 / 空格的口令不再被拆错),wraptool 输出里口令的
   转义形态与片段同样打码,git / gh 输出按 UTF-8 解码、来源核对只取 ASCII 字段(中文 Windows 下不再误报);gate 3h 中文文件名
-  不再漏报、目录名不再误报;gate 5c 按当前 `-Config` 计数,AAX 开关为 OFF 时 `build.ps1 -InstallAax` 与 5c 报错而不用旧 bundle;
-  `ci.yml` 的 pull_request 不再出 `aax-unsigned-*` 测试件;`docs/release.md` 补全借用 Mac 的清理清单、如实写明口令会出现在
-  wraptool 进程命令行里。上面各条已按修复后的行为改写。
+  不再漏报、目录名不再误报;gate 5c 按当前 `-Config` 计数,AAX 开关为 OFF 时 `build.ps1 -InstallAax` 与 5c 报错而不用旧
+  bundle(判据共用新增的 `scripts/aax-build-state.ps1`);`ci.yml` 的 pull_request 不再出 `aax-unsigned-*` 测试件;
+  `docs/release.md` 补全借用 Mac 的清理清单、如实写明口令会出现在 wraptool 进程命令行里。上面各条已按修复后的行为改写。
 
 ### 构建
 

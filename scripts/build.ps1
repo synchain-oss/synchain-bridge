@@ -204,23 +204,10 @@ $cmakeArgs = @(
 & cmake @cmakeArgs
 if ($LASTEXITCODE -ne 0) { throw ('cmake configure failed (exit ' + $LASTEXITCODE + ')') }
 
-# AAX 开关被关掉时,构建目录里的 .aaxplugin 是开关打开时留下的旧产物:SYNCHAIN_BRIDGE_AAX 是普通 CACHE 选项,设成 OFF 后
-# 一直留在缓存里(本脚本的 configure 不传它);OFF 时不生成 SynchainBridgeVST_AAX 目标,CMake / MSBuild 也不删已移除目标
-# 的旧产物(旧 .vcxproj 一样残留,不能拿它当判据)。可信的只有缓存值与每次 generate 都重写的 .sln(与 gates.ps1 的
-# gate 5c 同一判据)。-InstallAax 时在构建前就拒绝,不把旧二进制装进 Pro Tools。
-function Get-AaxDisabledReason([string]$Dir) {
-    $cache = Join-Path $Dir 'CMakeCache.txt'
-    if (-not (Test-Path -LiteralPath $cache -PathType Leaf)) { return ('找不到 ' + $cache) }
-    $m = Select-String -LiteralPath $cache -Pattern '^SYNCHAIN_BRIDGE_AAX:[A-Za-z]+=(.*)$' | Select-Object -First 1
-    if (-not $m) { return 'CMakeCache.txt 里没有 SYNCHAIN_BRIDGE_AAX' }
-    $v = $m.Matches[0].Groups[1].Value.Trim()
-    if ($v -notmatch '^(?i)(ON|TRUE|YES|Y|[1-9][0-9]*)$') { return ('CMakeCache.txt 里 SYNCHAIN_BRIDGE_AAX=' + $v) }
-    $sln = @(Get-ChildItem -LiteralPath $Dir -Filter '*.sln' -File -ErrorAction SilentlyContinue)
-    if ($sln.Count -gt 0 -and -not @($sln | Where-Object { Select-String -LiteralPath $_.FullName -SimpleMatch '"SynchainBridgeVST_AAX"' -Quiet }).Count) {
-        return ($sln[0].Name + ' 里没有 SynchainBridgeVST_AAX 目标')
-    }
-    return $null
-}
+# AAX 开关被关掉(或生成的工程里没有 AAX 目标)时,构建目录里的 .aaxplugin 是开关打开时留下的旧产物:本脚本的 configure
+# 不传 SYNCHAIN_BRIDGE_AAX,缓存里的 OFF 会一直保留。判据与 gates.ps1 的 gate 5c 共用 scripts/aax-build-state.ps1(理由写在
+# 那里)。-InstallAax 时在构建前就拒绝,不把旧二进制装进 Pro Tools。
+. (Join-Path $PSScriptRoot 'aax-build-state.ps1')
 $aaxOffReason = Get-AaxDisabledReason $BuildDir
 if ($InstallAax -and $aaxOffReason) {
     throw ('-InstallAax:' + $aaxOffReason + ' —— AAX 目标没有参与本次构建,构建目录里的 AAX bundle 是旧产物,拒绝安装。' +

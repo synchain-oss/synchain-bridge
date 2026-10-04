@@ -24,6 +24,8 @@
 .EXAMPLE   pwsh scripts/gates.ps1 -PluginOnly -AaxValidatorPath "$env:USERPROFILE\avid-tools\<解压目录>\dsh.exe"
            # 给了 Validator 路径即隐含 -IncludeAax;工具必须放仓库外(Avid 评估许可,不入库)
 #>
+# pwsh 7+:gate 3c 用 ConvertFrom-Json -AsHashtable、gate 3h 用 ProcessStartInfo.ArgumentList,Windows PowerShell 5.1 都没有
+#Requires -Version 7.0
 [CmdletBinding()]
 param(
     [switch]$Quick,          # 跳过 pluginval(gate 6/7)
@@ -656,27 +658,9 @@ function Add-AaxSkips([string]$why) {
 }
 function Get-AaxBundlePath { return (Join-Path $BuildDir ('SynchainBridgeVST_artefacts\' + $Config + '\AAX\Synchain Bridge.aaxplugin')) }
 
-# AAX 开关被关掉时,构建目录里的 .aaxplugin 是开关打开时留下的旧产物:CMakeLists.txt 的 SYNCHAIN_BRIDGE_AAX 是普通 CACHE
-# 选项,设成 OFF 后一直留在缓存里;OFF 时不生成 SynchainBridgeVST_AAX 目标,CMake / MSBuild 也不删已移除目标的旧产物
-# (旧 .vcxproj 一样残留,不能拿它当判据)。可信的只有缓存值与每次 generate 都重写的 .sln。返回 $null = 开关为 ON 且
-# 生成的工程里有 AAX 目标;否则返回原因(与 scripts/build.ps1 -InstallAax 同一判据)。
-function Get-AaxDisabledReason([string]$Dir) {
-    $cache = Join-Path $Dir 'CMakeCache.txt'
-    if (-not (Test-Path -LiteralPath $cache -PathType Leaf)) { return ('找不到 ' + $cache + '(还没 configure?)') }
-    $m = Select-String -LiteralPath $cache -Pattern '^SYNCHAIN_BRIDGE_AAX:[A-Za-z]+=(.*)$' | Select-Object -First 1
-    if (-not $m) { return 'CMakeCache.txt 里没有 SYNCHAIN_BRIDGE_AAX(不是本仓库的构建目录?)' }
-    $v = $m.Matches[0].Groups[1].Value.Trim()
-    if ($v -notmatch '^(?i)(ON|TRUE|YES|Y|[1-9][0-9]*)$') {
-        return ('CMakeCache.txt 里 SYNCHAIN_BRIDGE_AAX=' + $v + ':AAX 目标没有参与本次构建,构建目录里的 AAX bundle 是旧产物' +
-            '(重新 configure 时加 -DSYNCHAIN_BRIDGE_AAX=ON,或换一个干净的 -BuildDir)')
-    }
-    $sln = @(Get-ChildItem -LiteralPath $Dir -Filter '*.sln' -File -ErrorAction SilentlyContinue)
-    if ($sln.Count -gt 0 -and -not @($sln | Where-Object { Select-String -LiteralPath $_.FullName -SimpleMatch '"SynchainBridgeVST_AAX"' -Quiet }).Count) {
-        return ($sln[0].Name + ' 里没有 SynchainBridgeVST_AAX 目标(SYNCHAIN_BRIDGE_AAX=' + $v + ',但 JUCE 没建 AAX):' +
-            '构建目录里的 AAX bundle 是旧产物')
-    }
-    return $null
-}
+# AAX 开关被关掉(或生成的工程里没有 AAX 目标)时,构建目录里的 .aaxplugin 是开关打开时留下的旧产物 ——
+# 判据 Get-AaxDisabledReason 与 scripts/build.ps1 -InstallAax 共用 scripts/aax-build-state.ps1,理由写在那里。
+. (Join-Path $PSScriptRoot 'aax-build-state.ps1')
 
 # PE 头 Machine 字段:MZ → 偏移 0x3C 处的 e_lfanew → 'PE\0\0' → 紧随其后的 UInt16(与 package-aax.ps1 同一读法)
 function Get-PeMachine([string]$path) {
@@ -705,7 +689,8 @@ function Test-AaxBundle {
     $bad = @()
     $offReason = Get-AaxDisabledReason $BuildDir
     if ($offReason) {
-        Add-Result $script:AaxBundleLabel 'FAIL' $offReason
+        Add-Result $script:AaxBundleLabel 'FAIL' ($offReason + ':AAX 目标没有参与本次构建,构建目录里的 AAX bundle 是旧产物' +
+            '(重新 configure 时加 -DSYNCHAIN_BRIDGE_AAX=ON,或换一个干净的 -BuildDir)')
         return $false
     }
     $bundle = Get-AaxBundlePath
