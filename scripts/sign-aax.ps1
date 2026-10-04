@@ -6,11 +6,15 @@
 
   流程(任一步失败即 exit 1):
     预检 0 参数:Windows;-WcGuid 是 GUID;-ExtraWraptoolArgs 不含口令、不覆盖本脚本管理的 flag
-    预检 1 输入 zip 同目录的 .sha256 逐字节符合「64 位小写 hex + 两个空格 + zip 名 + LF」,且与实际哈希相等
+    预检 1 完整性:输入 zip 同目录的 .sha256 逐字节符合「64 位小写 hex + 两个空格 + zip 名 + LF」,且与实际哈希相等。
+           只防损坏 / 下载不完整 —— .sha256 与 zip 是同一份下载,换得了 zip 就换得了 .sha256,防不了替换
     预检 2 从文件名解析版本:SynchainBridge-AAX-v<版本>-win64-UNSIGNED.zip
     预检 3 检出对应该版本:-ci.<sha> 版本要求 HEAD 以该 sha 开头(SourceRef = 完整 HEAD);其余版本要求 HEAD 上有
            tag v<版本>(SourceRef = v<版本>);LICENSE / THIRD-PARTY-NOTICES.md / LICENSES / scripts 无未提交改动
-    预检 4 KeyFile 存在,且解析后的完整路径不在仓库目录下(路径前缀 + git 工作树两道判定)
+    预检 3b 来源(-SourceRunId):该 run 属于本仓库(非 fork)、是 ci.yml / release.yml、结论 success、head_sha = HEAD;
+           再用 gh run download 取回它的 aax-unsigned-* artifact,其中同名 zip 必须与输入 zip 字节相同。
+           这是「哪些字节会被盖上签名」的信任根;不给 -SourceRunId 只记 WARN(本地自建件没有 run 可核对)
+    预检 4 KeyFile 存在,且解析后的完整路径不在仓库目录下(路径前缀 + git 公共目录两道判定,覆盖本仓库的其他 worktree)
     预检 5 wraptool 可执行,`wraptool help sign` 列出所需 flag(TO-VALIDATE)
     预检 6 iLok 只提醒不硬检(wraptool 自己会报错)
     预检 7 解压到全新临时目录:bundle 存在、DLL 为 NotSigned、`wraptool verify` 必须失败(已签过的件重签会报错)
@@ -31,9 +35,11 @@
 
   禁止 Start-Transcript:本脚本不开 transcript,也不要在开着 transcript 的会话里运行(wraptool 的输出与本脚本的
   日志都不该进任何落盘记录)。签名期间 --keypassword 会出现在本机进程列表里(wraptool 只收命令行参数,TO-VALIDATE
-  是否有 stdin / 环境变量通道),只在可信的单用户机器上执行。
+  是否有 stdin / 环境变量通道),只在可信的单用户机器上执行。wraptool --verbose 是否回显收到的参数未知(TO-VALIDATE V1):
+  它的输出逐行把口令 / PACE 账号 / wcguid 字面替换成 **** 后再显示。
 .EXAMPLE
-  pwsh scripts/sign-aax.ps1 -UnsignedZip <下载目录>\SynchainBridge-AAX-v1.6.0-win64-UNSIGNED.zip `
+  gh run download <run ID> -R synchain-oss/synchain-bridge -n aax-unsigned-win64 -D <下载目录>
+  pwsh scripts/sign-aax.ps1 -UnsignedZip <下载目录>\SynchainBridge-AAX-v1.6.0-win64-UNSIGNED.zip -SourceRunId <run ID> `
        -Account <PACE 账号> -WcGuid <wrap 配置 GUID> -KeyFile $env:USERPROFILE\.synchain-signing\synchain-aax-codesign.pfx -DryRun
 #>
 #Requires -Version 7.2
@@ -46,6 +52,7 @@ param(
     [string]$OutDir = 'dist/aax-signed',          # 相对路径按仓库根解析;dist/ 已被 .gitignore 覆盖
     [string]$WraptoolPath = '',                   # 默认先找 PATH,再找 Eden 默认安装路径(TO-VALIDATE)
     [string[]]$ExtraWraptoolArgs = @(),           # 原样透传给 wraptool sign,例如 '--dsig1-compat','off'(TO-VALIDATE)
+    [string]$SourceRunId = '',                    # 产出该 zip 的 CI / release run 的 ID:给了就核对来源(预检 3b),不给只记 WARN
     [switch]$PromptAccountPassword,               # 交互读入 PACE 账号口令并传 --password(V2:是否需要,TO-VALIDATE)
     [switch]$AllowNoTimestamp,                    # 放行不带时间戳的 Authenticode 签名(V3)
     [switch]$DryRun
@@ -104,7 +111,8 @@ function Format-CommandLine([string[]]$Display) {
     return (($Display | ForEach-Object { if ($_ -match '\s' -or $_ -eq '') { '"' + $_ + '"' } else { $_ } }) -join ' ')
 }
 
-function Invoke-Wraptool([string[]]$Arguments, [string[]]$Display = $null, [switch]$Capture) {
+# -Redact:回显 wraptool 输出前逐行把这些值字面替换成 ****(TO-VALIDATE V1:--verbose 是否回显收到的参数未知,先按会回显处理)
+function Invoke-Wraptool([string[]]$Arguments, [string[]]$Display = $null, [switch]$Capture, [string[]]$Redact = @()) {
     if ($null -eq $Display) { $Display = $Arguments }
     Write-Host ("> wraptool " + (Format-CommandLine $Display))
     $ErrorActionPreference = 'Continue'
@@ -112,14 +120,34 @@ function Invoke-Wraptool([string[]]$Arguments, [string[]]$Display = $null, [swit
         $text = (& $script:Wraptool @Arguments 2>&1 | ForEach-Object { "$_" }) -join "`n"
         return [pscustomobject]@{ ExitCode = $LASTEXITCODE; Output = $text }
     }
-    & $script:Wraptool @Arguments 2>&1 | ForEach-Object { Write-Host "  $_" }
+    $secrets = @($Redact | Where-Object { $_ })
+    & $script:Wraptool @Arguments 2>&1 | ForEach-Object {
+        $line = "$_"
+        foreach ($s in $secrets) { $line = $line.Replace($s, '****') }   # String.Replace:字面替换,不经正则
+        Write-Host "  $line"
+    }
     return [pscustomobject]@{ ExitCode = $LASTEXITCODE; Output = '' }
+}
+
+function Invoke-Gh([string[]]$GhArgs) {
+    $ErrorActionPreference = 'Continue'
+    $all = @(& gh @GhArgs 2>&1)
+    $out = @($all | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] } | ForEach-Object { "$_" })
+    $err = @($all | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] } | ForEach-Object { "$_" })
+    return [pscustomobject]@{ ExitCode = $LASTEXITCODE; Lines = $out; Err = ($err -join ' ') }
+}
+
+# 同一仓库的所有 worktree 共用同一个 git 公共目录(--git-common-dir);不在任何 git 工作树里则返回 $null
+function Get-GitCommonDir([string]$Dir) {
+    $r = Invoke-Git @('rev-parse', '--path-format=absolute', '--git-common-dir') $Dir
+    if ($r.ExitCode -ne 0 -or -not $r.Lines) { return $null }
+    return [System.IO.Path]::GetFullPath($r.Lines[0]).TrimEnd('\', '/')
 }
 
 # pfx 不得落在仓库目录下(CLAUDE.md §0 铁律 1)。两道判定:
 #   ① 完整路径前缀(不区分大小写;文件本身若是符号链接,链接目标同样比);
-#   ② git 兜底:目录经 junction / subst 指进仓库时前缀比较看不出来,git 会解析到真实工作树 —— 只要 KeyFile 所在
-#      (或最近一个已存在的上级)目录属于本仓库的工作树就判在库内。
+#   ② git 兜底:KeyFile 所在(或最近一个已存在的上级)目录只要与本仓库共用同一个 git 公共目录就判在库内 ——
+#      覆盖经 junction / subst 指进仓库(git 会解析到真实路径)以及放在本仓库另一个 worktree 里两种情况。
 function Test-InsideRepo([string]$FullPath) {
     $cmp = [System.StringComparison]::OrdinalIgnoreCase
     $roots = @($RepoRoot.TrimEnd('\', '/'))
@@ -133,15 +161,13 @@ function Test-InsideRepo([string]$FullPath) {
             if ($c.Equals($r, $cmp) -or $c.StartsWith($r + '\', $cmp)) { return $true }
         }
     }
-    $repoTop = Invoke-Git @('rev-parse', '--show-toplevel')
-    if ($repoTop.ExitCode -ne 0 -or -not $repoTop.Lines) { return $false }
+    $repoCommon = Get-GitCommonDir $RepoRoot
+    if (-not $repoCommon) { return $false }
     $dir = Split-Path -Parent $FullPath
     while ($dir -and -not (Test-Path -LiteralPath $dir -PathType Container)) { $dir = Split-Path -Parent $dir }
     if (-not $dir) { return $false }
-    $top = Invoke-Git @('rev-parse', '--show-toplevel') $dir
-    if ($top.ExitCode -ne 0 -or -not $top.Lines) { return $false }
-    return [System.IO.Path]::GetFullPath($top.Lines[0]).TrimEnd('\').Equals(
-        [System.IO.Path]::GetFullPath($repoTop.Lines[0]).TrimEnd('\'), $cmp)
+    $common = Get-GitCommonDir $dir
+    return [bool]($common -and $common.Equals($repoCommon, $cmp))
 }
 
 $script:Wraptool = $null
@@ -163,10 +189,12 @@ try {
             if ($a -like '*password*') { throw "-ExtraWraptoolArgs 不得含口令类参数('$a'):口令只经交互读入,不进参数" }
             if ($a -match $ManagedFlagRe) { throw "-ExtraWraptoolArgs 不得重复本脚本管理的 flag('$a')" }
         }
+        if ($SourceRunId -and $SourceRunId -cnotmatch '^[0-9]+$') { throw "-SourceRunId 应为纯数字的 workflow run ID:'$SourceRunId'" }
         Add-Check '0 参数' 'PASS' ("WcGuid 格式正确;ExtraWraptoolArgs {0} 项" -f $ExtraWraptoolArgs.Count)
     } catch { Add-Check '0 参数' 'FAIL' $_.Exception.Message }
 
-    # ---------------------------------------------------------------- 预检 1:.sha256
+    # ---------------------------------------------------------------- 预检 1:.sha256(完整性)
+    # 只防损坏 / 下载不完整:.sha256 与 zip 是同一份下载,换得了 zip 就换得了 .sha256 —— 来源由预检 3b 核对
     $zipFull = Resolve-UserPath $UnsignedZip
     $zipName = Split-Path -Leaf $zipFull
     $zipOk = $false
@@ -184,9 +212,9 @@ try {
         }
         $actual = (Get-FileHash -LiteralPath $zipFull -Algorithm SHA256).Hash.ToLowerInvariant()
         if ($actual -cne $m.Groups['h'].Value) {
-            throw "SHA256 不符:.sha256 记录 $($m.Groups['h'].Value),实际 $actual —— zip 被改动或下载不完整,拒绝签名"
+            throw "SHA256 不符:.sha256 记录 $($m.Groups['h'].Value),实际 $actual —— zip 损坏或下载不完整(本项只验完整性),拒绝签名"
         }
-        Add-Check '1 sha256' 'PASS' "$zipName = $actual"
+        Add-Check '1 sha256' 'PASS' "完整性:$zipName = $actual"
         $zipOk = $true
     } catch { Add-Check '1 sha256' 'FAIL' $_.Exception.Message }
 
@@ -205,6 +233,7 @@ try {
 
     # ---------------------------------------------------------------- 预检 3:检出与版本对应
     $sourceRef = $null
+    $headCommit = $null   # 已确认与版本对应的 HEAD commit(预检 3b 用;合规文件脏不影响它)
     if ($ver) {
         try {
             if (-not (Get-Command git -CommandType Application -ErrorAction SilentlyContinue)) { throw 'git 不在 PATH 上' }
@@ -219,6 +248,7 @@ try {
                     throw "版本 $ver 来自 commit $want,当前 HEAD = ${headSha}:先 git checkout $want(合规文件与 INSTALL-AAX.txt 的源码链接必须对应该 commit)"
                 }
                 $sourceRef = $headSha
+                $headCommit = $headSha
             } else {
                 # 正式版与 tag 预发布(含 v0.0.0-test 彩排):HEAD 上必须有 v<版本> tag
                 $tags = Invoke-Git @('tag', '--points-at', 'HEAD')
@@ -228,6 +258,7 @@ try {
                     throw "HEAD 上没有 tag v$ver(现有:$have):先 git checkout v$ver"
                 }
                 $sourceRef = "v$ver"
+                $headCommit = $headSha
             }
             $dirty = Invoke-Git @('status', '--porcelain', '--', 'LICENSE', 'THIRD-PARTY-NOTICES.md', 'LICENSES', 'scripts')
             if ($dirty.ExitCode -ne 0) { throw "git status 失败(exit $($dirty.ExitCode))" }
@@ -238,6 +269,54 @@ try {
         } catch { $sourceRef = $null; Add-Check '3 检出' 'FAIL' $_.Exception.Message }
     } else {
         Add-Check '3 检出' 'SKIP' '版本未解析出来'
+    }
+
+    # ---------------------------------------------------------------- 预检 3b:来源(哪次构建产出了这些字节)
+    if (-not $SourceRunId) {
+        Add-Check '3b 来源' 'WARN' ('未给 -SourceRunId:只验了完整性,没核对这个 zip 出自哪次 CI 构建(.sha256 与 zip 同一份下载,' +
+            '防不了替换)。签 CI / release 产物时请传产出它的 run ID')
+    } elseif ($SourceRunId -cnotmatch '^[0-9]+$') {
+        Add-Check '3b 来源' 'SKIP' '-SourceRunId 无效(见预检 0)'
+    } elseif (-not $zipOk -or -not $headCommit) {
+        Add-Check '3b 来源' 'SKIP' '输入 zip 完整性或检出未通过,无从核对'
+    } else {
+        $prov = $null
+        try {
+            if (-not (Get-Command gh -CommandType Application -ErrorAction SilentlyContinue)) { throw 'gh 不在 PATH 上(来源核对用 GitHub CLI,需已 gh auth login)' }
+            $r = Invoke-Gh @('api', "repos/$UploadRepo/actions/runs/$SourceRunId")
+            if ($r.ExitCode -ne 0) { throw "读取 run $SourceRunId 失败(exit $($r.ExitCode)):$($r.Err)" }
+            $run = ($r.Lines -join "`n") | ConvertFrom-Json
+            $runRepo  = [string]$run.repository.full_name
+            $headRepo = [string]$run.head_repository.full_name
+            if ($runRepo -cne $UploadRepo -or $headRepo -cne $UploadRepo) {
+                throw "run $SourceRunId 属于 $runRepo(head 来自 $headRepo),不是 $UploadRepo 本仓库的构建"
+            }
+            if (@('.github/workflows/ci.yml', '.github/workflows/release.yml') -cnotcontains [string]$run.path) {
+                throw "run $SourceRunId 的 workflow 是 '$($run.path)',只接受 ci.yml / release.yml 的产物"
+            }
+            if ([string]$run.conclusion -cne 'success') {
+                throw "run $SourceRunId 的结论是 '$($run.status)/$($run.conclusion)',只接受成功完成的构建"
+            }
+            if ([string]$run.head_sha -cne $headCommit) {
+                throw "run $SourceRunId 构建的是 $($run.head_sha),当前检出是 ${headCommit}:zip 与检出不是同一个 commit"
+            }
+            # 取回该 run 的 aax-unsigned-* artifact(ci.yml 6e / release.yml 的命名都以此开头),其中同名 zip 必须与输入字节相同
+            $prov = Join-Path ([System.IO.Path]::GetTempPath()) ('synchain-aax-provenance-' + [guid]::NewGuid().ToString('N'))
+            $d = Invoke-Gh @('run', 'download', $SourceRunId, '-R', $UploadRepo, '-p', 'aax-unsigned-*', '-D', $prov)
+            if ($d.ExitCode -ne 0) { throw "gh run download $SourceRunId 失败(exit $($d.ExitCode);artifact 过期了?):$($d.Err)" }
+            $hits = @(Get-ChildItem -LiteralPath $prov -Recurse -File -Force -ErrorAction SilentlyContinue | Where-Object { $_.Name -ceq $zipName })
+            if ($hits.Count -ne 1) { throw "run $SourceRunId 的 aax-unsigned-* artifact 里找到 $($hits.Count) 个 $zipName(应恰好 1 个)" }
+            $runHash = (Get-FileHash -LiteralPath $hits[0].FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($runHash -cne $actual) {
+                throw "输入 zip($actual)与 run $SourceRunId 的 artifact($runHash)字节不同:不是这次构建的产物,拒绝签名"
+            }
+            Add-Check '3b 来源' 'PASS' ("run $SourceRunId($($run.path),$($run.event),head $($run.head_sha.Substring(0, 7)))" +
+                "的 artifact 与输入 zip 字节相同")
+        } catch {
+            Add-Check '3b 来源' 'FAIL' $_.Exception.Message
+        } finally {
+            if ($prov -and (Test-Path -LiteralPath $prov)) { Remove-Item -LiteralPath $prov -Recurse -Force }
+        }
     }
 
     # ---------------------------------------------------------------- 预检 4:KeyFile
@@ -361,6 +440,7 @@ try {
     if ($DryRun) {
         Write-Host ''
         Write-Host '[DryRun] 签名计划(未执行):'
+        Write-Host $(if ($SourceRunId) { "  0) 来源已按 run $SourceRunId 核对(见预检 3b)" } else { '  0) 未给 -SourceRunId:来源未核对(只验了完整性)' })
         Write-Host '  1) Read-Host -AsSecureString 读 pfx 口令(不进参数 / 日志 / transcript),载入 pfx 取指纹并确认带私钥、未过期'
         if ($PromptAccountPassword) { Write-Host '     另读 PACE 账号口令(--password,TO-VALIDATE V2)' }
         Write-Host ("  2) wraptool " + (Format-CommandLine $wtShow))
@@ -449,7 +529,8 @@ try {
                 $wtArgs += @('--password', $plainA)   # TO-VALIDATE(V2)
             }
             $wtArgs += $ExtraWraptoolArgs             # TO-VALIDATE:例如 --dsig1-compat off
-            $sign = Invoke-Wraptool $wtArgs -Display $wtShow
+            # TO-VALIDATE(V1):--verbose 是否回显收到的参数未知 —— 输出里的口令 / 账号 / wcguid 一律字面替换成 ****
+            $sign = Invoke-Wraptool $wtArgs -Display $wtShow -Redact @($plainK, $plainA, $Account, $WcGuid)
         } finally {
             if ($bstrK -ne [IntPtr]::Zero) { [System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstrK) }
             if ($bstrA -ne [IntPtr]::Zero) { [System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstrA) }
@@ -462,7 +543,7 @@ try {
 
         # ================================================================ 后检
         function Assert-SignedBundle([string]$Bundle, [string]$Label) {
-            $vr = Invoke-Wraptool @('verify', '--verbose', '--in', $Bundle)   # TO-VALIDATE(V1):语法与退出码
+            $vr = Invoke-Wraptool @('verify', '--verbose', '--in', $Bundle) -Redact @($Account, $WcGuid)   # TO-VALIDATE(V1):语法与退出码
             if ($vr.ExitCode -ne 0) { throw "${Label}:wraptool verify 失败(exit $($vr.ExitCode))" }
             $dll = Join-Path $Bundle $DllRel
             if (-not (Test-Path -LiteralPath $dll -PathType Leaf)) { throw "${Label}:缺 $DllRel" }
@@ -497,6 +578,7 @@ try {
         Write-Host ''
         Write-Host "签名完成:$signedZip"
         Write-Host "          $signedZip.sha256"
+        if (-not $SourceRunId) { Write-Warning '本次未给 -SourceRunId:输入 zip 的来源没有核对过(只验了完整性)' }
         if ($isCiBuild) {
             Write-Host "版本 $ver 是 CI 预发布件,没有对应的 Release tag:只用于本机 / Pro Tools 实测,不要上传。"
         } else {

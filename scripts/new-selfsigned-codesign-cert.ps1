@@ -65,28 +65,30 @@ if (-not (Test-Path -Path 'Cert:\CurrentUser\My')) {
 # 仓库根 = 本脚本上一级目录(与调用时的 CWD 无关)
 $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 
-function Invoke-GitTop([string]$Dir) {
+# 同一仓库的所有 worktree 共用同一个 git 公共目录(--git-common-dir);不在任何 git 工作树里则返回 $null
+function Get-GitCommonDir([string]$Dir) {
     # 5.1 下 EAP=Stop 遇到外部命令的 stderr 会抛 NativeCommandError,局部降为 Continue,只看退出码
     $ErrorActionPreference = 'Continue'
     if (-not (Get-Command git -CommandType Application -ErrorAction SilentlyContinue)) { return $null }
-    $out = & git -C $Dir rev-parse --show-toplevel 2>$null
+    $out = & git -C $Dir rev-parse --path-format=absolute --git-common-dir 2>$null
     if ($LASTEXITCODE -ne 0 -or -not $out) { return $null }
-    return [System.IO.Path]::GetFullPath([string]@($out)[0]).TrimEnd('\')
+    return [System.IO.Path]::GetFullPath([string]@($out)[0]).TrimEnd('\', '/')
 }
 
 # pfx 不得落在仓库目录下(CLAUDE.md §0 铁律 1)。两道判定:完整路径前缀(不区分大小写);
-# git 兜底 —— 目录经 junction / subst 指进仓库时前缀比较看不出来,git 会解析到真实工作树。
+# git 兜底 —— 所在(或最近一个已存在的上级)目录只要与本仓库共用同一个 git 公共目录就判在库内:
+# 覆盖经 junction / subst 指进仓库(git 会解析到真实路径)以及放在本仓库另一个 worktree 里两种情况。
 function Test-InsideRepo([string]$FullPath) {
     $root = $RepoRoot.TrimEnd('\', '/')
     if ($FullPath.Equals($root, [System.StringComparison]::OrdinalIgnoreCase) -or
         $FullPath.StartsWith($root + '\', [System.StringComparison]::OrdinalIgnoreCase)) { return $true }
-    $repoTop = Invoke-GitTop $RepoRoot
-    if (-not $repoTop) { return $false }
+    $repoCommon = Get-GitCommonDir $RepoRoot
+    if (-not $repoCommon) { return $false }
     $dir = Split-Path -Parent $FullPath
     while ($dir -and -not (Test-Path -LiteralPath $dir -PathType Container)) { $dir = Split-Path -Parent $dir }
     if (-not $dir) { return $false }
-    $top = Invoke-GitTop $dir
-    return ($top -and $top.Equals($repoTop, [System.StringComparison]::OrdinalIgnoreCase))
+    $common = Get-GitCommonDir $dir
+    return [bool]($common -and $common.Equals($repoCommon, [System.StringComparison]::OrdinalIgnoreCase))
 }
 
 # 两个 SecureString 逐字符比较,不经托管明文字符串;BSTR 用完即 ZeroFreeBSTR
@@ -154,6 +156,9 @@ $pw2 = Read-Host -AsSecureString '再输入一次'
 try {
     if ($pw.Length -lt 12) { throw 'pfx 口令至少 12 位' }
     if (-not (Test-SecureStringEqual $pw $pw2)) { throw '两次输入的口令不一致' }
+} catch {
+    $pw.Dispose()
+    throw
 } finally {
     $pw2.Dispose()
 }
@@ -161,6 +166,13 @@ try {
 $dir = Split-Path -Parent $OutPfx
 if (-not (Test-Path -LiteralPath $dir -PathType Container)) {
     New-Item -ItemType Directory -Path $dir -Force -Confirm:$false | Out-Null
+    # 纵深防御:本脚本新建的目录断开继承,只给当前用户完全控制(目录已存在时不动它的 ACL)
+    $acl = New-Object System.Security.AccessControl.DirectorySecurity
+    $acl.SetAccessRuleProtection($true, $false)
+    $acl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule(
+        [System.Security.Principal.WindowsIdentity]::GetCurrent().User, 'FullControl',
+        'ContainerInherit, ObjectInherit', 'None', 'Allow')))
+    Set-Acl -LiteralPath $dir -AclObject $acl -Confirm:$false
 }
 
 $cert = $null

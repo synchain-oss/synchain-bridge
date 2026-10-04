@@ -10,17 +10,22 @@
 #
 # 流程(任一步失败即 exit 1):
 #   预检 0 参数:--wcguid 是 GUID;--extra-arg 不含口令、不覆盖本脚本管理的 flag
-#   预检 1 输入 zip 同目录的 .sha256 逐字节等于 "<小写 hash><两个空格><zip 名>\n"(shasum -a 256)
+#   预检 1 完整性:输入 zip 同目录的 .sha256 逐字节等于 "<小写 hash><两个空格><zip 名>\n"(shasum -a 256)。
+#          只防损坏 / 下载不完整 —— .sha256 与 zip 是同一份下载,换得了 zip 就换得了 .sha256,防不了替换
 #   预检 2 从文件名解析版本:SynchainBridge-AAX-v<版本>-macos-arm64-UNSIGNED.zip
 #   预检 3 检出对应该版本:-ci.<sha> 版本要求 HEAD 以该 sha 开头(source ref = 完整 HEAD);其余版本要求 HEAD 上有
 #          tag v<版本>;LICENSE / THIRD-PARTY-NOTICES.md / LICENSES / scripts 无未提交改动
+#   预检 3b 来源(--source-run-id):该 run 属于本仓库(非 fork)、是 ci.yml / release.yml、结论 success、head_sha = HEAD;
+#          再用 gh run download 取回它的 aax-unsigned-* artifact,其中同名 zip 必须与输入 zip 字节相同。
+#          这是「哪些字节会被盖上签名」的信任根;不给 --source-run-id 只记 WARN(本地自建件没有 run 可核对)
 #   预检 4 security find-identity -p codesigning(不加 -v,TO-VALIDATE V6)里名字与 --signid 完全相等的身份恰好 1 个
 #   预检 5 wraptool 可执行,`wraptool help sign` 列出所需 flag(TO-VALIDATE)
 #   预检 6 iLok 只提醒不硬检
 #   预检 7 ditto -x -k 解到全新临时目录(保留可执行位):bundle 存在、arm64-only、没有签名 Authority,
 #          且 `wraptool verify` 必须失败(已签过的件重签会报错)
 #   签名   wraptool sign --verbose --account --wcguid --signid --in --out [--extra-arg ...](TO-VALIDATE);
-#          第一次签名可能弹出钥匙串授权框,需要人点;回显的命令里 PACE 账号 / wcguid / 口令一律打码为 ****
+#          第一次签名可能弹出钥匙串授权框,需要人点;回显的命令里 PACE 账号 / wcguid / 口令一律打码为 ****;
+#          wraptool --verbose 是否回显收到的参数未知(TO-VALIDATE V1),它的输出逐行把这些值字面替换成 **** 后再显示
 #   后检   wraptool verify;codesign --verify --deep --strict;codesign -dv 的 Authority= 等于 --signid 且不是 ad-hoc;
 #          调 package-aax-macos.sh --mode signed 打包;解压回读后再跑一轮 wraptool 与 codesign 验证;
 #          最后只**打印** gh release upload 命令,不自动执行
@@ -38,7 +43,7 @@
 #
 # 用法:
 #   bash scripts/sign-aax-macos.sh --unsigned-zip <SynchainBridge-AAX-v*-macos-arm64-UNSIGNED.zip>
-#        --account <PACE 账号> --wcguid <GUID> --signid "<钥匙串身份名>"
+#        --account <PACE 账号> --wcguid <GUID> --signid "<钥匙串身份名>" [--source-run-id <run ID>]
 #        [--out-dir dist/aax-signed] [--wraptool <path>] [--extra-arg <arg>]... [--prompt-account-password] [--dry-run]
 
 set -euo pipefail
@@ -56,6 +61,7 @@ usage() {
   --account <name>           必填:PACE 账号(日志里打码)
   --wcguid <GUID>            必填:PACE wrap 配置 GUID(日志里打码)
   --signid <name>            必填:钥匙串里代码签名身份的完整名字(security find-identity -p codesigning 列出的引号内文字)
+  --source-run-id <id>       产出该 zip 的 ci / release run 的 ID:给了就核对来源(需 gh 已登录),不给只记 WARN
   --out-dir <path>           输出目录;相对路径按仓库根解析,默认 dist/aax-signed
   --wraptool <path>          wraptool 路径;默认先找 PATH,再找 Eden 默认安装路径(TO-VALIDATE)
   --extra-arg <arg>          原样透传给 wraptool sign,可重复(TO-VALIDATE);不得含 password
@@ -68,6 +74,7 @@ UNSIGNED_ZIP=""
 ACCOUNT=""
 WCGUID=""
 SIGNID=""
+SOURCE_RUN_ID=""
 OUT_DIR="dist/aax-signed"
 WRAPTOOL_ARG=""
 EXTRA=()
@@ -81,6 +88,7 @@ while [ $# -gt 0 ]; do
         --account)      [ $# -ge 2 ] || die "--account 缺少取值";      ACCOUNT="$2"; shift 2 ;;
         --wcguid)       [ $# -ge 2 ] || die "--wcguid 缺少取值";       WCGUID="$2"; shift 2 ;;
         --signid)       [ $# -ge 2 ] || die "--signid 缺少取值";       SIGNID="$2"; shift 2 ;;
+        --source-run-id) [ $# -ge 2 ] || die "--source-run-id 缺少取值"; SOURCE_RUN_ID="$2"; shift 2 ;;
         --out-dir)      [ $# -ge 2 ] || die "--out-dir 缺少取值";      OUT_DIR="$2"; shift 2 ;;
         --wraptool)     [ $# -ge 2 ] || die "--wraptool 缺少取值";     WRAPTOOL_ARG="$2"; shift 2 ;;
         --extra-arg)    [ $# -ge 2 ] || die "--extra-arg 缺少取值";    EXTRA+=("$2"); EXTRA_N=$((EXTRA_N + 1)); shift 2 ;;
@@ -157,6 +165,7 @@ AP=""
 on_exit() {
     local rc=$?
     AP=""
+    [ -z "${PROV_DIR:-}" ] || rm -rf "$PROV_DIR"
     if [ -n "$WORK" ] && [ -d "$WORK" ]; then
         if [ "$SUCCEEDED" -eq 1 ]; then
             rm -rf "$WORK"
@@ -178,15 +187,20 @@ if [ "$EXTRA_N" -gt 0 ]; then
         case "$lower" in
             *password*) p0_err="--extra-arg 不得含口令类参数('$a'):口令只经交互读入,不进参数" ;;
         esac
-        case "$a" in
+        # 与 Windows 侧 -match 同口径:不区分大小写(--password 已由上面的 *password* 覆盖)
+        case "$lower" in
             --account|--account=*|--wcguid|--wcguid=*|--signid|--signid=*|--in|--in=*|--out|--out=*)
                 p0_err="--extra-arg 不得重复本脚本管理的 flag('$a')" ;;
         esac
     done
 fi
+case "$SOURCE_RUN_ID" in
+    *[!0-9]*) p0_err="--source-run-id 应为纯数字的 workflow run ID:'$SOURCE_RUN_ID'" ;;
+esac
 if [ -z "$p0_err" ]; then check PASS "0 参数" "wcguid 格式正确;extra-arg $EXTRA_N 项"; else check FAIL "0 参数" "$p0_err"; fi
 
-# ---------------------------------------------------------------- 预检 1:.sha256
+# ---------------------------------------------------------------- 预检 1:.sha256(完整性)
+# 只防损坏 / 下载不完整:.sha256 与 zip 是同一份下载,换得了 zip 就换得了 .sha256 —— 来源由预检 3b 核对
 ZIP="$(abs_path "$UNSIGNED_ZIP")"
 ZIP_NAME="$(basename "$ZIP")"
 ZIP_OK=0
@@ -198,13 +212,13 @@ else
     ACTUAL="$(shasum -a 256 "$ZIP" | awk '{ print $1 }')"
     # 逐字节比:必须恰为 package-aax-macos.sh 写出的 "<hash>  <zip 名>\n"(无 CRLF / BOM / 多余行)
     if printf '%s  %s\n' "$ACTUAL" "$ZIP_NAME" | cmp -s - "$ZIP.sha256"; then
-        check PASS "1 sha256" "$ZIP_NAME = $ACTUAL"
+        check PASS "1 sha256" "完整性:$ZIP_NAME = $ACTUAL"
         ZIP_OK=1
     else
         recorded="$(LC_ALL=C head -c 64 "$ZIP.sha256")"
         hex_re='^[0-9a-f]{64}$'
         if [[ "$recorded" =~ $hex_re ]] && [ "$recorded" != "$ACTUAL" ]; then
-            check FAIL "1 sha256" "SHA256 不符:.sha256 记录 $recorded,实际 $ACTUAL —— zip 被改动或下载不完整,拒绝签名"
+            check FAIL "1 sha256" "SHA256 不符:.sha256 记录 $recorded,实际 $ACTUAL —— zip 损坏或下载不完整(本项只验完整性),拒绝签名"
         else
             check FAIL "1 sha256" "$ZIP_NAME.sha256 格式不符:应恰为「64 位小写 hex + 两个空格 + $ZIP_NAME + LF」"
         fi
@@ -223,6 +237,7 @@ fi
 
 # ---------------------------------------------------------------- 预检 3:检出与版本对应
 SOURCE_REF=""
+HEAD_COMMIT=""   # 已确认与版本对应的 HEAD commit(预检 3b 用;合规文件脏不影响它)
 IS_CI=0
 if [ -z "$VER" ]; then
     check SKIP "3 检出" "版本未解析出来"
@@ -238,7 +253,7 @@ else
         IS_CI=1
         want="${BASH_REMATCH[1]}"
         case "$HEAD_SHA" in
-            "$want"*) SOURCE_REF="$HEAD_SHA" ;;
+            "$want"*) SOURCE_REF="$HEAD_SHA"; HEAD_COMMIT="$HEAD_SHA" ;;
             *) p3_err="版本 $VER 来自 commit $want,当前 HEAD = $HEAD_SHA:先 git checkout $want(合规文件与 INSTALL-AAX.txt 的源码链接必须对应该 commit)" ;;
         esac
     else
@@ -247,6 +262,7 @@ else
         tags="$(git -C "$REPO_ROOT" tag --points-at HEAD 2>/dev/null || true)"
         if grep -Fxq -- "v$VER" <<< "$tags"; then
             SOURCE_REF="v$VER"
+            HEAD_COMMIT="$HEAD_SHA"
         else
             p3_err="HEAD 上没有 tag v$VER(现有:$(printf '%s' "${tags:-(无)}" | tr '\n' ' ')):先 git checkout v$VER"
         fi
@@ -263,6 +279,63 @@ else
     else
         SOURCE_REF=""
         check FAIL "3 检出" "$p3_err"
+    fi
+fi
+
+# ---------------------------------------------------------------- 预检 3b:来源(哪次构建产出了这些字节)
+PROV_DIR=""
+r_path=""
+r_event=""
+r_sha=""
+if [ -z "$SOURCE_RUN_ID" ]; then
+    check WARN "3b 来源" "未给 --source-run-id:只验了完整性,没核对这个 zip 出自哪次 CI 构建(.sha256 与 zip 同一份下载,防不了替换)。签 CI / release 产物时请传产出它的 run ID"
+elif case "$SOURCE_RUN_ID" in *[!0-9]*) true ;; *) false ;; esac; then
+    check SKIP "3b 来源" "--source-run-id 无效(见预检 0)"
+elif [ "$ZIP_OK" -ne 1 ] || [ -z "$HEAD_COMMIT" ]; then
+    check SKIP "3b 来源" "输入 zip 完整性或检出未通过,无从核对"
+else
+    p3b_err=""
+    if ! command -v gh >/dev/null 2>&1; then
+        p3b_err="gh 不在 PATH 上(来源核对用 GitHub CLI,需已 gh auth login)"
+    elif ! run_info="$(gh api "repos/$UPLOAD_REPO/actions/runs/$SOURCE_RUN_ID" \
+            --jq '[.repository.full_name, .head_repository.full_name, .path, .status, .conclusion, .head_sha, .event] | join(" ")' 2>&1)"; then
+        p3b_err="读取 run $SOURCE_RUN_ID 失败:$run_info"
+    else
+        # 字段都不含空白(仓库名 / workflow 路径 / 枚举值 / sha),按空格切分即可
+        read -r r_repo r_head_repo r_path r_status r_concl r_sha r_event <<< "$run_info"
+        if [ "$r_repo" != "$UPLOAD_REPO" ] || [ "$r_head_repo" != "$UPLOAD_REPO" ]; then
+            p3b_err="run $SOURCE_RUN_ID 属于 $r_repo(head 来自 $r_head_repo),不是 $UPLOAD_REPO 本仓库的构建"
+        elif [ "$r_path" != ".github/workflows/ci.yml" ] && [ "$r_path" != ".github/workflows/release.yml" ]; then
+            p3b_err="run $SOURCE_RUN_ID 的 workflow 是 '$r_path',只接受 ci.yml / release.yml 的产物"
+        elif [ "$r_concl" != "success" ]; then
+            p3b_err="run $SOURCE_RUN_ID 的结论是 '$r_status/$r_concl',只接受成功完成的构建"
+        elif [ "$r_sha" != "$HEAD_COMMIT" ]; then
+            p3b_err="run $SOURCE_RUN_ID 构建的是 $r_sha,当前检出是 $HEAD_COMMIT:zip 与检出不是同一个 commit"
+        else
+            # 取回该 run 的 aax-unsigned-* artifact(ci.yml / release.yml 的命名都以此开头),其中同名 zip 必须与输入字节相同
+            PROV_DIR="$(mktemp -d "${TMPDIR:-/tmp}/synchain-aax-provenance.XXXXXX")"
+            if ! dl_out="$(gh run download "$SOURCE_RUN_ID" -R "$UPLOAD_REPO" -p 'aax-unsigned-*' -D "$PROV_DIR" 2>&1)"; then
+                p3b_err="gh run download $SOURCE_RUN_ID 失败(artifact 过期了?):$dl_out"
+            else
+                n_hits="$(find "$PROV_DIR" -type f -name "$ZIP_NAME" | wc -l | tr -d '[:space:]')"
+                if [ "$n_hits" != "1" ]; then
+                    p3b_err="run $SOURCE_RUN_ID 的 aax-unsigned-* artifact 里找到 $n_hits 个 $ZIP_NAME(应恰好 1 个)"
+                else
+                    run_zip="$(find "$PROV_DIR" -type f -name "$ZIP_NAME" -print -quit)"
+                    run_hash="$(shasum -a 256 "$run_zip" | awk '{ print $1 }')"
+                    if [ "$run_hash" != "$ACTUAL" ]; then
+                        p3b_err="输入 zip($ACTUAL)与 run $SOURCE_RUN_ID 的 artifact($run_hash)字节不同:不是这次构建的产物,拒绝签名"
+                    fi
+                fi
+            fi
+            rm -rf "$PROV_DIR"
+            PROV_DIR=""
+        fi
+    fi
+    if [ -z "$p3b_err" ]; then
+        check PASS "3b 来源" "run $SOURCE_RUN_ID($r_path,$r_event,head ${r_sha:0:7})的 artifact 与输入 zip 字节相同"
+    else
+        check FAIL "3b 来源" "$p3b_err"
     fi
 fi
 
@@ -350,7 +423,8 @@ if [ "$ZIP_OK" -eq 1 ]; then
         p7_err="bundle 缺 Contents/MacOS/$EXE_NAME 或它不可执行"
     else
         # arm64-only:与 package-aax-macos.sh 的 file 断言同口径
-        archs="$(file "$IN_BUNDLE"/Contents/MacOS/* || true)"
+        # file -b:只看类型描述,不让带临时目录名的路径参与 arm64 / x86_64 的匹配
+        archs="$(file -b "$IN_BUNDLE"/Contents/MacOS/* || true)"
         if ! grep -q 'arm64' <<< "$archs"; then
             p7_err="主体可执行文件不是 arm64:$archs"
         elif grep -q 'x86_64' <<< "$archs"; then
@@ -403,6 +477,11 @@ if [ "$EXTRA_N" -gt 0 ]; then SHOW_ARGS+=("${EXTRA[@]}"); fi
 if [ "$DRY_RUN" -eq 1 ]; then
     echo ""
     echo "[DryRun] 签名计划(未执行):"
+    if [ -n "$SOURCE_RUN_ID" ]; then
+        echo "  -) 来源已按 run $SOURCE_RUN_ID 核对(见预检 3b)"
+    else
+        echo "  -) 未给 --source-run-id:来源未核对(只验了完整性)"
+    fi
     if [ "$PROMPT_AP" -eq 1 ]; then echo "  0) read -s 读 PACE 账号口令(--password,TO-VALIDATE V2)"; fi
     echo "  1) wraptool $(fmt_cmd "${SHOW_ARGS[@]}")"
     echo "     (第一次用该身份签名可能弹出钥匙串授权框,需要人点;--extrasigningoptions \"--timestamp\" 默认不加,TO-VALIDATE V5)"
@@ -462,8 +541,21 @@ if [ "$PROMPT_AP" -eq 1 ]; then WT_ARGS+=(--password "$AP"); fi   # TO-VALIDATE(
 if [ "$EXTRA_N" -gt 0 ]; then WT_ARGS+=("${EXTRA[@]}"); fi
 echo "> wraptool $(fmt_cmd "${SHOW_ARGS[@]}")"
 echo "(第一次用该身份签名可能弹出钥匙串授权框,需要人点「始终允许」或「允许」)"
-sign_rc=0
-"$WT" "${WT_ARGS[@]}" || sign_rc=$?
+# TO-VALIDATE(V1):--verbose 是否回显收到的参数未知 —— 输出逐行把口令 / 账号 / wcguid 字面替换成 **** 再显示
+redact_stream() {
+    local line s
+    while IFS= read -r line || [ -n "$line" ]; do
+        for s in "$@"; do
+            if [ -n "$s" ]; then line="${line//"$s"/****}"; fi   # 引号内的模式按字面匹配,不当通配
+        done
+        printf '%s\n' "$line"
+    done
+}
+set +e
+"$WT" "${WT_ARGS[@]}" 2>&1 | redact_stream "$AP" "$ACCOUNT" "$WCGUID"
+sign_rcs=("${PIPESTATUS[@]}")
+set -e
+sign_rc="${sign_rcs[0]}"
 AP=""
 WT_ARGS=()
 [ "$sign_rc" -eq 0 ] || die "wraptool sign 失败(exit $sign_rc)"
@@ -473,7 +565,11 @@ WT_ARGS=()
 assert_signed_bundle() {   # assert_signed_bundle <bundle> <标签>
     local b="$1" label="$2" info
     echo "> wraptool verify --verbose --in $(fmt_cmd "$b")"
-    "$WT" verify --verbose --in "$b" || die "$label:wraptool verify 失败"   # TO-VALIDATE(V1):语法与退出码
+    set +e
+    "$WT" verify --verbose --in "$b" 2>&1 | redact_stream "$ACCOUNT" "$WCGUID"   # TO-VALIDATE(V1):语法与退出码
+    local rcs=("${PIPESTATUS[@]}")
+    set -e
+    [ "${rcs[0]}" -eq 0 ] || die "$label:wraptool verify 失败(exit ${rcs[0]})"
     codesign --verify --deep --strict --verbose=2 "$b" || die "$label:codesign --verify --deep --strict 失败"
     info="$(codesign -dv --verbose=4 "$b" 2>&1 || true)"
     if grep -q 'Signature=adhoc' <<< "$info"; then die "$label:只有 ad-hoc 签名"; fi
@@ -496,6 +592,7 @@ assert_signed_bundle "$WORK/readback/$AAX_NAME" "回读"
 echo ""
 echo "签名完成:$SIGNED_ZIP"
 echo "          $SIGNED_ZIP.sha256"
+[ -n "$SOURCE_RUN_ID" ] || echo "注意:本次未给 --source-run-id,输入 zip 的来源没有核对过(只验了完整性)" >&2
 if [ "$IS_CI" -eq 1 ]; then
     echo "版本 $VER 是 CI 预发布件,没有对应的 Release tag:只用于本机 / Pro Tools 实测,不要上传。"
 else

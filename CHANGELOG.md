@@ -37,10 +37,15 @@
   **U13 例外**:AAX 是本项目唯一签名的格式(零售版 Pro Tools 只加载 PACE 签名件),VST3 / AU 仍不签名不公证;签名只由维护者
   在本机手工执行,CI 不调用、流水线零 secret。
   - 凭据纪律:pfx 口令(及可选的 PACE 账号口令)只经 `Read-Host -AsSecureString` / `read -s` 交互读入,不进参数、日志或
-    transcript(脚本不开 `Start-Transcript`、bash 侧显式 `set +x`);回显的命令里口令、PACE 账号与 wcguid 一律打码为 `****`;
-    透传参数拒收含 `password` 的项和脚本自管的 flag;Windows 的 pfx 必须在仓库目录之外(路径前缀 + git 工作树两道判定)。
-  - 预检(任一失败即退出 1):`.sha256` 逐字节格式 + 哈希;从文件名解析版本;检出必须对应该版本(`-ci.<sha>` 件要求 HEAD
-    以该 sha 开头,其余版本要求 HEAD 上有 `v<版本>` tag),合规文件与 `scripts/` 无未提交改动;wraptool 存在且 `help sign`
+    transcript(脚本不开 `Start-Transcript`、bash 侧显式 `set +x`);回显的命令里口令、PACE 账号与 wcguid 一律打码为 `****`,
+    wraptool 自身的输出也逐行把这些值字面替换成 `****` 再显示(`--verbose` 是否回显参数未知,TO-VALIDATE);透传参数拒收
+    含 `password` 的项和脚本自管的 flag(两平台都不区分大小写);Windows 的 pfx 必须在仓库目录之外(路径前缀 + git 公共目录
+    两道判定,本仓库的其他 worktree 同样算仓库内)。
+  - 预检(任一失败即退出 1):`.sha256` 逐字节格式 + 哈希(**只验完整性**:与 zip 同一份下载,防不了替换);从文件名解析版本;
+    检出必须对应该版本(`-ci.<sha>` 件要求 HEAD 以该 sha 开头,其余版本要求 HEAD 上有 `v<版本>` tag),合规文件与 `scripts/`
+    无未提交改动;**来源核对**(`-SourceRunId` / `--source-run-id`,可选,不给记 WARN):该 run 属于本仓库(非 fork)、是
+    `ci.yml` / `release.yml`、结论 success、`head_sha` 等于当前检出,再用 `gh run download` 取回它的 `aax-unsigned-*` artifact,
+    同名 zip 必须与输入字节相同;wraptool 存在且 `help sign`
     列出所需 flag;输入件确实未签名(Windows DLL 为 `NotSigned`;macOS arm64-only、无签名 Authority),且 `wraptool verify`
     必须失败(已签过的件重签会报错)。macOS 另要求钥匙串里与 `--signid` 同名的代码签名身份恰好 1 个。
   - 后检:`wraptool verify`;Windows 的 Authenticode 签名者指纹必须等于 pfx 指纹、默认要求带时间戳(`-AllowNoTimestamp`
@@ -52,7 +57,8 @@
   - 所有 wraptool 子命令 / flag / 默认安装路径都标了 `TO-VALIDATE`(来自公开资料,Eden 版本不同可能有差异),所有者拿到
     PACE 工具后逐条核对再删标记。
 - **自签名代码签名证书助手 `scripts/new-selfsigned-codesign-cert.ps1`**(Windows 签名用的 Authenticode 证书):RSA 3072 /
-  SHA256 / 默认 10 年,pfx 默认导出到 `$env:USERPROFILE\.synchain-signing\`,必须在仓库外;口令两次输入一致且至少 12 位;
+  SHA256 / 默认 10 年,pfx 默认导出到 `$env:USERPROFILE\.synchain-signing\`,必须在仓库外(判定同签名脚本);脚本新建该目录时
+  断开继承、只给当前用户完全控制;口令两次输入一致且至少 12 位;
   默认 AES256_SHA256 加密(wraptool 读不了时 `-PfxEncryption TripleDES_SHA1`);导出后用同一口令回读核对指纹;
   `-RemoveFromStore` 导出后把证书连同私钥从 `Cert:\CurrentUser\My` 删除。`SupportsShouldProcess` + `ConfirmImpact=High`:
   `-WhatIf` 只预演,不读口令、不写证书库、不生成文件。语法兼容 Windows PowerShell 5.1(文件带 UTF-8 BOM)。
