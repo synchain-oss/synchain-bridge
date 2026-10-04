@@ -156,6 +156,29 @@
 
 ### 文档 / 合规
 
+- **AAX(Pro Tools)文档按已合入的脚本 / workflow / 代码定稿**:
+  - README(中英,标题骨架对等)新增「Pro Tools (AAX) 安装」「Pro Tools (AAX) 已知限制」「AAX (Pro Tools) 源码构建」三节,
+    同步徽章、简介(标 Beta)、安装表(两个 AAX 资产从首个带 AAX 的版本起提供,签名后手工上传)、`-UNSIGNED` 件与
+    `aax-unsigned-*` artifact 的定位、AAX 身份(`Snch` / `Snb1` + `com.synchain.bridge`)不可改;Windows 安装命令与
+    `INSTALL-AAX.txt` 同口径(`$env:CommonProgramW6432`);已知限制按代码实际行为写(只有 mono→mono / stereo→stereo、
+    无 AudioSuite / multi-mono、AAX 离线渲染不推流、DPP、1024 块口径、自签名 / 未公证、诊断日志前缀 `SynchainBridge:`)。
+  - `docs/build-windows.md` / `docs/build-macos.md` 新增 AAX 段:产物布局、`package-aax*.ps1/sh` 的 Unsigned 用法与参数要点、
+    `build.ps1 -InstallAax`、本地门禁(3h / `-IncludeAax` 的 5c / 5d / 5e)、四行诊断日志的实际文案、自签名证书助手、
+    AAX Validator 探查步骤(TODO-AAXVAL);CI 对照段补 6c–6e / 8c–8e 与 artifact 名。
+  - `docs/DAW_TEST_GUIDE.md` 新增 Pro Tools 实测一节:被测件三种来源、两平台安装、已知口径与 P-mac + T01–T13 检查表
+    (附每项应看到的诊断行),措辞为本项目自拟。
+  - `docs/release.md` §7.3 第 4 步补 `-SourceRunId <run-id>` / `--source-run-id <run-id>`(run-id 取第 2 步查到的 release run,
+    用于来源核对),并按 `sign-aax.ps1` / `sign-aax-macos.sh` 的实际预检 / 后检与开关逐项写准;§7.4 注明本机重建件没有 run
+    可核对。各文档指向 release.md §7 的链接补上锚点。
+  - `CLAUDE.md`(§0 安全铁律一字未动)/ `CONTRIBUTING.md` 同步 U13 的 AAX 例外、`feature/aax` 支线、gates 的 AAX 开关、
+    workflow 的 AAX artifact 与 fail-hard、AAX 资产与打包 / 签名脚本;CONTRIBUTING 补「AAX 声道布局发版后只许加不许删」。
+- **`THIRD-PARTY-NOTICES.md`**(随每个发行 zip 分发,`INSTALL-AAX.txt` 的许可证一节指向它):新增 Avid AAX SDK 2.8.0 一行
+  (GPL-3.0-only;双授权取 GPL v3,原文核验自 JUCE 8.0.8 tag 下的 SDK `LICENSE.txt`,仅 AAX 产物);闭包差集改写为
+  Windows VST3 / Windows AAX / macOS VST3+AU / macOS AAX 四个闭包;补说明 —— AAX 二进制整体按 GPL 第 3 版分发(只能 v3、
+  JUCE 部分照旧 AGPLv3)、PACE wraptool 与 iLok 只在维护者本机使用、Avid 测试工具不入库,以及 Avid / Pro Tools / AAX、
+  PACE / iLok、VST 商标行与「与 Avid 无隶属、赞助或背书关系」。不新增 `LICENSES/GPL-3.0-only.txt`(无入库文件声明该
+  标识,`reuse lint` 会报未使用)。
+
 ## [1.5.3] — 2026-09-30
 
 > 版本号由 1.5.0 升至 **1.5.3**(唯一真源 `CMakeLists.txt` 的 `project(... VERSION)`,四镜像同步:

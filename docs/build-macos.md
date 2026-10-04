@@ -1,7 +1,7 @@
 # macOS 源码构建指南
 
-> 面向 macOS 11.0+ / Apple Silicon（arm64）。产物是 `Synchain Bridge.vst3` 与 `Synchain Bridge.component`
-> （都是 **bundle 目录**，不是单文件）。
+> 面向 macOS 11.0+ / Apple Silicon（arm64）。产物是 `Synchain Bridge.vst3`、`Synchain Bridge.component` 与
+> `Synchain Bridge.aaxplugin`（都是 **bundle 目录**，不是单文件）。Pro Tools（AAX）见本文的 [AAX（Pro Tools）](#aaxpro-tools) 一节。
 > 只想下载预编译版并插进 DAW 的读者，请看 [README](../README.md) 的 Install 一节。
 
 ## 前置依赖
@@ -45,6 +45,8 @@ cmake --build build --parallel
 
 - `build/SynchainBridgeVST_artefacts/Release/VST3/Synchain Bridge.vst3`
 - `build/SynchainBridgeVST_artefacts/Release/AU/Synchain Bridge.component`
+- `build/SynchainBridgeVST_artefacts/Release/AAX/Synchain Bridge.aaxplugin`（见 [AAX（Pro Tools）](#aaxpro-tools)；
+  CMake 选项 `SYNCHAIN_BRIDGE_AAX` 默认 ON，传 `-DSYNCHAIN_BRIDGE_AAX=OFF` 则不出 AAX，状态行回到 `VST3 + AU`）
 
 ## 安装
 
@@ -197,6 +199,69 @@ mac 上建议用 Chrome / Edge / Firefox 打开 Creative Space；注意这些浏
   **勾「使用 Rosetta 打开」也加载不了**——请以原生 arm64 方式启动 DAW。
 - **插件窗口是英文兜底面板**：WKWebView 加载超时（多见于首次冷启动）。点 Retry，或关掉插件窗口重开。
 
+## AAX（Pro Tools）
+
+AAX SDK（2.8.0）随 JUCE 8.0.8 自带，不需要另外下载；上面的配置 + 构建会一并产出 AAX 目标。
+
+### 产物与自检
+
+```
+build/SynchainBridgeVST_artefacts/Release/AAX/Synchain Bridge.aaxplugin/Contents/{Info.plist,PkgInfo,MacOS/Synchain Bridge}
+```
+
+```bash
+lipo -archs "build/SynchainBridgeVST_artefacts/Release/AAX/Synchain Bridge.aaxplugin/Contents/MacOS/Synchain Bridge"   # 期望只有 arm64
+codesign -dv --verbose=4 "build/SynchainBridgeVST_artefacts/Release/AAX/Synchain Bridge.aaxplugin" 2>&1 | grep -E 'Authority|Signature'
+```
+
+JUCE 不对 AAX bundle 做 ad-hoc 签名，arm64 上只有链接器自动加的 ad-hoc 签名（`Signature=adhoc`、没有 `Authority=` 行、
+没有 `Contents/_CodeSignature/CodeResources`），因此是**未签名件**，只有 Pro Tools Developer 能加载。
+
+### 打包未签名件
+
+```bash
+bash scripts/package-aax-macos.sh --mode unsigned --build-dir build
+# 产物：dist/aax/SynchainBridge-AAX-v<版本>-macos-arm64-UNSIGNED.zip（+ .sha256 + package-summary.md）
+```
+
+- `--mode unsigned|signed` 必填、无默认值、只认小写。`--mode signed` 要求 `codesign --verify --strict` 通过、有 `Authority=`
+  且不是 ad-hoc、并有 `_CodeSignature/CodeResources`，由签名脚本在签完之后调用；对上面的本地构建跑会被拒收。
+- 版本不传时读 `CMakeLists.txt`；`--version` 与 `--prerelease-tag` 互斥，显式传空串直接失败；`--bundle-path` 可直接指定 bundle。
+- 脚本断言 arm64 单架构、`CFBundleIdentifier` 等于 `CMakeLists.txt` 的 `BUNDLE_ID`、主体可执行；全程 `ditto` 拷贝与压缩，
+  打包后断言 zip 里的可执行位还在。zip 里是 bundle、`INSTALL-AAX.txt` 与三份合规文件。脚本不调用签名工具、不碰凭据。
+
+### 安装
+
+Pro Tools 只扫描 `/Library/Application Support/Avid/Audio/Plug-Ins/`（没有用户级目录），需要管理员权限。先退出 Pro Tools：
+
+```bash
+sudo rm -rf "/Library/Application Support/Avid/Audio/Plug-Ins/Synchain Bridge.aaxplugin"
+sudo ditto "<产物路径>/Synchain Bridge.aaxplugin" "/Library/Application Support/Avid/Audio/Plug-Ins/Synchain Bridge.aaxplugin"
+sudo xattr -dr com.apple.quarantine "/Library/Application Support/Avid/Audio/Plug-Ins/Synchain Bridge.aaxplugin"
+```
+
+先删旧版：`ditto` 对已存在的 bundle 是合并。本地构建的 bundle 不带隔离属性，最后一条可省；发行版带 PACE 签名，
+但**没有经过 Apple 公证**，从浏览器或 AirDrop 拿到的 zip 带隔离属性，`INSTALL-AAX.txt` 要求必须执行最后一条 `xattr`。
+去掉隔离属性不影响签名。
+
+### Pro Tools 必须原生运行
+
+插件只有 arm64 slice。在「显示简介」里确认 Pro Tools 没有勾「使用 Rosetta 打开」，活动监视器里它的「种类」应为 Apple。
+Rosetta 下的 Pro Tools 是 x86_64 进程，加载不了 arm64 插件。
+
+### 诊断日志
+
+插件的诊断行（前缀 `SynchainBridge:`，文案见 [build-windows.md 的「诊断日志」](build-windows.md#诊断日志)）在 macOS 上由
+JUCE 写到进程的标准错误输出。要看到它们，从「终端」直接启动 Pro Tools 的可执行文件（位于 `Pro Tools.app/Contents/MacOS/`）。
+
+### 签名（维护者，借用的 Mac）
+
+签名由维护者在本机完成，流程见 [release.md §7](release.md#7-aaxpro-tools本机签名--手工上传)（一次性准备见
+[§7.2](release.md#72-一次性准备借用的-mac)）：`scripts/sign-aax-macos.sh` 把 CI 产出的 `-UNSIGNED.zip` 经 PACE wraptool
+签名（`--signid` 传钥匙串里代码签名身份的完整名字），后检 `wraptool verify`、`codesign --verify --deep --strict` 与
+`Authority=`，再调 `package-aax-macos.sh --mode signed` 出发行包并解压回读复验。借用别人的 Mac 时：在独立的 macOS 用户下
+操作，只在签名那一次导入钥匙串身份，用完删除身份和临时 keychain，退出 iLok / PACE 登录；不要在共用机器上留下任何凭据。
+
 ## CI 对照
 
 `.github/workflows/ci.yml` 的 `build-and-validate-macos`（`macos-15`，arm64 原生）跑的是本页流程的
@@ -209,6 +274,16 @@ mac 上建议用 Chrome / Edge / Firefox 打开 Creative Space；注意这些浏
 （无桌面会话的托管 runner 托不住 WKWebView 编辑器，与 Windows 侧 WebView2 同一原因）；② `.component`
 （AU）的 `pluginval` —— CI 对 AU 只跑 `auval`，而 `auval` 只覆盖 AU 的宿主契约。这两条请 mac 贡献者
 按本页在本机跑；CI 的 zip artifact 可直接下来做真机冒烟。
+
+AAX 方面，同一个 job 在 VST3 / AU 打包冒烟之后另有三步（AAX 由同一次构建产出）：
+
+- **8c 打包冒烟**（产物丢弃）：`package-aax-macos.sh --mode unsigned` 按 `0.0.0-ci → 0.0.0-ci2 → 0.0.0-ci` 三连跑，断言
+  `.sha256` 形态与 summary 按段去重，抽查 zip 层级、可执行位与 `INSTALL-AAX.txt` 的 UNSIGNED 横幅（脚本自带 arm64 单架构
+  与 bundle 结构断言）；再做**反向断言**：`--mode signed` 必须因签名检查拒收只有 ad-hoc 签名的 bundle，且不留发行名 zip。
+- **8d 打未签名包**：版本 = CMake `VERSION` + `-ci.<head 短 sha>`，并断言产物名逐字等于预期。
+- **8e 上传** artifact `aax-unsigned-macos-arm64`（`-UNSIGNED.zip` + `.sha256`；PR 保留 14 天，其余 30 天）。
+
+pluginval 与 `auval` 都无法验收 AAX，Pro Tools 里的验收靠手工，见 [DAW_TEST_GUIDE.md](DAW_TEST_GUIDE.md#pro-toolsaax实测windows--macos)。
 
 `scripts/gates.ps1`（CLAUDE.md §2 的本地门禁）仍是纯 Windows 实现（依赖 vswhere / VS 生成器 / nuget /
 `pluginval.exe`），mac 上跑不了；等价的 mac 门禁脚本是待跟进项（见 CHANGELOG「文档 / 合规」的遗留说明）。

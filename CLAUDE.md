@@ -8,8 +8,8 @@
 - Git 提交身份:`DLsnows <noreply@synchain.ca>`(D8:转 org 后继续用 DLsnows 操作,身份不变)。**本仓一律用
   noreply 地址提交**,不得把个人邮箱写进 commit 或任何入库文档;GitHub 账号侧同时开启
   *Keep my email address private* 与 *Block command line pushes that expose my email*。
-- 项目一句话:JUCE 8 + WebView2 的 VST3 插件,经本地 WebSocket(默认端口 9420)推流 DAW 音频;接收端是闭源的 Synchain 网页应用。
-- 签名证书/公证凭据:本项目 v1 **不签名**(U13)。若将来引入代码签名,证书与凭据必须走 secret,绝不落盘明文、绝不进仓库。
+- 项目一句话:JUCE 8 + WebView2(macOS 为 WKWebView)的 VST3 / AU / AAX 插件,经本地 WebSocket(默认端口 9420)推流 DAW 音频;接收端是闭源的 Synchain 网页应用。
+- 签名证书/公证凭据:VST3 / AU **不签名**(U13)。**AAX 例外**:由维护者在本机用 PACE wraptool 签名,CI 零 secret、只产出 `-UNSIGNED` 件;签名凭据(pfx/p12、口令、PACE 账号、wcguid)绝不入库、不进 CI、不进 artifact、不写进日志。
 
 ### §0 安全铁律
 
@@ -21,8 +21,8 @@
 
 ## 1. 分支模型与工作流程
 
-- 默认主干 = `dev`;Bridge 主支线 = `feature/extraction`(ADR-013 / J13)。
-- same-repo 只收 `feat/*` / `feature/*`(以及 `dependabot/*`)到 `dev`;子 PR(base = `feature/extraction`)只跑 review bot,不跑完整 CI(D2)。
+- 默认主干 = `dev`;Bridge 主支线 = `feature/extraction`(ADR-013 / J13);AAX 支线 = `feature/aax`(子分支 `feat/AAX-NN-slug`)。
+- same-repo 只收 `feat/*` / `feature/*`(以及 `dependabot/*`)到 `dev`;子 PR(base = `feature/*`)只跑 review bot,不跑完整 CI(D2)。
 - **fork PR 门禁政策(J31/J41,唯一政策)**：
   - fork → **任意分支名**(不要用 `dev`/`stage`/`prod`/`feature/v1`/`feature/extraction`)→ PR 到 `dev`;
   - `branch-gate` 对 fork **不 exit 1**,只校验 head 分支名不在上述长期分支名集合(防同名伪装晋升),不强制 `feat/*` 命名;
@@ -33,7 +33,7 @@
 
 ## 2. 提 PR 前的本地 Gates
 
-- 一律经 `pwsh scripts/gates.ps1`(06 §5.1 的 gate 结构,单 bundle;含 vcpkg `ixwebsocket` 预检、configure 后的 vcpkg 安装版本断言(`scripts/assert-vcpkg-installed.ps1`,与 CI 同一份)、ixwebsocket 两平台版本一致性(`vcpkg.json` override ↔ `CMakeLists.txt` `IXWEBSOCKET_TAG` 注释,与 `compliance` 同参)与默认端口 9420 一致性检查:`src/BridgeApi.h` ↔ `web/bridge.js` ↔ `web-preview/mock-server.mjs`)。
+- 一律经 `pwsh scripts/gates.ps1`(06 §5.1 的 gate 结构,单 bundle;含 vcpkg `ixwebsocket` 预检、configure 后的 vcpkg 安装版本断言(`scripts/assert-vcpkg-installed.ps1`,与 CI 同一份)、ixwebsocket 两平台版本一致性(`vcpkg.json` override ↔ `CMakeLists.txt` `IXWEBSOCKET_TAG` 注释,与 `compliance` 同参)与默认端口 9420 一致性检查:`src/BridgeApi.h` ↔ `web/bridge.js` ↔ `web-preview/mock-server.mjs`)。AAX 相关:`-IncludeAax`(默认关)在 selftest 之后、pluginval 之前加跑 AAX bundle 结构(5c)/ 打包冒烟(5d,`scripts/package-aax.ps1` Unsigned + Signed 反向断言)/ AAX Validator(5e)三道 gate;`-AaxValidatorPath <仓库外路径>` 接入可选的 AAX Validator(Avid 评估工具,不入库;给了路径即隐含 `-IncludeAax`;调用方式标 `TODO-AAXVAL`,未实测前 5e 恒 SKIP,绝不假绿);只读 gate 3h「签名材料 / Avid 评估工具不入库」默认恒跑。本机安装 AAX 用 `scripts/build.ps1 -InstallAax`(管理员)。
 - 并行 agent 必须各用独立 git worktree 与 `-BuildDir`;GUI pluginval 全局串行。
 - **子 PR 不触发完整 CI 是设计,不是缺陷;不要为了让它跑 CI 去改 workflow 触发规则。**
 
@@ -43,12 +43,12 @@
 
 ## 4. 各 Workflow 触发范围一览
 
-- `ci`(job `build-and-validate` = windows-2022;job `build-and-validate-macos` = macos-15,VST3 + AU,arm64-only)/ `format`(job `clang-format`)/ `branch-gate`:`pull_request → dev` + `push → dev, 'feature/**'`。
+- `ci`(job `build-and-validate` = windows-2022;job `build-and-validate-macos` = macos-15,VST3 + AU + AAX,arm64-only;两个 job 都会经 AAX 打包脚本做 bundle 结构 / 架构断言和打包冒烟(含 Signed 模式拒收未签名 bundle 的反向断言),并上传未签名的 `aax-unsigned-win64` / `aax-unsigned-macos-arm64` artifact)/ `format`(job `clang-format`)/ `branch-gate`:`pull_request → dev` + `push → dev, 'feature/**'`。
 - `compliance`(gitleaks + reuse lint):同触发面,无 secrets,fork PR 同样跑。
 - `claude-review`:所有 base 分支、仅 same-repo(J31);`deepseek-review` / `pr-agent` 默认 disable。
-- `release`:push tags `v*` 触发草稿 Release,四段式 `gate`(版本一致性门禁,ubuntu-latest)→ `release`(windows-2022)∥ `release-macos`(macos-15)→ `publish`(ubuntu-latest,复验 sha256 后建 draft)。workflow 级 `contents: read`,`contents: write` 只授给 `publish` 一个 job。**任一平台失败 = 整个 tag 无产物**(处理办法见 `docs/release.md` §6.1)。
+- `release`:push tags `v*` 触发草稿 Release,四段式 `gate`(版本一致性门禁,ubuntu-latest)→ `release`(windows-2022)∥ `release-macos`(macos-15)→ `publish`(ubuntu-latest,复验 sha256 后建 draft)。workflow 级 `contents: read`,`contents: write` 只授给 `publish` 一个 job。release 的 AAX 件只出未签名的 `aax-unsigned-*` artifact(保留 30 天),**不进 `publish`**(签名与上传由维护者手工做,见 `docs/release.md` §7)。**任一平台失败(含 AAX 构建 / 打包)= 整个 tag 无产物**(fail-hard,不用 `continue-on-error`;处理办法见 `docs/release.md` §6.1)。
 - `review-dispatch`:维护者评论 `/review` 显式触发(fork PR 唯一 AI 审查通道)。
-- 成本纪律:runner 就低不就高(V-4 确认前一律 `ubuntu-latest`)、按量计费 bot 克制使用。**例外(待用户拍板)**:`build-and-validate-macos` 必须跑 GitHub 托管 macOS runner(按 **10 倍分钟数**计费),且当前继承整个 `ci` 工作流的触发面、全开;若要收敛,给 job 加 label/事件闸门是最小改动。
+- 成本纪律:runner 就低不就高(V-4 确认前一律 `ubuntu-latest`)、按量计费 bot 克制使用。**例外(待用户拍板)**:`build-and-validate-macos` 必须跑 GitHub 托管 macOS runner,且当前继承整个 `ci` 工作流的触发面、全开;AAX 目标让 macOS job 的编译与打包时间有所增加;若要收敛,给 job 加 label/事件闸门是最小改动。
 
 ## 5. 协议变更规范
 
@@ -72,8 +72,9 @@ required check,无 paths 过滤)的 Frozen-contract change guard 守同一组七
 ## 6. 环境与依赖
 
 - Windows:JUCE(版本见 `.juce-version`)、CMake ≥3.22、MSVC 2022(静态 CRT `/MT`)、WebView2 SDK(NuGet,版本常量单一真源)+ WebView2 Evergreen Runtime、pluginval(版本见 `.pluginval-version`)、ixwebsocket(vcpkg `x64-windows-static`,**manifest 模式**:仓库根 `vcpkg.json` 以 `builtin-baseline` 40 位 commit + `overrides` 钉死 12.0.1,configure 期自动安装,不手工 `vcpkg install`)。
-- macOS(Apple Silicon):JUCE 同一真源、CMake ≥3.22 + **Ninja**、Xcode command line tools(clang,`-Wall -Wextra -Wpedantic`)、pluginval 同一真源 + **`auval`**(AU 唯一验收工具,以输出里的 `AU VALIDATION SUCCEEDED` 判定,退出码不可靠)、ixwebsocket 走 CMake `FetchContent`(`IXWEBSOCKET_TAG` 钉 40 位 commit,与 Windows 侧 vcpkg 同版本;CI 预取源码进 `actions/cache` 后经 `FETCHCONTENT_SOURCE_DIR_IXWEBSOCKET` 喂给 configure)。产物为 **VST3 + AU**、**arm64-only**(v1 不出 universal / x86_64),不签名不公证;CI runner = `macos-15`。构建细节见 `docs/build-macos.md`。
+- macOS(Apple Silicon):JUCE 同一真源、CMake ≥3.22 + **Ninja**、Xcode command line tools(clang,`-Wall -Wextra -Wpedantic`)、pluginval 同一真源 + **`auval`**(AU 唯一验收工具,以输出里的 `AU VALIDATION SUCCEEDED` 判定,退出码不可靠)、ixwebsocket 走 CMake `FetchContent`(`IXWEBSOCKET_TAG` 钉 40 位 commit,与 Windows 侧 vcpkg 同版本;CI 预取源码进 `actions/cache` 后经 `FETCHCONTENT_SOURCE_DIR_IXWEBSOCKET` 喂给 configure)。产物为 **VST3 + AU + AAX**、**arm64-only**(v1 不出 universal / x86_64),VST3 / AU 不签名不公证,AAX 由维护者本机签名但不公证;CI runner = `macos-15`。构建细节见 `docs/build-macos.md`。
 - 本地 gates(`scripts/gates.ps1`)目前仍是纯 Windows 实现(vswhere / VS 生成器 / nuget / `pluginval.exe`),mac 侧本地验收按 `docs/build-macos.md` 手工执行。
+- AAX SDK 随 JUCE 自带(`juce_audio_plugin_client/AAX/SDK`),不需要另外下载。PACE wraptool / iLok 只在维护者本机使用;Avid 的评估工具(DigiShell / AAX Validator)与测试计划不入库、不分发、CI 不下载。
 - 构建流水线不需要任何 secret(06 §3.1);review bot 用 org secrets(`CLAUDE_CODE_OAUTH_TOKEN` / `DEEPSEEK_KEY`)。
 
 ## 7. 跨仓库协议规范
@@ -95,5 +96,5 @@ Bridge 特有:PCM 发送由后台发送线程经 SPSC ring 转投(移出音频�
 - 抽取为公开仓库后 **GitHub Releases 才是真正公开可下载的渠道**(private 仓的 Release 附件匿名下载走不通)。
 - 版本号真源 = 顶层 `CMakeLists.txt` 的 `project(... VERSION)`;网页侧(闭源仓库)存在一份下游版本镜像,发版后必须同步。
 - tag 格式 `vX.Y.Z`(去掉 `vst-` 前缀);首个公开 tag = `v1.4.0`(U6,历史事实——实际打 tag 以 CMake 当前 VERSION 为准,gate 强制相等)。`*-test` 结尾的冒烟 tag 跳过严格版本相等、产物恒为 draft,改过发版链路后先用它端到端实跑(`docs/release.md` §5.1)。
-- Release 资产两个平台各一个,均附同名 `.sha256`:`SynchainBridge-VST3-v<版本>-win64.zip`(VST3)与 `SynchainBridge-VST3-AU-v<版本>-macos-arm64.zip`(VST3 + AU,arm64-only,不签名不公证)。打包唯一真源 = `scripts/package.ps1` / `scripts/package-macos.sh`,绝不在 workflow 里内联打包命令。
+- Release 资产两个平台各一个,均附同名 `.sha256`:`SynchainBridge-VST3-v<版本>-win64.zip`(VST3)与 `SynchainBridge-VST3-AU-v<版本>-macos-arm64.zip`(VST3 + AU,arm64-only,不签名不公证)。另有两个 AAX 资产 `SynchainBridge-AAX-v<版本>-win64.zip` 与 `SynchainBridge-AAX-v<版本>-macos-arm64.zip`,由维护者签名后**手工上传**到 draft Release。打包与签名的唯一真源 = `scripts/package.ps1` / `scripts/package-macos.sh` / `scripts/package-aax.ps1` / `scripts/package-aax-macos.sh` / `scripts/sign-aax.ps1` / `scripts/sign-aax-macos.sh`,绝不在 workflow 里内联打包命令。
 - R2 固定 key 覆盖上传是否保留由 08 文档决策;本仓不默认启用。
