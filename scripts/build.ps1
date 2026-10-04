@@ -304,7 +304,13 @@ if ($InstallAax) {
             exit 1
         }
     }
-    Copy-Item -LiteralPath $aaxBundle -Destination $targetAax -Recurse -Force
+    # 复制中途失败(磁盘满、杀软拦截……)同样会留下半个 bundle:Pro Tools 扫到残缺件只会报加载失败,这里明确提示重跑
+    try {
+        Copy-Item -LiteralPath $aaxBundle -Destination $targetAax -Recurse -Force
+    } catch {
+        Write-Host ('复制 .aaxplugin 中途失败(' + $_.Exception.Message + '),目标里可能只有半个 bundle。排除原因(磁盘空间、杀毒软件拦截等)后重跑 -InstallAax;目标: ' + $targetAax) -ForegroundColor Red
+        exit 1
+    }
     Write-Host ('  AAX 安装到: ' + $targetAax) -ForegroundColor Green
     Write-Host '[INFO] 本地构建的 AAX 未经 PACE 签名:只有 Pro Tools Developer 能加载,零售版 Pro Tools 只认 PACE 签名的 AAX。' -ForegroundColor Yellow
 }
