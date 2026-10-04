@@ -260,7 +260,10 @@ JUCE 写到进程的标准错误输出。要看到它们，从「终端」直接
 [§7.2](release.md#72-一次性准备借用的-mac)）：`scripts/sign-aax-macos.sh` 把 CI 产出的 `-UNSIGNED.zip` 经 PACE wraptool
 签名（`--signid` 传钥匙串里代码签名身份的完整名字），后检 `wraptool verify`、`codesign --verify --deep --strict` 与
 `Authority=`，再调 `package-aax-macos.sh --mode signed` 出发行包并解压回读复验。借用别人的 Mac 时：在独立的 macOS 用户下
-操作，只在签名那一次导入钥匙串身份，用完删除身份和临时 keychain，退出 iLok / PACE 登录；不要在共用机器上留下任何凭据。
+操作，签名期间不要让他人登录这台 Mac；签完按 [release.md §7.2 的清理清单](release.md#72-一次性准备借用的-mac)清理（以那里为准）——
+首选直接删除这个 macOS 用户；不删用户就逐项清掉 GitHub 令牌（`gh auth logout`，更推荐一开始就只用当次 shell 的短有效期
+`GH_TOKEN`，用完吊销）、Xcode 里的 Apple ID、钥匙串里的签名证书与私钥、iLok / PACE 登录，以及记着 `--account` / `--wcguid`
+明文的 `~/.zsh_history` 与 `~/.zsh_sessions/`。不要在共用机器上留下任何凭据。
 
 ## CI 对照
 
@@ -280,8 +283,11 @@ AAX 方面，同一个 job 在 VST3 / AU 打包冒烟之后另有三步（AAX �
 - **8c 打包冒烟**（产物丢弃）：`package-aax-macos.sh --mode unsigned` 按 `0.0.0-ci → 0.0.0-ci2 → 0.0.0-ci` 三连跑，断言
   `.sha256` 形态与 summary 按段去重，抽查 zip 层级、可执行位与 `INSTALL-AAX.txt` 的 UNSIGNED 横幅（脚本自带 arm64 单架构
   与 bundle 结构断言）；再做**反向断言**：`--mode signed` 必须因签名检查拒收只有 ad-hoc 签名的 bundle，且不留发行名 zip。
-- **8d 打未签名包**：版本 = CMake `VERSION` + `-ci.<head 短 sha>`，并断言产物名逐字等于预期。
-- **8e 上传** artifact `aax-unsigned-macos-arm64`（`-UNSIGNED.zip` + `.sha256`；PR 保留 14 天，其余 30 天）。
+- **8d 打未签名包**（只在 push / `workflow_dispatch` 下运行）：版本 = CMake `VERSION` + `-ci.<短 sha>`，源码链接钉本次构建的
+  commit，并断言产物名逐字等于预期。
+- **8e 上传** artifact `aax-unsigned-macos-arm64`（`-UNSIGNED.zip` + `.sha256`，保留 30 天；事件条件同 8d）。pull_request
+  构建的是与 `dev` 的合并提交（`refs/pull/N/merge`），不是 PR head，所以 PR 上只跑 8c 冒烟、不出测试件 —— 与签名脚本来源
+  核对拒收 pull_request run 同口径。
 
 pluginval 与 `auval` 都无法验收 AAX，Pro Tools 里的验收靠手工，见 [DAW_TEST_GUIDE.md](DAW_TEST_GUIDE.md#pro-toolsaax实测windows--macos)。
 

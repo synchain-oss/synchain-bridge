@@ -31,6 +31,12 @@
 #          调 package-aax-macos.sh --mode signed 打包;解压回读后再跑一轮 wraptool 与 codesign 验证;
 #          最后只**打印** gh release upload 命令,不自动执行
 # 成功即删除临时工作目录;失败则保留并打印路径(里面只有 bundle,没有秘密)。
+# 打包之后的任何一步(回读复验等)失败,都删掉本次产出的发行名 zip 与 .sha256:失败路径上 out-dir 里不留可上传的发行名 zip
+# (package-summary.md 里本次追加的段落会留下,只是记录,不是可上传的文件)。
+#
+# 口令:--prompt-account-password 的 PACE 账号口令只经 read -s 交互读取,不进本脚本的参数、日志与 shell 历史;但 wraptool
+# 只收命令行参数(TO-VALIDATE 是否有 stdin / 环境变量通道),签名期间它会以 --password <明文> 出现在 wraptool 的进程命令行里 ——
+# macOS 上本机其他用户用 ps 也看得到。签名期间不要让他人登录这台机器(借用的 Mac 尤其注意)。
 #
 # --dry-run:跑全部预检(第 7 步的解压也在临时目录里做,结束即删)并汇总,打印签名计划与 package-aax-macos.sh
 # --dry-run 的输出;不读口令、不调用 wraptool sign、不产出任何文件。
@@ -162,11 +168,20 @@ check() {   # check <PASS|FAIL|WARN|SKIP|INFO> <编号> <说明>
 
 WORK=""
 SUCCEEDED=0
+PACKAGED=0      # 本次运行已产出发行名 zip:之后任何一步失败都要删掉它(见 on_exit)
+SIGNED_ZIP=""
 AP=""
 on_exit() {
     local rc=$?
     AP=""
     [ -z "${PROV_DIR:-}" ] || rm -rf "$PROV_DIR"
+    # 打包之后的步骤(回读复验等)没通过:删掉本次产出的发行名 zip / .sha256 —— 它的文件名与 docs/release.md §7.3 第 5 步的
+    # 上传路径逐字相同,留着就可能被照文档传上去。只在本次确实打过包时删,早期失败不碰上一次成功留下的件。
+    if [ "$PACKAGED" -eq 1 ] && [ "$SUCCEEDED" -ne 1 ] && [ -n "$SIGNED_ZIP" ]; then
+        rm -f -- "$SIGNED_ZIP" "$SIGNED_ZIP.sha256"
+        echo "打包后的复验未通过:已删除 $SIGNED_ZIP 及 .sha256(失败路径不留发行名 zip;package-summary.md 里本次追加的段落只是记录)" >&2
+        [ "$rc" -ne 0 ] || rc=1
+    fi
     if [ -n "$WORK" ] && [ -d "$WORK" ]; then
         if [ "$SUCCEEDED" -eq 1 ]; then
             rm -rf "$WORK"
@@ -317,8 +332,9 @@ else
         elif [ "$r_sha" != "$HEAD_COMMIT" ]; then
             p3b_err="run $SOURCE_RUN_ID 构建的是 $r_sha,当前检出是 $HEAD_COMMIT:zip 与检出不是同一个 commit"
         else
-            # 取回该 run 的 aax-unsigned-* artifact,其中同名 zip 必须与输入字节相同。目前只有 ci.yml 6e / 8e 产出它;release.yml 的
-            # 同名 artifact 由 AAX-13 接入(tag 版本的件只能从 release run 来),接入前传 release run 会在「找到 0 个 zip」处 FAIL
+            # 取回该 run 的 aax-unsigned-* artifact,其中同名 zip 必须与输入字节相同。ci.yml 6e / 8e(push / workflow_dispatch)与
+            # release.yml 的 release / release-macos 都产出它(aax-unsigned-win64 / aax-unsigned-macos-arm64);签 tag 版本时传该 tag 的
+            # release run ID(见 docs/release.md §7.3)。哪些 run 算合法来源,以上面几条判据为准
             PROV_DIR="$(mktemp -d "${TMPDIR:-/tmp}/synchain-aax-provenance.XXXXXX")"
             if ! dl_out="$(gh run download "$SOURCE_RUN_ID" -R "$UPLOAD_REPO" -p 'aax-unsigned-*' -D "$PROV_DIR" 2>&1)"; then
                 p3b_err="gh run download $SOURCE_RUN_ID 失败(artifact 过期了?):$dl_out"
@@ -488,7 +504,7 @@ if [ "$DRY_RUN" -eq 1 ]; then
     else
         echo "  -) 未给 --source-run-id:来源未核对(只验了完整性)"
     fi
-    if [ "$PROMPT_AP" -eq 1 ]; then echo "  0) read -s 读 PACE 账号口令(--password,TO-VALIDATE V2)"; fi
+    if [ "$PROMPT_AP" -eq 1 ]; then echo "  0) read -s 读 PACE 账号口令(--password,TO-VALIDATE V2;签名那几秒会出现在 wraptool 进程命令行里,签名期间不要让他人登录本机)"; fi
     echo "  1) wraptool $(fmt_cmd "${SHOW_ARGS[@]}")"
     echo "     (第一次用该身份签名可能弹出钥匙串授权框,需要人点;--extrasigningoptions \"--timestamp\" 默认不加,TO-VALIDATE V5)"
     echo "  2) 后检:wraptool verify --verbose --in <out>;codesign --verify --deep --strict;Authority= \"$SIGNID\" 且非 ad-hoc"
@@ -590,6 +606,7 @@ assert_signed_bundle "$OUT_BUNDLE" "后检"
 bash "$SCRIPT_DIR/package-aax-macos.sh" --mode signed --version "$VER" --source-ref "$SOURCE_REF" \
     --bundle-path "$OUT_BUNDLE" --out-dir "$OUT_DIR" || die "package-aax-macos.sh --mode signed 失败"
 [ -f "$SIGNED_ZIP" ] || die "打包后找不到 $SIGNED_ZIP"
+PACKAGED=1   # 从这里起失败,on_exit 删掉本次的发行名 zip / .sha256(打包脚本自己的失败路径由它自己清理)
 
 # 回读:产出的 zip 解到新临时目录,再跑一轮 wraptool 与 codesign 验证(发出去的字节还带着签名)
 mkdir -p "$WORK/readback"

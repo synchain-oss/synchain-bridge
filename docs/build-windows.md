@@ -132,7 +132,9 @@ ixwebsocket 用静态 triplet 编译（内嵌 mbedtls，无需单独 OpenSSL）�
 ## AAX（Pro Tools）
 
 AAX SDK（2.8.0）随 JUCE 8.0.8 自带，不需要另外下载；上面的配置 + 构建会一并产出 AAX 目标，不需要额外 CMake 参数
-（CMake 选项 `SYNCHAIN_BRIDGE_AAX` 默认 ON；只要 VST3 时传 `-DSYNCHAIN_BRIDGE_AAX=OFF`）。配置期日志应出现：
+（CMake 选项 `SYNCHAIN_BRIDGE_AAX` 默认 ON；只要 VST3 时传 `-DSYNCHAIN_BRIDGE_AAX=OFF`。这个值会留在 CMake 缓存里，之后
+要 AAX 时须显式传 `-DSYNCHAIN_BRIDGE_AAX=ON` 重新配置 —— 关掉期间构建目录里的旧 AAX bundle 不会被删，`build.ps1 -InstallAax`
+与门禁 5c 见到缓存为 OFF 会直接报错，不拿旧 bundle 充数）。配置期日志应出现：
 
 ```
 -- Building Synchain Bridge for Windows: VST3 + AAX (static CRT, WebView2)
@@ -149,7 +151,8 @@ build/SynchainBridgeVST_artefacts/Release/AAX/Synchain Bridge.aaxplugin/
 
 - JUCE 在构建后给 bundle 目录与 `desktop.ini` 加了 System 属性（`attrib +s`），用 PowerShell 枚举 / 复制时要加 `-Force`，否则可能被跳过。
 - VS 多配置生成器在配置期就给每个配置（Debug / Release / …）各建一个只有 `desktop.ini` 的空壳 `.aaxplugin` 目录，它们不是产物；
-  真正构建出来的是含 `Contents\` 的那一个。打包脚本与门禁都只认含 `Contents\` 的 bundle，且要求恰好 1 个。
+  真正构建出来的是含 `Contents\` 的那一个。打包脚本与门禁都只认含 `Contents\` 的 bundle：打包脚本走 `-BuildDir` 搜索时要求
+  整个构建目录里恰好 1 个；门禁 5c 只数当前 `-Config` 的产物目录（同一个构建目录里另有 Debug 产物不算）。
 - 主体 DLL 应导出 `ACFRegisterPlugin` 等 AAX 入口，可用 `dumpbin /exports` 抽查。
 
 ### 打包未签名件
@@ -176,7 +179,8 @@ Pro Tools 只扫描 64 位 Common Files 下的 `Avid\Audio\Plug-Ins\`（通常�
 pwsh scripts/build.ps1 -InstallAax
 ```
 
-它在构建前先验管理员权限（不是管理员直接退出），装前检查主体 DLL 是否被 Pro Tools 占用，先删旧版再整体复制。
+它在构建前先验管理员权限（不是管理员直接退出）；配置后若 CMake 缓存里 `SYNCHAIN_BRIDGE_AAX` 不是 ON（或生成的工程里没有
+AAX 目标）就报错退出，不把开关打开时留下的旧 bundle 装进去；装前检查主体 DLL 是否被 Pro Tools 占用，先删旧版再整体复制。
 手工安装（先退出 Pro Tools；`$env:CommonProgramW6432` 恒指向 64 位的 Common Files）：
 
 ```powershell
@@ -194,9 +198,12 @@ pwsh scripts/gates.ps1 -PluginOnly -IncludeAax -BuildDir build-aax
 ```
 
 - gate 3h「签名材料 / Avid 评估工具不入库」默认恒跑（不需要开关）：仓库里（含被 `.gitignore` 忽略的文件）出现
-  `*.pfx` / `*.p12` / `*.pvk`、`dsh.exe`、DigiShell / AAX Validator 的可执行文件或安装包、测试计划 PDF 即 FAIL。
-- `-IncludeAax`（默认关）在 selftest 之后、pluginval 之前加跑三道：**5c** bundle 结构（PE x64、`desktop.ini` /
-  `Plugin.ico`、已构建 bundle 恰好 1 个）、**5d** 打包冒烟（Unsigned 跑一次并断言 `.sha256` 字节形态；Signed 反向断言
+  `*.pfx` / `*.p12` / `*.pvk`、`dsh.exe`、DigiShell / AAX Validator 的可执行文件或安装包、测试计划 PDF 即 FAIL。证书扩展名
+  落在任意路径都算；DigiShell / AAX Validator / 测试计划的关键词必须出现在文件名里，目录名（例如 `build-aax-validator\`）
+  不算。文件名按 UTF-8 解码，中文 Windows（CP936 控制台）下中文名的证书文件同样命中。
+- `-IncludeAax`（默认关）在 selftest 之后、pluginval 之前加跑三道：**5c** bundle 结构（CMake 缓存里 `SYNCHAIN_BRIDGE_AAX`
+  为 ON 且工程里有 AAX 目标、PE x64、`desktop.ini` / `Plugin.ico`、当前 `-Config` 下已构建 bundle 恰好 1 个）、**5d** 打包
+  冒烟（Unsigned 跑一次并断言 `.sha256` 字节形态；Signed 反向断言
   必须拒收）、**5e** AAX Validator（见下）。`-Quick` 只跳过 pluginval，不影响这三道。
 - pluginval 托管不了 AAX，Pro Tools 里的验收靠手工，见 [DAW_TEST_GUIDE.md](DAW_TEST_GUIDE.md#pro-toolsaax实测windows--macos)。
 
@@ -252,8 +259,11 @@ AAX 方面，同一个 job 在 VST3 打包冒烟之后另有三步（AAX 由同�
 - **6c 打包冒烟**（产物丢弃）：`package-aax.ps1 -Mode Unsigned` 按 `0.0.0-ci → 0.0.0-ci2 → 0.0.0-ci` 三连跑，断言 `.sha256`
   字节形态与 summary 按段去重，抽查 zip 层级与 `INSTALL-AAX.txt` 的 UNSIGNED 横幅（脚本自带 PE x64 与 bundle 结构断言）；
   再做**反向断言**：`-Mode Signed` 必须因签名检查拒收同一个未签名 bundle，且不留发行名 zip。
-- **6d 打未签名包**：版本 = CMake `VERSION` + `-ci.<head 短 sha>`，`INSTALL-AAX.txt` 的源码链接钉 head 全 sha。
-- **6e 上传** artifact `aax-unsigned-win64`（`-UNSIGNED.zip` + `.sha256`；PR 保留 14 天，其余 30 天）。名字刻意不叫 `dist-*`，
-  `release.yml` 的 `publish` 不会取它；`workflow_dispatch` 同样会上传。
+- **6d 打未签名包**（只在 push / `workflow_dispatch` 下运行）：版本 = CMake `VERSION` + `-ci.<短 sha>`，`INSTALL-AAX.txt`
+  的源码链接钉本次构建的完整 commit sha。
+- **6e 上传** artifact `aax-unsigned-win64`（`-UNSIGNED.zip` + `.sha256`，保留 30 天；事件条件同 6d）。名字刻意不叫 `dist-*`，
+  `release.yml` 的 `publish` 不会取它；在子分支上 `workflow_dispatch` 一次即可取到测试件。pull_request 构建的是与 `dev` 的
+  合并提交（`refs/pull/N/merge`），不是 PR head，源码链接与版本号都对不上字节，所以 PR 上只跑 6c 冒烟、不出测试件 ——
+  与签名脚本来源核对拒收 pull_request run 同口径。
 
 pluginval 无法托管 AAX，所以 CI 不对 AAX 跑它；Pro Tools 里的验收靠手工，见 [DAW_TEST_GUIDE.md](DAW_TEST_GUIDE.md#pro-toolsaax实测windows--macos)。

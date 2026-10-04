@@ -211,7 +211,7 @@ build/SynchainBridgeVST_artefacts/Release/AAX/Synchain Bridge.aaxplugin
 
 从源码构建出来的是**未签名**件:只有 Pro Tools Developer 能加载,外部贡献者能走到的就是这一步。Windows 上 `pwsh scripts/build.ps1 -InstallAax`(管理员 PowerShell)会构建并复制进 Pro Tools 插件目录。打包用 `pwsh scripts/package-aax.ps1 -Mode Unsigned`(Windows)或 `bash scripts/package-aax-macos.sh --mode unsigned`(macOS),得到 `*-UNSIGNED.zip`。签名需要维护者的 PACE 凭据,在本机手工完成,见 [`docs/release.md` 第 7 节](docs/release.md#7-aaxpro-tools本机签名--手工上传)。分平台细节:[`docs/build-windows.md`](docs/build-windows.md#aaxpro-tools)、[`docs/build-macos.md`](docs/build-macos.md#aaxpro-tools)。
 
-CI 在两个平台都会构建 AAX 目标;打包脚本在打包冒烟里检查 bundle 结构与架构(Windows 为 x64 PE,macOS 为 arm64 单架构),并做反向断言(签名模式必须拒收未签名 bundle),未签名 zip 以 `aax-unsigned-win64` / `aax-unsigned-macos-arm64` artifact 上传。CI 不对 AAX 跑 pluginval。本地在 Windows 上用 `pwsh scripts/gates.ps1 -IncludeAax` 加跑 AAX 结构与打包 gate。
+CI 在两个平台都会构建 AAX 目标;打包脚本在打包冒烟里检查 bundle 结构与架构(Windows 为 x64 PE,macOS 为 arm64 单架构),并做反向断言(签名模式必须拒收未签名 bundle),push 与手动(`workflow_dispatch`)运行时未签名 zip 以 `aax-unsigned-win64` / `aax-unsigned-macos-arm64` artifact 上传(PR 运行构建的是合并提交,只做冒烟、不出件)。CI 不对 AAX 跑 pluginval。本地在 Windows 上用 `pwsh scripts/gates.ps1 -IncludeAax` 加跑 AAX 结构与打包 gate。
 
 ## 文档
 

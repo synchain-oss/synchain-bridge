@@ -87,7 +87,9 @@
 - 被测件三选一：
   - **签名的发行件** `SynchainBridge-AAX-v<版本>-win64.zip` / `SynchainBridge-AAX-v<版本>-macos-arm64.zip`（Releases，零售版 Pro Tools 可加载）；
   - **CI 产出的未签名件**：`ci.yml` 的 artifact `aax-unsigned-win64` / `aax-unsigned-macos-arm64` 里的
-    `SynchainBridge-AAX-v<版本>-ci.<短 sha>-<平台>-UNSIGNED.zip`；
+    `SynchainBridge-AAX-v<版本>-ci.<短 sha>-<平台>-UNSIGNED.zip`。只有 push / `workflow_dispatch` 触发的 run 才产出
+    （`<短 sha>` 即被测 commit）；PR 的 run 构建的是与 `dev` 的合并提交，不出这个件 —— 要测某个分支，对它
+    `gh workflow run ci.yml --ref <分支>` 再取件；
   - **本地构建**（Windows 可用 `pwsh scripts/build.ps1 -InstallAax` 一步装好，见 [build-windows.md](build-windows.md#aaxpro-tools)）。
 
   后两种都是**未签名件，只能在 Pro Tools Developer 里加载**。

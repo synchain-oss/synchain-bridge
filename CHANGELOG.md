@@ -36,8 +36,10 @@
   `-UNSIGNED.zip` 经 PACE wraptool 签名,再交给 `package-aax.ps1 -Mode Signed` / `package-aax-macos.sh --mode signed` 出发行包。
   **U13 例外**:AAX 是本项目唯一签名的格式(零售版 Pro Tools 只加载 PACE 签名件),VST3 / AU 仍不签名不公证;签名只由维护者
   在本机手工执行,CI 不调用、流水线零 secret。
-  - 凭据纪律:pfx 口令(及可选的 PACE 账号口令)只经 `Read-Host -AsSecureString` / `read -s` 交互读入,不进参数、日志或
-    transcript(脚本不开 `Start-Transcript`、bash 侧显式 `set +x`);回显的命令里口令、PACE 账号与 wcguid 一律打码为 `****`,
+  - 凭据纪律:pfx 口令(及可选的 PACE 账号口令)只经 `Read-Host -AsSecureString` / `read -s` 交互读入,不进签名脚本的参数、
+    日志、transcript 与 shell 历史(脚本不开 `Start-Transcript`、bash 侧显式 `set +x`)。但 wraptool 只收命令行参数,签名那几秒
+    口令会以 `--keypassword`(及可选的 `--password`)出现在 wraptool 的进程命令行里(本机进程列表短暂可见,wraptool 本身的
+    限制,TO-VALIDATE),只在可信的单用户机器上签名、签名期间不要让他人登录本机;回显的命令里口令、PACE 账号与 wcguid 一律打码为 `****`,
     wraptool 自身的输出也逐行把这些值字面替换成 `****` 再显示(`--verbose` 是否回显参数未知,TO-VALIDATE);透传参数拒收
     含 `password` 的项和脚本自管的 flag(两平台都不区分大小写);Windows 的 pfx 必须在仓库目录之外(路径前缀 + git 公共目录
     两道判定,本仓库的其他 worktree 同样算仓库内)。
@@ -63,19 +65,28 @@
   `-RemoveFromStore` 导出后把证书连同私钥从 `Cert:\CurrentUser\My` 删除。`SupportsShouldProcess` + `ConfirmImpact=High`:
   `-WhatIf` 只预演,不读口令、不写证书库、不生成文件。语法兼容 Windows PowerShell 5.1(文件带 UTF-8 BOM)。
   (`*.pfx` / `*.p12` / `*.pvk` 的 `.gitignore` 条目已随 AAX 打包脚本加入,见「发布 / 分发」。)
+- **AAX 线终审修复(AAX-16)**:签名脚本在打包之后的步骤(回读复验等)失败时删掉本次产出的发行名 zip 与 `.sha256`;
+  `sign-aax.ps1` 要求 pwsh 7.3+ 并对 wraptool 显式用 Standard 传参(含双引号 / 空格的口令不再被拆错),wraptool 输出里口令的
+  转义形态与片段同样打码,git / gh 输出按 UTF-8 解码、来源核对只取 ASCII 字段(中文 Windows 下不再误报);gate 3h 中文文件名
+  不再漏报、目录名不再误报;gate 5c 按当前 `-Config` 计数,AAX 开关为 OFF 时 `build.ps1 -InstallAax` 与 5c 报错而不用旧
+  bundle(判据共用新增的 `scripts/aax-build-state.ps1`);`ci.yml` 的 pull_request 不再出 `aax-unsigned-*` 测试件;
+  `docs/release.md` 补全借用 Mac 的清理清单、如实写明口令会出现在 wraptool 进程命令行里。上面各条已按修复后的行为改写。
 
 ### 构建
 
 - **本地门禁 `scripts/gates.ps1` 加 AAX 支持**(既有 gate 与写死路径一行未动;新参数追加在参数表末尾,不改变既有的按位置调用):
   - **gate 3h「签名材料 / Avid 评估工具不入库」,默认恒跑**(只读、秒级,不挂开关;默认结果表因此只多这一行):
     `git ls-files` 列出已跟踪、未跟踪**以及被 `.gitignore` 忽略**的文件,命中 `*.pfx` / `*.p12` / `*.pvk`、`dsh.exe`、
-    DigiShell / AAX Validator 的可执行文件或安装包、测试计划 PDF 即 FAIL。只按扩展名 + 文件名匹配,文档文件名里出现
-    validator 不会误报。被忽略的文件也查:`.gitignore` 已忽略证书扩展名,只查「会被提交的」就看不见仓库里躺着的证书,
+    DigiShell / AAX Validator 的可执行文件或安装包、测试计划 PDF 即 FAIL。只按扩展名 + 文件名匹配:证书扩展名落在任意路径
+    都算,DigiShell / AAX Validator / 测试计划的关键词必须落在文件名里(目录名不算),文档文件名里出现 validator 不会误报;
+    文件名按 UTF-8 解码,中文名的证书文件在 CP936 控制台下同样命中。被忽略的文件也查:`.gitignore` 已忽略证书扩展名,只查「会被提交的」就看不见仓库里躺着的证书,
     而签名材料本就必须放仓库外(签名脚本与证书助手同样拒绝仓库内路径)。
   - **`-IncludeAax`(默认关)**:在 selftest 之后、pluginval 之前加跑三道 gate;只读 gate 失败、配置 / 构建失败时
     这三道各记一行 SKIP,开头的 Mode 段多打印一行 `AAX : 开/关`。
-    - **5c AAX bundle 结构**:`Contents\x64\Synchain Bridge.aaxplugin` 的 PE 头 Machine = 0x8664、根目录有 `desktop.ini` /
-      `Plugin.ico`、构建目录下已构建(含 `Contents\`)的 `.aaxplugin` 恰好 1 个(VS 多配置生成器给每个配置建的空壳目录不计)。
+    - **5c AAX bundle 结构**:CMake 缓存里 `SYNCHAIN_BRIDGE_AAX` 为 ON 且生成的工程里有 AAX 目标(否则构建目录里的 bundle 是
+      开关打开时留下的旧产物,直接 FAIL)、`Contents\x64\Synchain Bridge.aaxplugin` 的 PE 头 Machine = 0x8664、根目录有
+      `desktop.ini` / `Plugin.ico`、当前 `-Config` 产物目录下已构建(含 `Contents\`)的 `.aaxplugin` 恰好 1 个(VS 多配置生成器
+      给每个配置建的空壳目录不计;同一构建目录里其他配置的产物只写进明细)。
     - **5d AAX 打包冒烟**:以 `-BundlePath` 调 `scripts/package-aax.ps1`,输出到 `dist\gates-aax-<构建目录名>`(并行
       worktree 互不干扰、已被忽略)。Unsigned 跑一次,`.sha256` 与 `ci.yml` 的 AAX 冒烟同一套字节断言;Signed 反向断言 ——
       同一个未签名 bundle 必须因签名检查被拒,且不留发行名 zip。
@@ -97,12 +108,13 @@
     **反向断言**:同一个未签名 bundle 用 Signed 模式打包必须失败、失败原因必须是签名检查(匹配拒收消息,前置检查
     先挂掉不算数),且输出目录里不得出现发行名 zip ——
     「未签名件不可能长得像发行资产」由机器保证,而不是靠人记得。
-  - **Package AAX (unsigned)**(6d / 8d):版本 = CMake `VERSION` + `-ci.<head 短 sha>`,`INSTALL-AAX.txt` 的源码链接钉
-    head 全 sha(经 env 间接读入;PR 事件取 head 侧 sha,不取合并提交);随后断言产物名逐字等于预期(mac 侧顺带在
-    BSD sed 上验证脚本从 `CMakeLists.txt` 回落读版本)。
-  - **Upload**(6e / 8e):artifact `aax-unsigned-win64` / `aax-unsigned-macos-arm64`(内含 `-UNSIGNED.zip` + `.sha256`),
-    PR 保留 14 天、其余 30 天。名字刻意不叫 `dist-*`:`release.yml` 的 `publish` 只从 `dist-*` 取件,未签名件进不了 Release。
-    上传步骤不带事件条件,`workflow_dispatch` 同样产出 —— 在子分支上 dispatch 一次即可取到 Pro Tools Developer 测试件。
+  - **Package AAX (unsigned)**(6d / 8d,只在 push / `workflow_dispatch` 下运行):版本 = CMake `VERSION` + `-ci.<短 sha>`,
+    `INSTALL-AAX.txt` 的源码链接钉本次构建的完整 commit sha(经 env 间接读入);随后断言产物名逐字等于预期(mac 侧顺带在
+    BSD sed 上验证脚本从 `CMakeLists.txt` 回落读版本)。pull_request 构建的是合并提交 `refs/pull/N/merge`,源码链接与版本号
+    都对不上字节,所以 PR 上只跑 6c / 8c 冒烟、不出测试件(与签名脚本来源核对拒收 pull_request run 同口径)。
+  - **Upload**(6e / 8e,事件条件同 6d / 8d):artifact `aax-unsigned-win64` / `aax-unsigned-macos-arm64`(内含 `-UNSIGNED.zip` +
+    `.sha256`),保留 30 天。名字刻意不叫 `dist-*`:`release.yml` 的 `publish` 只从 `dist-*` 取件,未签名件进不了 Release。
+    `workflow_dispatch` 同样产出 —— 在子分支上 dispatch 一次即可取到 Pro Tools Developer 测试件。
 - **`release.yml` 的 `release` / `release-macos` 各追加三步未签名 AAX**(触发面一字不改,不加 secret,不加新 action,
   上传沿用已 pin 的 `upload-artifact` v4.6.2 SHA):
   - **Package AAX (unsigned)**:版本取 `gate` 的 `outputs.version`(与 VST3/AU 的 Package 同一个值、同一道空值断言,经 step env

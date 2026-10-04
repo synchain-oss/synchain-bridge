@@ -204,6 +204,17 @@ $cmakeArgs = @(
 & cmake @cmakeArgs
 if ($LASTEXITCODE -ne 0) { throw ('cmake configure failed (exit ' + $LASTEXITCODE + ')') }
 
+# AAX 开关被关掉(或生成的工程里没有 AAX 目标)时,构建目录里的 .aaxplugin 是开关打开时留下的旧产物:本脚本的 configure
+# 不传 SYNCHAIN_BRIDGE_AAX,缓存里的 OFF 会一直保留。判据与 gates.ps1 的 gate 5c 共用 scripts/aax-build-state.ps1(理由写在
+# 那里)。-InstallAax 时在构建前就拒绝,不把旧二进制装进 Pro Tools。
+. (Join-Path $PSScriptRoot 'aax-build-state.ps1')
+$aaxOffReason = Get-AaxDisabledReason $BuildDir
+if ($InstallAax -and $aaxOffReason) {
+    throw ('-InstallAax:' + $aaxOffReason + ' —— AAX 目标没有参与本次构建,构建目录里的 AAX bundle 是旧产物,拒绝安装。' +
+        '重新 configure 时加 -DSYNCHAIN_BRIDGE_AAX=ON(例如 cmake -B "' + $BuildDir + '" -DSYNCHAIN_BRIDGE_AAX=ON),' +
+        '或换一个干净的 -BuildDir 后重跑')
+}
+
 Write-Host '== Build ==' -ForegroundColor Cyan
 & cmake --build $BuildDir --config $Config --parallel
 if ($LASTEXITCODE -ne 0) { throw ('cmake build failed (exit ' + $LASTEXITCODE + ')') }
@@ -216,11 +227,12 @@ if (-not (Test-Path $bundle)) {
     throw ('未找到 VST3 产物: ' + $bundle)
 }
 # AAX 主体 DLL 在 bundle 内的 Contents\x64\(一个文件,后缀也是 .aaxplugin);判「已构建」看它,不看 bundle 目录 ——
-# VS 多配置生成器在 generate 期就为每个配置各建一个只有 desktop.ini 的空壳 .aaxplugin 目录
+# VS 多配置生成器在 generate 期就为每个配置各建一个只有 desktop.ini 的空壳 .aaxplugin 目录。
+# 开关关掉时(见上面的 Get-AaxDisabledReason)即使旧 DLL 还在也不算本次产物,不在下面的摘要里报告
 $aaxBundle = Join-Path $BuildDir ('SynchainBridgeVST_artefacts\' + $Config + '\AAX\Synchain Bridge.aaxplugin')
-$aaxBuilt  = Test-Path -LiteralPath (Join-Path $aaxBundle 'Contents\x64\Synchain Bridge.aaxplugin') -PathType Leaf
+$aaxBuilt  = (-not $aaxOffReason) -and (Test-Path -LiteralPath (Join-Path $aaxBundle 'Contents\x64\Synchain Bridge.aaxplugin') -PathType Leaf)
 if ($InstallAax -and -not $aaxBuilt) {
-    throw ('未找到 AAX 产物: ' + $aaxBundle + '(CMake 缓存里 SYNCHAIN_BRIDGE_AAX 是否被关掉?)')
+    throw ('未找到 AAX 产物: ' + $aaxBundle)
 }
 
 $elapsed = ((Get-Date) - $start).TotalSeconds

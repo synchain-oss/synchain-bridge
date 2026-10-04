@@ -43,7 +43,7 @@
 
 ## 4. 各 Workflow 触发范围一览
 
-- `ci`(job `build-and-validate` = windows-2022;job `build-and-validate-macos` = macos-15,VST3 + AU + AAX,arm64-only;两个 job 都会经 AAX 打包脚本做 bundle 结构 / 架构断言和打包冒烟(含 Signed 模式拒收未签名 bundle 的反向断言),并上传未签名的 `aax-unsigned-win64` / `aax-unsigned-macos-arm64` artifact)/ `format`(job `clang-format`)/ `branch-gate`:`pull_request → dev` + `push → dev, 'feature/**'`。
+- `ci`(job `build-and-validate` = windows-2022;job `build-and-validate-macos` = macos-15,VST3 + AU + AAX,arm64-only;两个 job 都会经 AAX 打包脚本做 bundle 结构 / 架构断言和打包冒烟(含 Signed 模式拒收未签名 bundle 的反向断言),并在 push / workflow_dispatch 时上传未签名的 `aax-unsigned-win64` / `aax-unsigned-macos-arm64` artifact,pull_request 构建的是合并提交、不出件)/ `format`(job `clang-format`)/ `branch-gate`:`pull_request → dev` + `push → dev, 'feature/**'`。
 - `compliance`(gitleaks + reuse lint):同触发面,无 secrets,fork PR 同样跑。
 - `claude-review`:所有 base 分支、仅 same-repo(J31);`deepseek-review` / `pr-agent` 默认 disable。
 - `release`:push tags `v*` 触发草稿 Release,四段式 `gate`(版本一致性门禁,ubuntu-latest)→ `release`(windows-2022)∥ `release-macos`(macos-15)→ `publish`(ubuntu-latest,复验 sha256 后建 draft)。workflow 级 `contents: read`,`contents: write` 只授给 `publish` 一个 job。release 的 AAX 件只出未签名的 `aax-unsigned-*` artifact(保留 30 天),**不进 `publish`**(签名与上传由维护者手工做,见 `docs/release.md` §7)。**任一平台失败(含 AAX 构建 / 打包)= 整个 tag 无产物**(fail-hard,不用 `continue-on-error`;处理办法见 `docs/release.md` §6.1)。
