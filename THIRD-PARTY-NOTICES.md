@@ -21,7 +21,7 @@ ixwebsocket / mbedtls / zlib 三行的版本、以及**闭包集合本身**(本 
 | IBM Plex Sans(来源家族;子集按 §3 改名分发 web/fonts/BridgeSans.woff2 / family "Bridge Sans") | Google Fonts text= 子集 | OFL-1.1(Reserved Font Name "Plex") | https://github.com/google/fonts/tree/ade3d1533e06b2b1462ffcde8e08b129627ca360/ofl/ibmplexsans | 固定 commit 下的 OFL.txt:https://github.com/google/fonts/blob/ade3d1533e06b2b1462ffcde8e08b129627ca360/ofl/ibmplexsans/OFL.txt(首行「Copyright © 2017 IBM Corp. with Reserved Font Name "Plex"」) |
 | IBM Plex Mono(来源家族;子集按 §3 改名分发 web/fonts/BridgeMono.woff2 / family "Bridge Mono") | Google Fonts text= 子集 | OFL-1.1(Reserved Font Name "Plex") | https://github.com/google/fonts/tree/ade3d1533e06b2b1462ffcde8e08b129627ca360/ofl/ibmplexmono | 固定 commit 下的 OFL.txt:https://github.com/google/fonts/blob/ade3d1533e06b2b1462ffcde8e08b129627ca360/ofl/ibmplexmono/OFL.txt(首行「Copyright © 2017 IBM Corp. with Reserved Font Name "Plex"」) |
 | Noto Sans SC(子集 web/fonts/NotoSansSC.woff2) | Google Fonts text= 子集 | OFL-1.1(Reserved Font Name "Source") | https://github.com/google/fonts/tree/ade3d1533e06b2b1462ffcde8e08b129627ca360/ofl/notosanssc | 固定 commit 下的 OFL.txt:https://github.com/google/fonts/blob/ade3d1533e06b2b1462ffcde8e08b129627ca360/ofl/notosanssc/OFL.txt(首行「Copyright 2014-2021 Adobe (http://www.adobe.com/), with Reserved Font Name 'Source'」) |
-| Avid AAX SDK(随 JUCE 8.0.8 位于 `modules/juce_audio_plugin_client/AAX/SDK`,静态编进 AAX 产物;**仅 AAX 产物**) | 2.8.0(`AAX_SDK_CURRENT_REVISION 20208000`) | GPL-3.0-only(双授权:Avid 商业许可 / GPLv3;本项目取 GPLv3) | https://developer.avid.com/aax | tag 8.0.8 的 SDK LICENSE.txt:https://github.com/juce-framework/JUCE/blob/8.0.8/modules/juce_audio_plugin_client/AAX/SDK/LICENSE.txt(原文:"Or: You may also use this code under the terms of the GPL v3") |
+| Avid AAX SDK(随 JUCE 8.0.8 位于 `modules/juce_audio_plugin_client/AAX/SDK`,以源码形式编进 AAX 产物;**仅 AAX 产物**) | 2.8.0(`AAX_Version.h`:`AAX_SDK_CURRENT_REVISION 20208000`) | GPL-3.0-only(双授权:Avid 商业许可(Avid AAX SDK License Agreement)/ GPL v3;本项目取 GPL v3) | https://developer.avid.com/aax | tag 8.0.8 的 SDK LICENSE.txt:https://github.com/juce-framework/JUCE/blob/8.0.8/modules/juce_audio_plugin_client/AAX/SDK/LICENSE.txt(原文:"The AAX SDK is subject to commercial or open-source licensing." 与 "Or: You may also use this code under the terms of the GPL v3";只写 v3、未写 "or later",故取 GPL-3.0-only) |
 | pluginval(仅 CI 下载执行) | v1.0.4 | GPL-3.0-or-later | https://github.com/Tracktion/pluginval | 仅 CI 使用,不链接进 .vst3、不分发(08 §3.1 定论) |
 
 ## 说明
@@ -29,7 +29,7 @@ ixwebsocket / mbedtls / zlib 三行的版本、以及**闭包集合本身**(本 
 - WebView2 Runtime(Evergreen):不随本仓库分发。插件通过静态 loader(上表 SDK 项)加载宿主机器上已安装的
   WebView2 Runtime(Windows 平台组件 / 系统库,运行时由微软 Evergreen 引导器安装),故 Runtime 不进第三方声明闭包。
   这与 U2「不附 LICENSE-EXCEPTION.md,依赖 GPLv3 系统库例外默认解释」一致。
-- **macOS 构建的第三方闭包**(与 Windows 不同,按平台核算):
+- **各产物的第三方闭包**(按平台、按格式核算;macOS 与 Windows 不同):
   - **闭包按差集派生,不另行枚举**。分四个闭包(「仅 AAX 项」= 上表唯一标注「仅 AAX 产物」的 Avid AAX SDK):
     - **Windows VST3** = 上表全部条目 − 仅 AAX 项;
     - **Windows AAX** = 上表全部条目;
@@ -84,16 +84,22 @@ ixwebsocket / mbedtls / zlib 三行的版本、以及**闭包集合本身**(本 
     ```
 
   - **§2 署名随分发**:「每份拷贝都包含上述版权声明与本许可证」的要求经三条路径满足 ——
-    (a) 未改动的 name 表 nameID 0 / 13 / 14;(b) 本文件;(c) `LICENSES/OFL-1.1.txt`,由
-    `scripts/package.ps1` 复制进发布 zip 根目录的 `LICENSES/` 并在打包后逐个断言存在(缺一即 throw)。
+    (a) 未改动的 name 表 nameID 0 / 13 / 14;(b) 本文件;(c) `LICENSES/OFL-1.1.txt`,由各打包脚本
+    (`scripts/package.ps1` / `package-macos.sh` / `package-aax.ps1` / `package-aax-macos.sh`)复制进发布 zip
+    根目录的 `LICENSES/` 并在打包后逐个断言存在(缺一即失败)。
   - **条款编号更正**:OFL-1.1 的 **§4 是禁止背书条款**(不得用版权人 / 作者的名义为 Modified Version
     背书或做广告),要求随拷贝附版权声明与许可证的是 **§2**。本文件与 `web/fonts/README.md` 早前把
     这两条编号写反(本仓字体改名的 `chore(fonts)` 提交 message 同,见 CHANGELOG「[未发布] → 文档 /
     合规」的字体条目),现已更正。
 - 字体 OFL 全文见 LICENSES/OFL-1.1.txt;各家族版权行以上表末列固定 commit 下的上游 OFL.txt 为准。
-- **AAX 二进制整体按 GPLv3 分发**:Avid AAX SDK 只给出商业许可与 GPLv3 两种选项,本项目取 GPLv3,
-  所以含 SDK 的 AAX 产物整体按 GPL 第 3 版分发;GPL 全文即 AAX zip 根目录里的 `LICENSE.txt`。
-  (仓库不另放 GPL-3.0-only 的许可证文本文件:没有任何源文件声明这个 SPDX 标识,放进去只会让 `reuse lint` 报未使用的许可证。)
-- **PACE wraptool 与 iLok** 只在维护者本机做签名时使用:不链接进任何产物、不分发、不进 CI,更不入库。
-- **Avid DigiShell / AAX Validator 与相关测试计划**属于评估许可的材料:不入库、不分发,CI 不下载;
-  仓库只保留我们自己写的调用方式与判据说明。
+- **AAX 二进制整体按 GPLv3 分发**:Avid AAX SDK 只给出商业许可与 GPL v3 两种选项,本项目取 GPL v3,
+  所以含 SDK 的 AAX 产物整体按 GPL 第 3 版分发(SDK 只授权 v3,所以 AAX 产物整体只能按 v3、不带「或更新版本」;
+  JUCE 部分照旧适用上表的 AGPLv3,与 VST3 / AU 产物相同)。GPL 全文即 AAX zip 根目录里的 `LICENSE.txt`
+  (由仓库根 `LICENSE` 复制,内容为 GPL 第 3 版全文),zip 内 `INSTALL-AAX.txt` 的许可证一节指向本条。
+  (仓库不另放 GPL-3.0-only 的许可证文本文件:SDK 不在本仓库里,没有任何入库文件声明这个 SPDX 标识,放进去只会让
+  `reuse lint` 报未使用的许可证。)
+- **PACE wraptool 与 iLok** 只在维护者本机做签名时使用:这两个工具本身不随任何产物分发、不进 CI,更不入库。
+- **Avid DigiShell / AAX Validator 与相关测试计划**是 Avid 向 AAX 开发者提供、按 Avid 条款使用的材料:不入库、
+  不分发,CI 不下载;仓库只保留我们自己写的调用方式与判据说明。
+- **商标**:Avid、Pro Tools 与 AAX 是 Avid Technology, Inc. 的商标或注册商标;PACE 与 iLok 是 PACE Anti-Piracy, Inc.
+  的商标;VST 是 Steinberg Media Technologies GmbH 的商标。Synchain Bridge 是独立项目,与 Avid 无隶属、赞助或背书关系。

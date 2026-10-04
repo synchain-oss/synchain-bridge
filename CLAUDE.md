@@ -33,7 +33,7 @@
 
 ## 2. 提 PR 前的本地 Gates
 
-- 一律经 `pwsh scripts/gates.ps1`(06 §5.1 的 gate 结构,单 bundle;含 vcpkg `ixwebsocket` 预检、configure 后的 vcpkg 安装版本断言(`scripts/assert-vcpkg-installed.ps1`,与 CI 同一份)、ixwebsocket 两平台版本一致性(`vcpkg.json` override ↔ `CMakeLists.txt` `IXWEBSOCKET_TAG` 注释,与 `compliance` 同参)与默认端口 9420 一致性检查:`src/BridgeApi.h` ↔ `web/bridge.js` ↔ `web-preview/mock-server.mjs`)。AAX 相关:`-IncludeAax` 打开 AAX bundle 结构(5c)/ 打包冒烟(5d)gate,`-AaxValidatorPath <路径>` 接入可选的 AAX Validator(Avid 评估工具,不入库;给了路径即隐含 `-IncludeAax`);新增只读 gate 3h「签名材料 / Avid 评估工具不入库」默认恒跑。
+- 一律经 `pwsh scripts/gates.ps1`(06 §5.1 的 gate 结构,单 bundle;含 vcpkg `ixwebsocket` 预检、configure 后的 vcpkg 安装版本断言(`scripts/assert-vcpkg-installed.ps1`,与 CI 同一份)、ixwebsocket 两平台版本一致性(`vcpkg.json` override ↔ `CMakeLists.txt` `IXWEBSOCKET_TAG` 注释,与 `compliance` 同参)与默认端口 9420 一致性检查:`src/BridgeApi.h` ↔ `web/bridge.js` ↔ `web-preview/mock-server.mjs`)。AAX 相关:`-IncludeAax`(默认关)在 selftest 之后、pluginval 之前加跑 AAX bundle 结构(5c)/ 打包冒烟(5d,`scripts/package-aax.ps1` Unsigned + Signed 反向断言)/ AAX Validator(5e)三道 gate;`-AaxValidatorPath <仓库外路径>` 接入可选的 AAX Validator(Avid 评估工具,不入库;给了路径即隐含 `-IncludeAax`;调用方式标 `TODO-AAXVAL`,未实测前 5e 恒 SKIP,绝不假绿);只读 gate 3h「签名材料 / Avid 评估工具不入库」默认恒跑。本机安装 AAX 用 `scripts/build.ps1 -InstallAax`(管理员)。
 - 并行 agent 必须各用独立 git worktree 与 `-BuildDir`;GUI pluginval 全局串行。
 - **子 PR 不触发完整 CI 是设计,不是缺陷;不要为了让它跑 CI 去改 workflow 触发规则。**
 
@@ -43,10 +43,10 @@
 
 ## 4. 各 Workflow 触发范围一览
 
-- `ci`(job `build-and-validate` = windows-2022;job `build-and-validate-macos` = macos-15,VST3 + AU + AAX,arm64-only;两个 job 都会对 AAX 做 bundle 结构 / 架构断言和打包冒烟,并上传未签名的 `aax-unsigned-*` artifact)/ `format`(job `clang-format`)/ `branch-gate`:`pull_request → dev` + `push → dev, 'feature/**'`。
+- `ci`(job `build-and-validate` = windows-2022;job `build-and-validate-macos` = macos-15,VST3 + AU + AAX,arm64-only;两个 job 都会经 AAX 打包脚本做 bundle 结构 / 架构断言和打包冒烟(含 Signed 模式拒收未签名 bundle 的反向断言),并上传未签名的 `aax-unsigned-win64` / `aax-unsigned-macos-arm64` artifact)/ `format`(job `clang-format`)/ `branch-gate`:`pull_request → dev` + `push → dev, 'feature/**'`。
 - `compliance`(gitleaks + reuse lint):同触发面,无 secrets,fork PR 同样跑。
 - `claude-review`:所有 base 分支、仅 same-repo(J31);`deepseek-review` / `pr-agent` 默认 disable。
-- `release`:push tags `v*` 触发草稿 Release,四段式 `gate`(版本一致性门禁,ubuntu-latest)→ `release`(windows-2022)∥ `release-macos`(macos-15)→ `publish`(ubuntu-latest,复验 sha256 后建 draft)。workflow 级 `contents: read`,`contents: write` 只授给 `publish` 一个 job。release 的 AAX 件只出未签名的 `aax-unsigned-*` artifact,**不进 `publish`**(签名与上传由维护者手工做,见 `docs/release.md` §7)。**任一平台失败(含 AAX 构建 / 打包)= 整个 tag 无产物**(fail-hard,不用 `continue-on-error`;处理办法见 `docs/release.md` §6.1)。
+- `release`:push tags `v*` 触发草稿 Release,四段式 `gate`(版本一致性门禁,ubuntu-latest)→ `release`(windows-2022)∥ `release-macos`(macos-15)→ `publish`(ubuntu-latest,复验 sha256 后建 draft)。workflow 级 `contents: read`,`contents: write` 只授给 `publish` 一个 job。release 的 AAX 件只出未签名的 `aax-unsigned-*` artifact(保留 30 天),**不进 `publish`**(签名与上传由维护者手工做,见 `docs/release.md` §7)。**任一平台失败(含 AAX 构建 / 打包)= 整个 tag 无产物**(fail-hard,不用 `continue-on-error`;处理办法见 `docs/release.md` §6.1)。
 - `review-dispatch`:维护者评论 `/review` 显式触发(fork PR 唯一 AI 审查通道)。
 - 成本纪律:runner 就低不就高(V-4 确认前一律 `ubuntu-latest`)、按量计费 bot 克制使用。**例外(待用户拍板)**:`build-and-validate-macos` 必须跑 GitHub 托管 macOS runner,且当前继承整个 `ci` 工作流的触发面、全开;AAX 目标让 macOS job 的编译与打包时间有所增加;若要收敛,给 job 加 label/事件闸门是最小改动。
 

@@ -225,7 +225,7 @@ git tag v1.5.0 && git push origin v1.5.0
    # macOS 件:-n aax-unsigned-macos-arm64(在 Mac 上直接下载,或在 Windows 下好后拷过去)
    ```
 
-   artifact 里是 `SynchainBridge-AAX-v<X.Y.Z>-<平台>-UNSIGNED.zip` 与同名 `.sha256`，两者要留在同一目录（签名脚本先校验哈希）。
+   artifact 里是 `SynchainBridge-AAX-v<X.Y.Z>-<平台>-UNSIGNED.zip` 与同名 `.sha256`，两者要留在同一目录（签名脚本先校验哈希）。**记下这里的 `<run-id>`**：第 4 步要原样传给签名脚本做来源核对。
 
 3. **准备与 tag 一致的检出**。签名脚本要求 HEAD 正好是 `v<X.Y.Z>`，且 `LICENSE` / `THIRD-PARTY-NOTICES.md` / `LICENSES` / `scripts` 没有本地改动 —— 发行 zip 里的合规文件与打包脚本必须是这个版本的：
 
@@ -240,16 +240,22 @@ git tag v1.5.0 && git push origin v1.5.0
 
    ```powershell
    pwsh scripts/sign-aax.ps1 -UnsignedZip "$env:TEMP\aax-v<X.Y.Z>\SynchainBridge-AAX-v<X.Y.Z>-win64-UNSIGNED.zip" `
+     -SourceRunId <run-id> `
      -Account <PACE 账号> -WcGuid <wcguid> `
      -KeyFile "$env:USERPROFILE\.synchain-signing\synchain-aax-codesign.pfx"
    ```
 
    ```bash
    bash scripts/sign-aax-macos.sh --unsigned-zip "<下载目录>/SynchainBridge-AAX-v<X.Y.Z>-macos-arm64-UNSIGNED.zip" \
+     --source-run-id <run-id> \
      --account "<PACE 账号>" --wcguid "<wcguid>" --signid "<Keychain 身份名>"
    ```
 
-   脚本依次做：预检（`.sha256`、版本与检出一致、输入件确实未签名）→ `wraptool sign` → 后检（`wraptool verify`；Windows 比对证书指纹，macOS 跑 `codesign` 校验）→ 调用打包脚本的 Signed 模式 → 把产出的 zip 解压回读再验一轮。产物在 `dist/aax-signed/`：`SynchainBridge-AAX-v<X.Y.Z>-win64.zip`（macOS 为 `-macos-arm64.zip`）与同名 `.sha256`。加 `-DryRun` / `--dry-run` 可只跑预检。
+   `<run-id>` 就是第 2 步查到并下载过的那个 release run（需要 `gh` 已登录）。给了它，签名脚本会做**来源核对**：该 run 属于本仓库（不是 fork）、是 `release.yml`（或 `ci.yml`）、结论为 success、事件为 push / workflow_dispatch（tag 触发的 release run 是 push）、`head_sha` 等于当前检出（即 tag 所指的提交），再用 `gh run download` 重新取回它的 `aax-unsigned-*` artifact，同名 zip 必须与输入件字节相同 —— 由此确认被盖上签名的字节确实出自这次 tag 的 CI 构建。`.sha256` 只防下载损坏（它与 zip 是同一份下载，防不了替换）。不给 `-SourceRunId` / `--source-run-id` 时这一项只记 WARN、不拦截；只在没有 run 可核对时这样用（§7.4 的本机重建件）。
+
+   脚本依次做：预检（`.sha256` 完整性、版本与检出一致、来源核对、wraptool 存在且 `help sign` 列出所需 flag、输入件确实未签名且 `wraptool verify` 必须失败；macOS 另要求钥匙串里与 `--signid` 同名的代码签名身份恰好 1 个）→ 交互读入 pfx 口令（Windows）→ `wraptool sign` → 后检（`wraptool verify`；Windows 比对 Authenticode 签名者指纹与 pfx 指纹、默认要求带时间戳，macOS 跑 `codesign --verify --deep --strict` 并核对 `Authority=` 等于 `--signid`、不是 ad-hoc）→ 调用打包脚本的 Signed 模式 → 把产出的 zip 解压回读再验一轮 → 打印第 5 步的上传命令（不自动执行）。产物在 `dist/aax-signed/`（`-OutDir` / `--out-dir` 可改）：`SynchainBridge-AAX-v<X.Y.Z>-win64.zip`（macOS 为 `-macos-arm64.zip`）与同名 `.sha256`。
+
+   其他开关：`-DryRun` / `--dry-run` 只跑预检并打印打码后的签名计划（不读口令、不调用 `wraptool sign`、不产出文件）；`-WraptoolPath` / `--wraptool` 显式指定 wraptool；`-ExtraWraptoolArgs` / `--extra-arg`（可重复）原样透传给 `wraptool sign`（含 `password` 的项与脚本自管的 flag 会被拒收，TO-VALIDATE）；PACE 账号需要口令时加 `-PromptAccountPassword` / `--prompt-account-password`（交互读入，TO-VALIDATE）；Windows 确认接受无时间戳的签名时加 `-AllowNoTimestamp`（见 §7.4）。
 
 5. **上传到 draft**（签名脚本只打印这条命令，不自动执行）：
 
@@ -259,7 +265,7 @@ git tag v1.5.0 && git push origin v1.5.0
 
    macOS 件同理（文件名换成 `-macos-arm64`）。`gh` 找不到 draft 时（TO-VALIDATE），在网页上打开 draft → Edit，把两个文件拖进附件区。
 
-6. **验收**：两个平台都签了时 draft 上应有 8 个资产（VST3 / AU 两个 zip + AAX 两个 zip，各带 `.sha256`）；本版只发 Windows AAX 时为 6 个，并在 Release notes 里注明 macOS AAX 稍后提供。把 AAX 资产下载到一个新目录跑 `sha256sum -c *.sha256`，再用签名件按 [DAW_TEST_GUIDE.md](DAW_TEST_GUIDE.md) 的 Pro Tools 一节跑完 T01–T13。
+6. **验收**：两个平台都签了时 draft 上应有 8 个资产（VST3 / AU 两个 zip + AAX 两个 zip，各带 `.sha256`）；本版只发 Windows AAX 时为 6 个，并在 Release notes 里注明 macOS AAX 稍后提供。把 AAX 资产下载到一个新目录跑 `sha256sum -c *.sha256`，再用签名件按 [DAW_TEST_GUIDE.md 的 Pro Tools 一节](DAW_TEST_GUIDE.md#pro-toolsaax实测windows--macos)跑完 T01–T13。
 7. 可选：Release 标题追加「· AAX」。
 8. 转为正式发布（§6）。
 
@@ -268,4 +274,4 @@ git tag v1.5.0 && git push origin v1.5.0
 - **本机签名失败不影响 draft**：修掉原因后从同一个 `-UNSIGNED.zip` 重跑即可。签名脚本每次都解压到一个新的临时工作目录，从不修改输入件；失败时保留工作目录并打印路径（里面只有 bundle，没有秘密），排查完直接删掉。
 - **签名必须是对 bundle 的最后一次修改**：签完之后再改 bundle 里的任何文件都会让签名失效，所以也**不要事后用 signtool 补时间戳**。Windows 签名件没带时间戳时 `sign-aax.ps1` 默认判失败；确认接受无时间戳的签名，再显式加 `-AllowNoTimestamp` 从原始 `-UNSIGNED.zip` 重跑（TO-VALIDATE：wraptool 能否带时间戳）。
 - **正式发布之后也能补传 AAX**：同样用第 5 步的 `gh release upload`，并在 Release notes 里注明补发。
-- **artifact 30 天后过期**：只能在第 3 步的 tag 检出里本机重新构建（[build-windows.md](build-windows.md) / [build-macos.md](build-macos.md)），用 §4 的 AAX 打包命令以 Unsigned 模式（`-Version <X.Y.Z>`，源码链接默认指向 `v<X.Y.Z>`）重新打出 `-UNSIGNED.zip`，再从第 4 步继续。本机工具链与 CI 不同，须在 Release notes 里注明。**不要用 Re-run 重跑这次 tag 的 release run 来续 artifact**：GitHub 只允许在原 run 发起后 30 天内重跑（与 artifact 保留期一样长，过期时已经不能重跑）；而且重跑任何构建 job 都会连带重跑依赖它的 `publish`。`softprops/action-gh-release`（v2.6.2）找到同 tag 的现有 Release 时走更新路径：不会把已发布的 Release 改回 draft，但 `overwrite_files` 默认为 true，会删掉并重传四个同名 VST3 / AU 资产 —— 重新构建出的 zip 字节通常不同，用户手里文件的 sha256 就对不上了。
+- **artifact 30 天后过期**：只能在第 3 步的 tag 检出里本机重新构建（[build-windows.md](build-windows.md) / [build-macos.md](build-macos.md)），用 §4 的 AAX 打包命令以 Unsigned 模式（`-Version <X.Y.Z>`，源码链接默认指向 `v<X.Y.Z>`）重新打出 `-UNSIGNED.zip`，再从第 4 步继续 —— 这时没有 CI run 可核对，签名命令不带 `-SourceRunId` / `--source-run-id`（来源核对记 WARN）。本机工具链与 CI 不同，须在 Release notes 里注明。**不要用 Re-run 重跑这次 tag 的 release run 来续 artifact**：GitHub 只允许在原 run 发起后 30 天内重跑（与 artifact 保留期一样长，过期时已经不能重跑）；而且重跑任何构建 job 都会连带重跑依赖它的 `publish`。`softprops/action-gh-release`（v2.6.2）找到同 tag 的现有 Release 时走更新路径：不会把已发布的 Release 改回 draft，但 `overwrite_files` 默认为 true，会删掉并重传四个同名 VST3 / AU 资产 —— 重新构建出的 zip 字节通常不同，用户手里文件的 sha256 就对不上了。

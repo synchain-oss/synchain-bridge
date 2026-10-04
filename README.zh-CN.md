@@ -9,7 +9,7 @@
 
 ## 它解决什么问题
 
-Synchain Bridge 是一个音频插件(Windows / macOS 出 **VST3**,macOS 另出 **AU**,两个平台都出面向 Avid Pro Tools 的 **AAX**),把 DAW 里的一路立体声总线无损采集成 PCM,经本地 WebSocket 推流给远端协作者:
+Synchain Bridge 是一个音频插件(Windows / macOS 出 **VST3**,macOS 另出 **AU**,两个平台都出面向 Avid Pro Tools 的 **AAX**(Beta)),把 DAW 里的一路立体声总线无损采集成 PCM,经本地 WebSocket 推流给远端协作者:
 
 ```
 DAW → Synchain Bridge (PCM float32) → WebSocket(127.0.0.1) → 浏览器 → AudioWorklet → LiveKit Opus 编码 → 服务器
@@ -67,7 +67,7 @@ macOS:
 
 ## 安装
 
-两个平台的预编译版都在 [GitHub Releases](https://github.com/synchain-oss/synchain-bridge/releases),均为 Release 构建并经 CI 验证(pluginval strictness 5;AU 另经 `auval`)。AAX 例外:CI 只做 bundle 结构与架构断言(pluginval 无法托管 AAX),Pro Tools 验收靠手工:
+两个平台的预编译版都在 [GitHub Releases](https://github.com/synchain-oss/synchain-bridge/releases),均为 Release 构建并经 CI 验证(pluginval strictness 5;AU 另经 `auval`)。AAX 例外:pluginval 无法托管 AAX,CI 只做 bundle 结构与架构检查和打包冒烟,Pro Tools 里的验收靠手工:
 
 | 平台 | 资产 | zip 内容 |
 |---|---|---|
@@ -78,9 +78,9 @@ macOS:
 
 每个资产都附同名 `.sha256`。macOS 版**仅 Apple Silicon,且不签名不公证** —— 见 [macOS 已知限制](#macos-已知限制)与下面的解除隔离步骤。
 
-AAX 的 zip 由维护者在本机签名,并在 VST3/AU 资产之后手工上传,所以同一版本里会略晚于 VST3/AU 的 zip 出现。名字带 `*-UNSIGNED.zip` 的是签名流程的输入件,**不是发行版**,零售版 Pro Tools 不会加载。
+两个 AAX zip(Beta)从首个带 AAX 的版本起提供。它们由维护者在本机做 PACE 签名,再手工添加到 CI 建好的 Release 草稿上,所以可能比同一版本的 VST3/AU zip 晚出现。名字带 `*-UNSIGNED.zip` 的(CI artifact `aax-unsigned-win64` / `aax-unsigned-macos-arm64`)是签名流程的输入件,**不是发行版**,零售版 Pro Tools 不会加载。
 
-插件用独立厂商码/插件码(`Snch` / `Snb1`),DAW 将其识别为独立插件。改这两个码会生成新的 VST3 唯一 ID(AU 身份同样变化),DAW 视为全新插件、旧工程会丢插件 —— **两个平台都绝对禁止改动**。AAX 的插件 ID 由同一组码和 bundle id 派生,同样不可改。
+插件用独立厂商码/插件码(`Snch` / `Snb1`),DAW 将其识别为独立插件。改这两个码会生成新的 VST3 唯一 ID(AU 身份同样变化),DAW 视为全新插件、旧工程会丢插件 —— **两个平台都绝对禁止改动**。AAX 用的是同一对码(作厂商 / 产品 ID),外加 AAX 标识 `com.synchain.bridge`(与 bundle id 同一字符串),同样不可改。
 
 ### Windows
 
@@ -114,16 +114,16 @@ xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/Components/"Synchain Bri
 
 ### Pro Tools (AAX)
 
-Pro Tools 只扫描系统目录下这一个位置(没有用户级目录),安装需要管理员权限。先关闭 Pro Tools。`.aaxplugin` 是 **bundle 目录**;先删旧版再拷,因为覆盖拷贝到已有 bundle 是**合并**语义。
+Pro Tools 只扫描系统目录下这一个位置(没有用户级目录),安装需要管理员权限。先退出 Pro Tools。`.aaxplugin` 是 **bundle 目录**;先删旧版再拷,因为覆盖拷贝到已有 bundle 是**合并**语义。每个 AAX zip 里的 `INSTALL-AAX.txt` 写的是同一组命令。
 
-Windows(管理员 PowerShell):
+Windows(管理员 PowerShell;`$env:CommonProgramW6432` 是 64 位的 Common Files 目录,通常为 `C:\Program Files\Common Files`):
 
 ```powershell
-Remove-Item "C:\Program Files\Common Files\Avid\Audio\Plug-Ins\Synchain Bridge.aaxplugin" -Recurse -Force -ErrorAction SilentlyContinue
-Copy-Item "<产物路径>\Synchain Bridge.aaxplugin" "C:\Program Files\Common Files\Avid\Audio\Plug-Ins\" -Recurse -Force
+Remove-Item "$env:CommonProgramW6432\Avid\Audio\Plug-Ins\Synchain Bridge.aaxplugin" -Recurse -Force -ErrorAction SilentlyContinue
+Copy-Item "<产物路径>\Synchain Bridge.aaxplugin" "$env:CommonProgramW6432\Avid\Audio\Plug-Ins\" -Recurse -Force
 ```
 
-macOS(Apple Silicon):
+macOS(Apple Silicon;用 `ditto` 而不是 `cp -r`,符号链接与可执行位才保得住):
 
 ```bash
 sudo rm -rf "/Library/Application Support/Avid/Audio/Plug-Ins/Synchain Bridge.aaxplugin"
@@ -131,7 +131,7 @@ sudo ditto "<产物路径>/Synchain Bridge.aaxplugin" "/Library/Application Supp
 sudo xattr -dr com.apple.quarantine "/Library/Application Support/Avid/Audio/Plug-Ins/Synchain Bridge.aaxplugin"
 ```
 
-重启 Pro Tools,在插入点里按名称 **Synchain Bridge** 查找。插件的类别登记为「None」,所以在插入菜单里可能出现在 *Other* 而不是某个分类组下。签名是维护者的步骤;签名之后不要改动 bundle 里的任何文件,请整体复制整个文件夹。
+重启 Pro Tools,在插入点里按名称 **Synchain Bridge** 查找。插件的 AAX 类别登记为「None」,菜单按类别组织时可能出现在 *Other* 而不是某个分类组下。签名后的 bundle 不能改动 —— 改其中任何文件都会让签名失效 —— 请始终整体复制整个文件夹。
 
 ## macOS 已知限制
 
@@ -141,14 +141,14 @@ sudo xattr -dr com.apple.quarantine "/Library/Application Support/Avid/Audio/Plu
 
 ## Pro Tools (AAX) 已知限制
 
-- **只支持 mono / stereo 的 insert。** 没有 AudioSuite 版本,也没有 multi-mono 形态。
-- **离线 bounce 不推流。** 离线 bounce / commit / freeze 期间音频原样直通,不向浏览器推送任何数据;渲染结束后实时推流恢复。(仅 AAX。)
-- **Dynamic Plug-in Processing 可能暂停推流。** 轨道静音或没有音频时,Pro Tools 可能停止调用插件,推流会暂停,直到音频重新流过。
-- **延迟读数口径。** AAX 下宿主恒以 1024 采样的块大小初始化插件,所以面板上的缓冲 / 延迟读数按 1024 采样计(48 kHz 约 21 ms),不是你硬件缓冲的大小。
-- **签名。** 发行版 AAX 带维护者的 PACE 签名,这是零售版 Pro Tools 的要求。Windows 侧的代码签名证书是自签名的,「属性 → 数字签名」里会显示不受信任的签名者,属预期,不影响 Pro Tools 加载。macOS 侧**未经公证**,所以上面的 `sudo xattr` 步骤不能省。
+- **只支持 mono / stereo 的 insert**(mono→mono、stereo→stereo)。没有 AudioSuite 版本,也没有 multi-mono 形态。
+- **离线渲染不推流。** Pro Tools 以快于实时的速度渲染时(离线 bounce、Track Commit、Freeze),音频原样直通,不计量、不向浏览器推送任何数据;渲染结束后实时推流恢复。只对 AAX 版生效,VST3 / AU 行为不变。
+- **Dynamic Plug-in Processing 可能暂停推流。** 没有音频送进插件时(例如轨道静音或无声),Pro Tools 可能停止调用插件,推流会暂停,直到音频重新流过。
+- **延迟读数口径。** JUCE 的 AAX 封装恒以 AAX 的最大块大小 1024 采样初始化插件,所以面板上的缓冲 / 延迟读数按 1024 采样计(48 kHz 约 21.3 ms),不是你硬件缓冲的大小。
+- **签名。** 发行版 AAX 带维护者的 PACE 签名,这是零售版 Pro Tools 的要求。Windows 侧的代码签名证书是自签名的,「属性 → 数字签名」里会显示不受信任的签名者,属预期。macOS 侧**未经公证**,所以上面的 `sudo xattr` 步骤不能省。
 - **仅 Apple Silicon,且 Pro Tools 须原生运行。** macOS 的 AAX 只有 arm64 slice,Pro Tools 必须原生运行,不能走 Rosetta。
 - **未签名件**(自己构建的,或 `*-UNSIGNED.zip`)只能被 Pro Tools Developer 加载。
-- **编辑器诊断。** Windows 上编辑器行为异常时,用 Sysinternals DebugView(开 Capture Win32)查看诊断日志,按前缀 `SynchainBridge:` 过滤。
+- **诊断日志。** 插件会在少数事件上写一行以 `SynchainBridge:` 开头的诊断(编辑器打开、缩放尺寸被宿主拒绝、音频设置变化、宿主 non-realtime 状态切换)。Windows 上用 Sysinternals DebugView(开 Capture Win32)按该前缀过滤查看;macOS 上这些行写到 Pro Tools 的标准错误输出,需要从「终端」启动 Pro Tools 才看得到。
 
 ## 快速上手
 
@@ -203,15 +203,15 @@ CI(`.github/workflows/ci.yml`,job `build-and-validate-macos`,`macos-15`):从 `ac
 
 ### AAX (Pro Tools)
 
-AAX SDK 随 JUCE 8.0.8 自带,无需另外下载;按上面的流程配置 + 构建时会一并产出 AAX 目标。
+AAX SDK(2.8.0)随 JUCE 8.0.8 自带,无需另外下载:按上面的流程配置 + 构建时,两个平台都会一并产出 AAX 目标(CMake 选项 `SYNCHAIN_BRIDGE_AAX`,默认 ON;只要 VST3 / AU 时传 `-DSYNCHAIN_BRIDGE_AAX=OFF`)。
 
 ```
 build/SynchainBridgeVST_artefacts/Release/AAX/Synchain Bridge.aaxplugin
 ```
 
-从源码构建出来的是**未签名**件:只有 Pro Tools Developer 能加载,外部贡献者的路径到此为止。打包用 `pwsh scripts/package-aax.ps1 -Mode Unsigned`(Windows)或 `bash scripts/package-aax-macos.sh --mode unsigned`(macOS),得到 `*-UNSIGNED.zip`。签名需要维护者的 PACE 凭据,在本机手工完成,见 [`docs/release.md`](docs/release.md) 第 7 节。分平台细节:[`docs/build-windows.md`](docs/build-windows.md)、[`docs/build-macos.md`](docs/build-macos.md)。
+从源码构建出来的是**未签名**件:只有 Pro Tools Developer 能加载,外部贡献者能走到的就是这一步。Windows 上 `pwsh scripts/build.ps1 -InstallAax`(管理员 PowerShell)会构建并复制进 Pro Tools 插件目录。打包用 `pwsh scripts/package-aax.ps1 -Mode Unsigned`(Windows)或 `bash scripts/package-aax-macos.sh --mode unsigned`(macOS),得到 `*-UNSIGNED.zip`。签名需要维护者的 PACE 凭据,在本机手工完成,见 [`docs/release.md` 第 7 节](docs/release.md#7-aaxpro-tools本机签名--手工上传)。分平台细节:[`docs/build-windows.md`](docs/build-windows.md#aaxpro-tools)、[`docs/build-macos.md`](docs/build-macos.md#aaxpro-tools)。
 
-CI 在两个平台都会构建 AAX 目标,跑结构与架构断言和打包冒烟,并上传未签名 artifact;不对 AAX 跑 pluginval。
+CI 在两个平台都会构建 AAX 目标;打包脚本在打包冒烟里检查 bundle 结构与架构(Windows 为 x64 PE,macOS 为 arm64 单架构),并做反向断言(签名模式必须拒收未签名 bundle),未签名 zip 以 `aax-unsigned-win64` / `aax-unsigned-macos-arm64` artifact 上传。CI 不对 AAX 跑 pluginval。本地在 Windows 上用 `pwsh scripts/gates.ps1 -IncludeAax` 加跑 AAX 结构与打包 gate。
 
 ## 文档
 
@@ -219,9 +219,9 @@ CI 在两个平台都会构建 AAX 目标,跑结构与架构断言和打包冒�
 - [`docs/DAW_TEST_GUIDE.md`](docs/DAW_TEST_GUIDE.md) — DAW 端到端实测指南(Windows;Pro Tools 一节两个平台都适用)。
 - [`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md) — 第三方许可证声明。
 - [`CHANGELOG.md`](CHANGELOG.md) — 版本历史。
-- [`docs/build-windows.md`](docs/build-windows.md) — Windows 源码构建（依赖、配置、坑）。
-- [`docs/build-macos.md`](docs/build-macos.md) — macOS 源码构建（arm64、VST3 + AU、安装、`auval` / pluginval）。
-- [`docs/release.md`](docs/release.md) — 发布 runbook（改版本号 → 打 tag → `release.yml`）。
+- [`docs/build-windows.md`](docs/build-windows.md) — Windows 源码构建（依赖、配置、坑、AAX）。
+- [`docs/build-macos.md`](docs/build-macos.md) — macOS 源码构建（arm64、VST3 + AU + AAX、安装、`auval` / pluginval）。
+- [`docs/release.md`](docs/release.md) — 发布 runbook（改版本号 → 打 tag → `release.yml`；AAX 签名与手工上传见 §7）。
 - [`docs/web-client.md`](docs/web-client.md) — 浏览器侧客户端在哪与耦合点。
 - [`docs/webview-ui-pattern.md`](docs/webview-ui-pattern.md) — 如何复刻这套 WebView UI（复制清单 + 坑）。
 
@@ -237,9 +237,9 @@ Synchain Bridge 以 **GNU General Public License v3.0 or later** 发布([`LICENS
 
 VST 是 Steinberg Media Technologies GmbH 的商标。**VST3 SDK** 自 2025 年 11 月起按 MIT 许可证分发。
 
-AAX 构建额外包含 **Avid AAX SDK 2.8.0**(随 JUCE 8.0.8),按其 GPLv3 选项使用,故 AAX 二进制整体按 GPL-3.0 分发(详见 [`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md))。
+AAX 构建额外包含 **Avid AAX SDK 2.8.0**(随 JUCE 8.0.8)。该 SDK 按 Avid 商业许可或 GPL v3 提供,本项目取 GPL v3 选项,故 AAX 二进制整体按 GPL 第 3 版分发(详见 [`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md))。
 
-Avid、Pro Tools 与 AAX 是 Avid Technology, Inc. 的商标或注册商标;Synchain Bridge 是独立项目,与 Avid 无隶属、赞助或背书关系。PACE 与 iLok 是 PACE Anti-Piracy, Inc. 的商标。
+Avid、Pro Tools 与 AAX 是 Avid Technology, Inc. 的商标或注册商标;PACE 与 iLok 是 PACE Anti-Piracy, Inc. 的商标。Synchain Bridge 是独立项目,与 Avid 无隶属、赞助或背书关系。
 
 每个发布二进制对应的完整源码均在本仓库公开可得。
 
@@ -251,4 +251,4 @@ Avid、Pro Tools 与 AAX 是 Avid Technology, Inc. 的商标或注册商标;Sync
 
 ## 状态
 
-Windows x64(VST3)先行;macOS Apple Silicon(VST3 + AU)自 v1.5.0 起随 Windows zip 一同作为预编译资产发布 —— 不签名、仅 arm64,签名与公证留待后续版本。两个平台的 AAX(Pro Tools)支持正在 `feature/aax` 分支开发;AAX 文件由维护者签名并手工上传。版本历史见 [`CHANGELOG.md`](CHANGELOG.md)。
+Windows x64(VST3)先行;macOS Apple Silicon(VST3 + AU)自 v1.5.0 起随 Windows zip 一同作为预编译资产发布 —— 不签名、仅 arm64,签名与公证留待后续版本。两个平台的 AAX(Pro Tools)支持(Beta)正在 `feature/aax` 分支开发;AAX 文件由维护者签名并手工上传。版本历史见 [`CHANGELOG.md`](CHANGELOG.md)。
