@@ -417,7 +417,7 @@
                       margin-top: 2px;
                     "
                   >
-                    VST3 · AUDIO BRIDGE
+                    DAW · AUDIO BRIDGE
                   </div>
                 </div>
               </div>
@@ -978,7 +978,7 @@
                     letter-spacing: 0.06em;
                     color: #8a8a93;
                   "
-                  >Synchain VST · v1.3.1</span
+                  >Synchain Bridge</span
                 >
               </div>
             </div>
@@ -1644,7 +1644,8 @@
       // ---------------- first paint: seed labels, then pull race-free snapshot ----------------
       function applySnapshot(s) {
         if (!s) return;
-        if (s.version) els.version.textContent = "Synchain VST · v" + s.version;
+        if (s.version)
+          els.version.textContent = "Synchain Bridge · v" + s.version;
         if (s.lang) state.lang = s.lang;
         if (typeof s.volume === "number") {
           state.volume = s.volume;
