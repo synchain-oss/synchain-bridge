@@ -4,6 +4,8 @@
 #
 # 四段式:gate(版本门禁)→ release / release-macos(两平台并行构建+打包)→ publish(建 draft Release)。
 # 版本门禁独立成 job 并前置:两个平台的构建都在门禁绿了之后才起,tag 打错时不浪费 windows/macOS 分钟数。
+# release / release-macos 另各产出一个未签名 AAX artifact(aax-unsigned-*),它不进 publish:AAX 由维护者
+# 本机 PACE 签名后手工上传到 draft(docs/release.md §7),本 workflow 零 secret、不碰任何签名凭据。
 name: Release
 
 on:
@@ -72,7 +74,7 @@ jobs:
           "version=$want" | Out-File $env:GITHUB_OUTPUT -Append
 
   # ============================================================================
-  # release —— Windows x64(VST3)
+  # release —— Windows x64(VST3;另出未签名 AAX artifact,不进 publish)
   # ============================================================================
   release:
     name: release
@@ -247,14 +249,54 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+      # ---- AAX(未签名):不进 publish。签名在维护者本机(docs/release.md §7);artifact 刻意不叫 dist-*,
+      #      publish 只从 dist-win64 / dist-macos-arm64 两个目录取件、并按四个精确名白名单收口,-UNSIGNED 件混不进去。
+      #      打包唯一真源 = scripts/package-aax.ps1(与 ci.yml 的 6d / 6e 同构);AAX bundle 由上面同一次 cmake --build
+      #      产出(FORMATS 含 AAX)。版本与上面的 Package 同取 gate 的 outputs.version、经 step env 间接读入、同一道
+      #      空值断言;源码链接用脚本默认的 v<版本>,即本次 tag。
+      #      失败语义 fail-hard(docs/release.md §6.1):不加 continue-on-error —— AAX 打包挂了 = 整个 tag 无产物,
+      #      与 VST3 同待遇;同一脚本在 ci.yml 的每次 PR / push 上都冒烟过,回归在打 tag 前就会红。
+      - name: Package AAX (unsigned)
+        shell: pwsh
+        env:
+          PKG_VERSION: ${{ needs.gate.outputs.version }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:PKG_VERSION)) {
+            Write-Error "::error::gate did not export version"; exit 1
+          }
+          ./scripts/package-aax.ps1 -Mode Unsigned -Version $env:PKG_VERSION -BuildDir build -OutDir dist/aax
+          Get-ChildItem dist/aax | Out-Host
+          # 产物名逐字等于 gate 版本推出的定式(与 ci.yml 6d 同口径):上传步骤用通配,这里先把「恰好一个、名字对」钉死
+          $want = "SynchainBridge-AAX-v$env:PKG_VERSION-win64-UNSIGNED.zip"
+          $zips = @(Get-ChildItem dist/aax -File -Filter 'SynchainBridge-AAX-*.zip')
+          if ($zips.Count -ne 1 -or $zips[0].Name -cne $want -or -not (Test-Path -LiteralPath (Join-Path dist/aax "$want.sha256"))) {
+            Write-Error "expected exactly dist/aax/$want (+ .sha256), got: $($zips.Name -join ', ')"; exit 1
+          }
+
+      - name: Publish AAX job summary
+        shell: pwsh
+        run: Get-Content dist/aax/package-summary.md | Out-File $env:GITHUB_STEP_SUMMARY -Append
+
+      - name: Upload AAX (unsigned, win64)
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: aax-unsigned-win64
+          path: |
+            dist/aax/SynchainBridge-AAX-*-win64-UNSIGNED.zip
+            dist/aax/SynchainBridge-AAX-*-win64-UNSIGNED.zip.sha256
+          if-no-files-found: error
+          retention-days: 30 # dist-* 的 7 天不够:手工签名可能要等借到 Mac(docs/release.md §7.4)
+
   # ============================================================================
-  # release-macos —— macOS(Apple Silicon):VST3 + AU,arm64-only,不签名不公证(U13)
-  # 与 ci.yml 的 build-and-validate-macos 同构,末尾多一步 scripts/package-macos.sh。
+  # release-macos —— macOS(Apple Silicon):VST3 + AU,arm64-only,不签名不公证(U13);
+  # 另出未签名 AAX artifact(不进 publish,签名在维护者本机,docs/release.md §7)。
+  # 与 ci.yml 的 build-and-validate-macos 同构,末尾多一步 scripts/package-macos.sh 与 AAX 未签名打包。
   #
-  # ⚠️ 已知权衡(见 docs/release.md §6):publish `needs: [release, release-macos]`,
-  #    本 job 挂掉 = 整个 tag 一个产物都发不出去(包括已构建成功的 Windows zip)。
-  #    timeout 与 windows job 对齐到 60 分钟 —— 两边都要编译两个 format wrapper,mac 侧还多一次
-  #    ixwebsocket 的编译,30 分钟偏紧(JUCE / ixwebsocket 源码有缓存,但 miss 也得够用)。
+  # ⚠️ 已知权衡(见 docs/release.md §6.1):publish `needs: [release, release-macos]`,
+  #    本 job 挂掉(含 AAX 打包)= 整个 tag 一个产物都发不出去(包括已构建成功的 Windows zip)。
+  #    timeout 与 windows job 对齐到 60 分钟 —— 两边都要编译多个 format wrapper(Windows:VST3 + AAX;
+  #    mac:VST3 + AU + AAX),mac 侧还多一次 ixwebsocket 的编译,30 分钟偏紧(JUCE / ixwebsocket 源码有缓存,
+  #    但 miss 也得够用)。
   # ============================================================================
   release-macos:
     name: release-macos
@@ -537,6 +579,42 @@ jobs:
             dist/package-summary.md
           if-no-files-found: error
           retention-days: 7
+
+      # ---- AAX(未签名):与 release job 的同名三步对称,理由与失败语义见那里(不进 publish、fail-hard)。
+      #      打包唯一真源 = scripts/package-aax-macos.sh(与 ci.yml 的 8d / 8e 同构);版本经 step env 间接读入
+      #      (tag 允许 '$'、反引号、'"',直插 bash 双引号串会真做命令替换),空值直接 fail。内层 zip 由 ditto 打,
+      #      可执行位保得住(upload-artifact 自己不保留 POSIX 权限)。----
+      - name: Package AAX (unsigned)
+        shell: bash
+        env:
+          PKG_VERSION: ${{ needs.gate.outputs.version }}
+        run: |
+          set -euo pipefail
+          [ -n "$PKG_VERSION" ] || { echo "::error::gate did not export version"; exit 1; }
+          bash scripts/package-aax-macos.sh --mode unsigned --version "$PKG_VERSION" --build-dir build --out-dir dist/aax
+          ls -l dist/aax
+          # 产物名逐字等于 gate 版本推出的定式(与 ci.yml 8d 同口径),且 dist/aax 里恰好一个 AAX zip
+          want="SynchainBridge-AAX-v${PKG_VERSION}-macos-arm64-UNSIGNED.zip"
+          { [ -f "dist/aax/$want" ] && [ -f "dist/aax/$want.sha256" ]; } \
+            || { echo "::error::expected dist/aax/$want (+ .sha256)"; exit 1; }
+          n=$(find dist/aax -maxdepth 1 -type f -name 'SynchainBridge-AAX-*.zip' | wc -l | tr -d '[:space:]')
+          [ "$n" = "1" ] || { echo "::error::expected exactly 1 AAX zip in dist/aax, found $n"; exit 1; }
+
+      - name: Publish AAX job summary
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat dist/aax/package-summary.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload AAX (unsigned, macos-arm64)
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: aax-unsigned-macos-arm64
+          path: |
+            dist/aax/SynchainBridge-AAX-*-macos-arm64-UNSIGNED.zip
+            dist/aax/SynchainBridge-AAX-*-macos-arm64-UNSIGNED.zip.sha256
+          if-no-files-found: error
+          retention-days: 30 # 理由同 release job(docs/release.md §7.4)
 
       # 失败日志先归拢到工作区同一目录再上传:同时给 $RUNNER_TEMP/... 与工作区路径时,
       # upload-artifact 会以两者的最近公共祖先(/Users/runner/work)展开成别扭结构。

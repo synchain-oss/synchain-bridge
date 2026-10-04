@@ -50,6 +50,18 @@
   - **Upload**(6e / 8e):artifact `aax-unsigned-win64` / `aax-unsigned-macos-arm64`(内含 `-UNSIGNED.zip` + `.sha256`),
     PR 保留 14 天、其余 30 天。名字刻意不叫 `dist-*`:`release.yml` 的 `publish` 只从 `dist-*` 取件,未签名件进不了 Release。
     上传步骤不带事件条件,`workflow_dispatch` 同样产出 —— 在子分支上 dispatch 一次即可取到 Pro Tools Developer 测试件。
+- **`release.yml` 的 `release` / `release-macos` 各追加三步未签名 AAX**(触发面一字不改,不加 secret,不加新 action,
+  上传沿用已 pin 的 `upload-artifact` v4.6.2 SHA):
+  - **Package AAX (unsigned)**:版本取 `gate` 的 `outputs.version`(与 VST3/AU 的 Package 同一个值、同一道空值断言,经 step env
+    间接读入),源码链接用脚本默认的 `v<版本>` 即本次 tag;随后断言 `dist/aax` 里恰好一个 AAX zip、名字逐字等于
+    `SynchainBridge-AAX-v<版本>-{win64,macos-arm64}-UNSIGNED.zip` 且带 `.sha256`(与 `ci.yml` 6d / 8d 同口径)。
+  - **Publish AAX job summary**:把 `dist/aax/package-summary.md` 追加进 job summary。
+  - **Upload**:artifact `aax-unsigned-win64` / `aax-unsigned-macos-arm64`(`-UNSIGNED.zip` + `.sha256`),保留 **30 天**
+    (`dist-*` 的 7 天不够:手工签名可能要等借到 Mac)。
+  - **`publish` job 一行未改**:它只从 `dist-win64` / `dist-macos-arm64` 取件,四资产精确名白名单与 `files:` 不变,draft 仍只挂
+    VST3/AU 四个资产;AAX 由维护者本机 PACE 签名后手工上传(`docs/release.md` 新增 §7「AAX(Pro Tools):本机签名 + 手工上传」)。
+  - **失败语义 fail-hard**:任一平台的 AAX 打包 / 上传失败 = 整个 tag 无产物,不用 `continue-on-error`(理由见
+    `docs/release.md` §6.1;同一脚本在 `ci.yml` 的每次 PR / push 上都冒烟过,回归在打 tag 前就会红)。
 
 ### 发布 / 分发(对下游可见)
 
