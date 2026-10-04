@@ -38,6 +38,30 @@
 
 ### 发布 / 分发(对下游可见)
 
+- **新增 AAX 打包脚本 `scripts/package-aax.ps1`(Windows x64)与 `scripts/package-aax-macos.sh`(macOS arm64)**,是 AAX
+  打包的唯一真源(本机签名流程与 CI 共用);现有 `package.ps1` / `package-macos.sh` 一行未改,VST3 / AU 发版链路零风险。
+  - `-Mode Unsigned|Signed`(mac:`--mode unsigned|signed`)**必填、无默认值**。**`-UNSIGNED` 约定**:未签名件一律叫
+    `SynchainBridge-AAX-v<版本>-{win64,macos-arm64}-UNSIGNED.zip`;不带后缀的发行名只在 Signed 模式、且 bundle 确实带
+    签名时才产出 —— Windows 要求 DLL 有 Authenticode 签名者证书且签名完好(`NotSigned` / `HashMismatch` 拒收;自签名证书的
+    `UnknownError` 属预期、放行),macOS 要求 `codesign --verify --strict` 通过、有 `Authority=` 且不是 ad-hoc、并有
+    `_CodeSignature/CodeResources`(arm64 链接器自动加的 ad-hoc 签名必然被拒)。Signed 模式打包后再把 zip 解到临时目录
+    **回读验签**并比对主体二进制字节;从建 staging 起任何一步失败都删掉本次的 zip / `.sha256`,失败路径上绝不留发行名 zip。
+  - 版本:`-Version` 与 `-PrereleaseTag`(`ci.<sha7>` → `<CMake VERSION>-ci.<sha7>`)互斥,显式传空串直接失败(不静默回落);
+    结果须匹配 `release.yml` 的 tag 口径。`-PrereleaseTag` 的构建必须同时给 `-SourceRef <40 位 commit>`(没有对应 tag,
+    默认的 `v<版本>` 会是死链)。`-BundlePath` 供签名流程直接指定 bundle(签名产物不在构建目录里);走构建目录时
+    Windows 只计含 `Contents\` 的已构建 bundle —— VS 多配置生成器在 generate 期就给每个配置各建一个只有 `desktop.ini`
+    的空壳 `.aaxplugin` 目录(JUCE 的 `file(GENERATE)`),它们不是产物;已构建的必须恰好 1 个。
+  - bundle 断言:Windows 为 `Contents\x64\Synchain Bridge.aaxplugin` 的 PE 头 Machine = 0x8664、根目录有 `desktop.ini` /
+    `Plugin.ico`、不含 `*.pdb/*.ilk/*.exp/*.lib`;macOS 为 arm64-only、`CFBundleIdentifier` 等于 `CMakeLists.txt` 的
+    `BUNDLE_ID`、`Contents/MacOS/Synchain Bridge` 可执行。
+  - zip 内放 `INSTALL-AAX.txt`(中文;不叫 `INSTALL.txt`,与 VST3 包解压到同一目录时互不覆盖):Unsigned 版顶部是
+    「未签名构建(UNSIGNED)—— 不是发行版」横幅,Signed 版是签名说明;两平台的 Pro Tools 插件目录安装命令(先删旧版)、
+    mac 的 arm64 / Rosetta 与解隔离说明、Avid / Pro Tools / AAX / PACE / iLok 商标声明、AAX SDK 2.8.0 的 GPLv3 说明与
+    精确到 ref 的源码链接。合规文件与现有包同一组(`LICENSE.txt` / `THIRD-PARTY-NOTICES.md` / `LICENSES/OFL-1.1.txt`)。
+  - `.sha256` 与 `package-summary.md` 的格式与现有脚本逐字一致(默认输出目录 `dist/aax`,与 VST3 的 `dist/` 分开)。
+    打包脚本**不调用 wraptool、不碰任何凭据**,所以 CI 能跑。
+- `.gitignore` 追加 `*.aaxplugin/`、`*.pfx`、`*.p12`、`*.pvk`:AAX bundle 与代码签名材料都不入库(签名证书一律放仓库外)。
+
 ### 兼容性
 
 - **无契约变更**:桥 #1 / 桥 #2 的 wire 协议、Init 键与 `BRIDGE_CONTRACT_VERSION` 均零改动,握手里不带
