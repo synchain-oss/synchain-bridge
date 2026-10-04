@@ -51,6 +51,9 @@
       没给 → SKIP;给了空串、路径在仓库内或不存在 → FAIL。调用参数与通过 / 失败标记是文件头三个 `TODO-AAXVAL` 常量,
       未实测填写前恒 SKIP「调用方式未实测」,**绝不假绿**;填好后输出 Tee 到 `<构建目录>\gates-aaxval.log`,以输出标记
       判定、退出码只作参考(与 auval 同口径)。
+- `scripts/build.ps1` 新增 `-InstallAax`:构建后把 `.aaxplugin` 复制到 64 位 Common Files 下的 `Avid\Audio\Plug-Ins`。
+  必须管理员权限(Pro Tools 只扫描这一个目录,没有用户级目录可回退;非管理员在构建前就直接退出),装前检测主体 DLL
+  是否被 Pro Tools 占用、先删旧版再整体复制,并提示本地构建的未签名件只有 Pro Tools Developer 能加载。
 
 ### 持续集成
 

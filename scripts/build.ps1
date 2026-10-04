@@ -5,10 +5,14 @@
   docs/build-windows.md 一致。路径引用一律走环境变量(JUCE_PATH / VCPKG_ROOT)与相对
   BuildDir,不写死绝对路径。默认不安装;加 -Install 时复制 .vst3 到系统 VST3 目录
   (无管理员权限自动回退到用户级目录,并先检测目标是否被 DAW 占用)。
+  加 -InstallAax 时复制 .aaxplugin 到 Pro Tools 插件目录(64 位 Common Files 下的 Avid\Audio\Plug-Ins):
+  必须管理员权限(Pro Tools 只扫描这一个目录,没有用户级目录可回退),同样先检测目标是否被占用。
+  本地构建出的 AAX 未经 PACE 签名,只有 Pro Tools Developer 能加载,零售版 Pro Tools 不认。
 .EXAMPLE   pwsh scripts/build.ps1 -Install
 .EXAMPLE   pwsh scripts/build.ps1 -Config Debug
 .EXAMPLE   pwsh scripts/build.ps1 -BuildDir build-B11        # 并行 agent:各用各的构建目录
 .EXAMPLE   pwsh scripts/build.ps1 -Clean -Install           # 清构建目录(保留 NuGet 缓存)后构建并安装
+.EXAMPLE   pwsh scripts/build.ps1 -InstallAax               # 管理员 PowerShell:构建后装进 Pro Tools 插件目录
 #>
 [CmdletBinding()]
 param(
@@ -17,10 +21,21 @@ param(
     [string]$BuildDir = 'build',
     [switch]$Install,        # 构建后复制 .vst3 到系统 VST3 目录
     [switch]$Clean,          # 清 $BuildDir(保留 $BuildDir/packages 的 NuGet 缓存)
-    [switch]$OpenFolder      # 构建后打开产物目录
+    [switch]$OpenFolder,     # 构建后打开产物目录
+    [switch]$InstallAax      # 构建后复制 .aaxplugin 到 Pro Tools 插件目录(必须管理员;未签名件只有 Pro Tools Developer 能加载)
 )
 
 $ErrorActionPreference = 'Stop'
+
+# -InstallAax 先验管理员权限,不白跑一遍构建:Pro Tools 只扫描 64 位 Common Files 下的 Avid\Audio\Plug-Ins,
+# 没有用户级目录可回退(与 -Install 的 VST3 用户级回退不同)。
+if ($InstallAax) {
+    $isAdminAax = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+    if (-not $isAdminAax) {
+        Write-Host '-InstallAax 需要管理员权限:Pro Tools 只扫描 Common Files\Avid\Audio\Plug-Ins,没有用户级目录。请用管理员 PowerShell 重跑。' -ForegroundColor Red
+        exit 1
+    }
+}
 
 # 仓库根 = 本脚本上一级目录(与调用时的 CWD 无关)
 $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
@@ -200,11 +215,19 @@ $bundle = Join-Path $BuildDir ('SynchainBridgeVST_artefacts\' + $Config + '\VST3
 if (-not (Test-Path $bundle)) {
     throw ('未找到 VST3 产物: ' + $bundle)
 }
+# AAX 主体 DLL 在 bundle 内的 Contents\x64\(一个文件,后缀也是 .aaxplugin);判「已构建」看它,不看 bundle 目录 ——
+# VS 多配置生成器在 generate 期就为每个配置各建一个只有 desktop.ini 的空壳 .aaxplugin 目录
+$aaxBundle = Join-Path $BuildDir ('SynchainBridgeVST_artefacts\' + $Config + '\AAX\Synchain Bridge.aaxplugin')
+$aaxBuilt  = Test-Path -LiteralPath (Join-Path $aaxBundle 'Contents\x64\Synchain Bridge.aaxplugin') -PathType Leaf
+if ($InstallAax -and -not $aaxBuilt) {
+    throw ('未找到 AAX 产物: ' + $aaxBundle + '(CMake 缓存里 SYNCHAIN_BRIDGE_AAX 是否被关掉?)')
+}
 
 $elapsed = ((Get-Date) - $start).TotalSeconds
 Write-Host ''
 Write-Host '== 构建完成 ==' -ForegroundColor Green
 Write-Host ('  产物 : ' + $bundle)
+if ($aaxBuilt) { Write-Host ('  AAX  : ' + $aaxBundle) }
 Write-Host ('  版本 : ' + $Version)
 Write-Host ('  耗时 : ' + [math]::Round($elapsed, 1) + 's')
 
@@ -242,6 +265,39 @@ if ($Install) {
     if (Test-Path $targetBundle) { Remove-Item -LiteralPath $targetBundle -Recurse -Force }
     Copy-Item -LiteralPath $bundle -Destination $targetBundle -Recurse -Force
     Write-Host ('  安装到: ' + $targetBundle) -ForegroundColor Green
+}
+
+# ---------------------------------------------------------------------------
+# -InstallAax:复制到 Pro Tools 插件目录(管理员权限已在脚本开头验过)
+# ---------------------------------------------------------------------------
+if ($InstallAax) {
+    # 64 位 Common Files:32 位宿主里 CommonProgramFiles 会落到 (x86),CommonProgramW6432 恒指向 64 位那一份
+    # (与 package-aax.ps1 的 INSTALL-AAX.txt 同口径)
+    $commonFiles = if ($env:CommonProgramW6432) { $env:CommonProgramW6432 } else { $env:CommonProgramFiles }
+    $aaxDir = Join-Path $commonFiles 'Avid\Audio\Plug-Ins'
+    $targetAax = Join-Path $aaxDir 'Synchain Bridge.aaxplugin'
+
+    # 文件锁检测同 -Install,对象换成主体 DLL:Pro Tools 加载着插件时它被占用,不静默失败
+    $innerAax = Join-Path $targetAax 'Contents\x64\Synchain Bridge.aaxplugin'
+    if (Test-Path -LiteralPath $innerAax -PathType Leaf) {
+        $locked = $false
+        try {
+            $fs = [System.IO.File]::Open($innerAax, 'Open', 'ReadWrite', 'None')
+            $fs.Close()
+        } catch { $locked = $true }
+        if ($locked) {
+            Write-Host ('目标 .aaxplugin 正被占用(可能 Pro Tools 已加载该插件)。请先退出 Pro Tools 后重试。') -ForegroundColor Red
+            exit 1
+        }
+    }
+
+    New-Item -ItemType Directory -Force -Path $aaxDir | Out-Null
+    # 先删旧版再整体复制:目标已存在时 Copy-Item 是合并,旧版残留文件会混进来。-Force:bundle 根目录的 desktop.ini
+    # 带 System / Hidden 属性,不带 -Force 的递归拷贝会跳过它
+    if (Test-Path -LiteralPath $targetAax) { Remove-Item -LiteralPath $targetAax -Recurse -Force }
+    Copy-Item -LiteralPath $aaxBundle -Destination $targetAax -Recurse -Force
+    Write-Host ('  AAX 安装到: ' + $targetAax) -ForegroundColor Green
+    Write-Host '[INFO] 本地构建的 AAX 未经 PACE 签名:只有 Pro Tools Developer 能加载,零售版 Pro Tools 只认 PACE 签名的 AAX。' -ForegroundColor Yellow
 }
 
 if ($OpenFolder) {
