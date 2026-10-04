@@ -68,6 +68,30 @@ if(WIN32)
   set(JUCE_WEBVIEW2_PACKAGE_LOCATION "${WEBVIEW2_PKG_DIR}" CACHE PATH "" FORCE)
 endif()
 
+# --- AAX（Avid Pro Tools）---
+# JUCE 8.0.8 仅在「非 GCC 且 (Darwin 或 Windows x86_64)」生成 AAX 目标(JUCEModuleSupport.cmake
+# _juce_get_platform_plugin_kinds)，其余平台静默滤掉。这里按同一条件现算，只为让 configure 日志
+# 说真话 + 「该建却没建」时 fail-closed(升 JUCE 版本时的 tripwire)。SDK = JUCE 自带 AAX SDK 2.8.0
+# (GPLv3 选项)，不引外部 SDK、CI 零 secret；不调 juce_set_aax_sdk_path(JUCE 已自动挂载自带 SDK，
+# 再调一次直接 FATAL)。两平台默认 ON(macOS 仍 arm64-only)；-DSYNCHAIN_BRIDGE_AAX=OFF 可整体关掉。
+# JUCE_TARGET_ARCHITECTURE 是 CACHE INTERNAL，上面 add_subdirectory(JUCE) 之后才读得到 —— 本段不能上移。
+option(SYNCHAIN_BRIDGE_AAX "Build the AAX (Pro Tools) format where JUCE supports it" ON)
+
+set(_bridge_aax_supported FALSE)
+if(NOT CMAKE_CXX_COMPILER_ID STREQUAL "GNU"
+   AND (CMAKE_SYSTEM_NAME STREQUAL "Darwin"
+        OR (CMAKE_SYSTEM_NAME STREQUAL "Windows" AND JUCE_TARGET_ARCHITECTURE STREQUAL "x86_64")))
+  set(_bridge_aax_supported TRUE)
+endif()
+
+set(SYNCHAIN_BRIDGE_FORMATS VST3 AU)   # AU 在非 Apple 被 JUCE 滤掉(见下方 juce_add_plugin 注释)
+if(SYNCHAIN_BRIDGE_AAX AND _bridge_aax_supported)
+  list(APPEND SYNCHAIN_BRIDGE_FORMATS AAX)
+elseif(SYNCHAIN_BRIDGE_AAX)
+  message(STATUS "AAX requested but unsupported by JUCE on "
+                 "${CMAKE_SYSTEM_NAME}/${CMAKE_CXX_COMPILER_ID}/${JUCE_TARGET_ARCHITECTURE}; skipped")
+endif()
+
 # --- Plugin Target ---
 juce_add_plugin(SynchainBridgeVST
   COMPANY_NAME        "Synchain"
@@ -76,7 +100,8 @@ juce_add_plugin(SynchainBridgeVST
   # AU 在非 Apple 平台被 JUCE 静默过滤掉（机制上是 no-op），故无需按平台分支。
   # 该静默过滤行为按 JUCE 8.0.8（`.juce-version` 当前钉的版本）实证，并非 JUCE 的书面约定；
   # 升 JUCE 版本时需在 Windows 侧重验一次「带 AU 也不影响 VST3 产物」（见 PR #19 审查）。
-  FORMATS             VST3 AU
+  # AAX 在 JUCE 不支持的平台同样被静默过滤；由上方 AAX 段按同一条件现算，加下方 FATAL tripwire 兜底。
+  FORMATS             ${SYNCHAIN_BRIDGE_FORMATS}
   PRODUCT_NAME        "Synchain Bridge"
 
   # "Fx" is added automatically by JUCE for VST3 audio effects.
@@ -94,9 +119,32 @@ juce_add_plugin(SynchainBridgeVST
   # Bundle identifier
   BUNDLE_ID           "com.synchain.bridge"
 
+  # --- AAX 专属（FORMATS 不含 AAX 时只是几个不被读的 JucePlugin_AAX* 宏）---
+  # 会话身份 = ManufacturerID(Snch) + ProductID(Snb1) + 每个 stem 组合的 PlugIn ID(JUCE
+  # AAXClientExtensions 按主总线 in/out 现算：mono→mono 'jcbb'、stereo→stereo 'jccc')；后者由
+  # PluginProcessor::isBusesLayoutSupported 决定 —— 发版后只许加、不许删。
+  AAX_IDENTIFIER         com.synchain.bridge
+  # 推流旁路不改音频：SDK 无 Analyzer/Utility 类；None = PT 按类别组织菜单时进 "Other"。
+  # 类别不进会话身份，日后可改(PT 重扫缓存即可)。
+  AAX_CATEGORY           AAX_ePlugInCategory_None
+  # 禁 multi-mono：否则 PT 会在立体声/环绕轨按声道各开一个 mono 实例 → 各起一个 WS 服务。
+  DISABLE_AAX_MULTI_MONO TRUE
+  # 不设 COPY_PLUGIN_AFTER_BUILD(会往系统 Avid 插件目录写)；DISABLE_AAX_BYPASS 保持默认 FALSE
+  # (宿主旁路走 processBlockBypassed：音频直通、推流暂停，与 VST3 一致)。
+
   # Windows: link the WebView2 loader (macOS/Linux ignore this). See NuGet block above.
   NEEDS_WEBVIEW2      TRUE
 )
+
+if(TARGET SynchainBridgeVST_AAX)
+  # 关 AudioSuite(离线处理)注册：本插件不改音频，离线跑一遍无意义。JUCEUtils 无对应关键字，宏只在
+  # juce_audio_plugin_client_AAX.cpp `#if ! JucePlugin_AAXDisableAudioSuite` 处被读(未定义 = 注册)；
+  # wrapper TU 是 INTERFACE 源、编在本目标里，PRIVATE 即达且不污染共享代码编译参数。
+  target_compile_definitions(SynchainBridgeVST_AAX PRIVATE JucePlugin_AAXDisableAudioSuite=1)
+elseif(SYNCHAIN_BRIDGE_AAX AND _bridge_aax_supported)
+  message(FATAL_ERROR "SYNCHAIN_BRIDGE_AAX=ON and JUCE should support AAX here, "
+                      "but SynchainBridgeVST_AAX was not created (JUCE format filtering changed?)")
+endif()
 
 # --- Embedded web UI assets (offline, no external deps) ---
 # Compiled into a static lib exposing BinaryData::* (index.html/styles.css/bridge.js/
@@ -295,9 +343,18 @@ if(BRIDGE_BUILD_SELFTESTS)
 endif()
 
 # --- Platform-Specific ---
+# 状态行按「实际建出的目标」拼格式表，不按开关推断。macOS 行在 AAX 关闭时与旧文案逐字相同
+# (docs/build-macos.md 引用了这行输出)。
+set(_bridge_fmt_win "VST3")
+set(_bridge_fmt_mac "VST3 + AU")
+if(TARGET SynchainBridgeVST_AAX)
+  string(APPEND _bridge_fmt_win " + AAX")
+  string(APPEND _bridge_fmt_mac " + AAX")
+  message(STATUS "AAX: JUCE-bundled SDK (GPLv3 option), unsigned -> loads in Pro Tools Developer only until PACE-signed")
+endif()
 if(WIN32)
-  message(STATUS "Building Synchain VST3 for Windows (static, WebView2)")
+  message(STATUS "Building Synchain Bridge for Windows: ${_bridge_fmt_win} (static CRT, WebView2)")
 elseif(APPLE)
-  message(STATUS "Building Synchain Bridge for macOS: VST3 + AU, "
+  message(STATUS "Building Synchain Bridge for macOS: ${_bridge_fmt_mac}, "
                  "arch=${CMAKE_OSX_ARCHITECTURES}, min=${CMAKE_OSX_DEPLOYMENT_TARGET}, WKWebView")
 endif()
