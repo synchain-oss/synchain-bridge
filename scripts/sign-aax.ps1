@@ -25,6 +25,8 @@
            调 package-aax.ps1 -Mode Signed 打包;再把产出的 zip 解压回读,复验 wraptool verify 与指纹;
            最后只**打印** gh release upload 命令,不自动执行
   成功即删除临时工作目录;失败则保留并打印路径(里面只有 bundle,没有秘密)。
+  打包之后的任何一步(回读复验等)失败,都删掉本次产出的发行名 zip 与 .sha256:失败路径上 OutDir 里不留可上传的发行名 zip
+  (package-summary.md 里本次追加的段落会留下,只是记录,不是可上传的文件)。
 
   -DryRun:跑全部预检(第 7 步的解压也在临时目录里做,结束即删)并汇总 PASS / WARN / FAIL / SKIP,打印签名计划
   (口令占位打码)与 package-aax.ps1 -DryRun 的输出;不读口令、不载入 pfx、不调用 wraptool sign、不产出任何文件。
@@ -35,15 +37,21 @@
   V12 默认安装路径),核对完删掉对应标记。
 
   禁止 Start-Transcript:本脚本不开 transcript,也不要在开着 transcript 的会话里运行(wraptool 的输出与本脚本的
-  日志都不该进任何落盘记录)。签名期间 --keypassword 会出现在本机进程列表里(wraptool 只收命令行参数,TO-VALIDATE
-  是否有 stdin / 环境变量通道),只在可信的单用户机器上执行。wraptool --verbose 是否回显收到的参数未知(TO-VALIDATE V1):
-  它的输出逐行把口令 / PACE 账号 / wcguid 字面替换成 **** 后再显示。
+  日志都不该进任何落盘记录)。口令交互读取,不进本脚本的参数、日志与 shell 历史;但 wraptool 只收命令行参数(TO-VALIDATE
+  是否有 stdin / 环境变量通道),签名期间口令会以 --keypassword <明文>(加 -PromptAccountPassword 时还有 --password)出现在
+  wraptool 的进程命令行里:本机进程列表短暂可见,开着进程命令行审计(Security 4688 含命令行 / Sysmon / EDR)时会被记录。
+  只在可信的单用户机器上执行,签名期间不要让他人登录本机。wraptool --verbose 是否回显收到的参数未知(TO-VALIDATE V1):
+  它的输出逐行把口令(含它在命令行里的转义形态)/ PACE 账号 / wcguid 字面替换成 **** 后再显示。
+
+  原生命令传参:$PSNativeCommandArgumentPassing 从 7.3 起才是正式特性(故 #Requires 7.3);Invoke-Wraptool 在函数作用域内
+  显式设为 Standard,含双引号 / 空格的口令按 Windows 规则转义后原样交给 wraptool(7.2 的 Legacy 模式会把含 " 的口令
+  拆错、把后面的参数吞掉)。git / gh 的输出按 UTF-8 解码(中文 Windows 默认 CP936,按它解码会把 JSON 拼坏)。
 .EXAMPLE
   gh run download <run ID> -R synchain-oss/synchain-bridge -n aax-unsigned-win64 -D <下载目录>
   pwsh scripts/sign-aax.ps1 -UnsignedZip <下载目录>\SynchainBridge-AAX-v1.6.0-win64-UNSIGNED.zip -SourceRunId <run ID> `
        -Account <PACE 账号> -WcGuid <wrap 配置 GUID> -KeyFile $env:USERPROFILE\.synchain-signing\synchain-aax-codesign.pfx -DryRun
 #>
-#Requires -Version 7.2
+#Requires -Version 7.3
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)][string]$UnsignedZip,   # SynchainBridge-AAX-v<版本>-win64-UNSIGNED.zip,同目录须有 .sha256
@@ -100,11 +108,31 @@ function Add-Check([string]$Id, [string]$Result, [string]$Detail) {
     if ($Result -eq 'FAIL' -and -not $DryRun) { throw "预检 $Id 未通过:$Detail" }
 }
 
+# git / gh 的输出是 UTF-8,PowerShell 却按 [Console]::OutputEncoding 解码原生命令的输出 —— 中文 Windows 默认 CP936,
+# 非 ASCII 字节会被错拼(字符串末尾落单的前导字节能把 JSON 的结束引号吞掉,ConvertFrom-Json 随之失败)。
+# 调用期间临时切到 UTF-8,finally 里恢复;没有控制台的宿主里设置可能抛异常,此时保持原样(gh 侧另有 --jq 只取 ASCII 字段兜底)。
+$script:Utf8NoBom = [System.Text.UTF8Encoding]::new($false)
+function Enter-Utf8Console {
+    try {
+        $prev = [Console]::OutputEncoding
+        if ($prev.CodePage -ne 65001) { [Console]::OutputEncoding = $script:Utf8NoBom }
+        return $prev
+    } catch { return $null }
+}
+function Exit-Utf8Console($Prev) {
+    if ($null -ne $Prev) { try { [Console]::OutputEncoding = $Prev } catch { } }
+}
+
 # 外部命令:局部把 ErrorActionPreference 降为 Continue,stderr 不当终止错误,只看退出码
 function Invoke-Git([string[]]$GitArgs, [string]$Dir = $RepoRoot) {
     $ErrorActionPreference = 'Continue'
-    $out = & git -C $Dir @GitArgs 2>$null
-    return [pscustomobject]@{ ExitCode = $LASTEXITCODE; Lines = @($out | ForEach-Object { "$_" }) }
+    $OutputEncoding = $script:Utf8NoBom   # 函数作用域内生效,返回即恢复
+    $prevEnc = Enter-Utf8Console
+    try {
+        $out = & git -C $Dir @GitArgs 2>$null
+        $code = $LASTEXITCODE
+    } finally { Exit-Utf8Console $prevEnc }
+    return [pscustomobject]@{ ExitCode = $code; Lines = @($out | ForEach-Object { "$_" }) }
 }
 
 # 回显时含空白的参数加引号;-Display 是打过码的参数表,真实参数(含口令)绝不经这里输出
@@ -112,16 +140,34 @@ function Format-CommandLine([string[]]$Display) {
     return (($Display | ForEach-Object { if ($_ -match '\s' -or $_ -eq '') { '"' + $_ + '"' } else { $_ } }) -join ' ')
 }
 
-# -Redact:回显 wraptool 输出前逐行把这些值字面替换成 ****(TO-VALIDATE V1:--verbose 是否回显收到的参数未知,先按会回显处理)
+# 打码用的替换表:每个秘密值本身;它在 Windows 命令行里的转义形态(Standard 传参下 " → \",紧挨引号的反斜杠加倍 ——
+# wraptool 若回显原始命令行而不是解析后的 argv,看到的是这种形态);再加按空白切开后长度 ≥ 4 的片段(兜住只回显一部分的情况)。
+# 长的先替换,免得短片段先把长串拆散后长串再也匹配不上。
+function Get-RedactTokens([string[]]$Values) {
+    $set = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+    foreach ($v in @($Values | Where-Object { $_ })) {
+        [void]$set.Add($v)
+        $esc = [regex]::Replace($v, '(\\*)"', { param($m) $m.Groups[1].Value + $m.Groups[1].Value + '\"' })
+        [void]$set.Add($esc)
+        foreach ($frag in @(($v -split '\s+') + ($esc -split '\s+'))) { if ($frag.Length -ge 4) { [void]$set.Add($frag) } }
+    }
+    return @($set | Sort-Object -Property Length -Descending)
+}
+
+# -Redact:回显 wraptool 输出前逐行把这些值(及其转义形态 / 片段,见 Get-RedactTokens)字面替换成 ****
+# (TO-VALIDATE V1:--verbose 是否回显收到的参数未知,先按会回显处理)
 function Invoke-Wraptool([string[]]$Arguments, [string[]]$Display = $null, [switch]$Capture, [string[]]$Redact = @()) {
     if ($null -eq $Display) { $Display = $Arguments }
     Write-Host ("> wraptool " + (Format-CommandLine $Display))
     $ErrorActionPreference = 'Continue'
+    # 只在本函数作用域内生效:不论调用方 / profile 怎么设,传给 wraptool.exe 的参数都按 Standard 规则转义
+    # (含 " 与空格的口令原样到达 wraptool,后面的 --in / --out 不会错位)。需要 7.3+(见 #Requires)
+    $PSNativeCommandArgumentPassing = 'Standard'
     if ($Capture) {
         $text = (& $script:Wraptool @Arguments 2>&1 | ForEach-Object { "$_" }) -join "`n"
         return [pscustomobject]@{ ExitCode = $LASTEXITCODE; Output = $text }
     }
-    $secrets = @($Redact | Where-Object { $_ })
+    $secrets = Get-RedactTokens $Redact
     & $script:Wraptool @Arguments 2>&1 | ForEach-Object {
         $line = "$_"
         # String.Replace:字面子串替换,不经正则。账号很短或是常见词时会连带替换无关文字,只影响可读性(TO-VALIDATE V1 时顺带看)
@@ -133,10 +179,15 @@ function Invoke-Wraptool([string[]]$Arguments, [string[]]$Display = $null, [swit
 
 function Invoke-Gh([string[]]$GhArgs) {
     $ErrorActionPreference = 'Continue'
-    $all = @(& gh @GhArgs 2>&1)
+    $OutputEncoding = $script:Utf8NoBom   # 函数作用域内生效,返回即恢复
+    $prevEnc = Enter-Utf8Console
+    try {
+        $all = @(& gh @GhArgs 2>&1)
+        $code = $LASTEXITCODE
+    } finally { Exit-Utf8Console $prevEnc }
     $out = @($all | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] } | ForEach-Object { "$_" })
     $err = @($all | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] } | ForEach-Object { "$_" })
-    return [pscustomobject]@{ ExitCode = $LASTEXITCODE; Lines = $out; Err = ($err -join ' ') }
+    return [pscustomobject]@{ ExitCode = $code; Lines = $out; Err = ($err -join ' ') }
 }
 
 # 同一仓库的所有 worktree 共用同一个 git 公共目录(--git-common-dir);不在任何 git 工作树里则返回 $null
@@ -175,6 +226,8 @@ function Test-InsideRepo([string]$FullPath) {
 $script:Wraptool = $null
 $work      = $null
 $succeeded = $false
+$packaged  = $false   # 本次运行已产出发行名 zip:之后任何一步失败都要删掉它(见 finally)
+$signedZip = $null
 $exitCode  = 0
 $kp = $null
 $ap = $null
@@ -285,7 +338,10 @@ try {
         $prov = $null
         try {
             if (-not (Get-Command gh -CommandType Application -ErrorAction SilentlyContinue)) { throw 'gh 不在 PATH 上(来源核对用 GitHub CLI,需已 gh auth login)' }
-            $r = Invoke-Gh @('api', "repos/$UploadRepo/actions/runs/$SourceRunId")
+            # --jq 在 gh 端只投影出所需的 ASCII 字段(与 mac 版同口径):display_title / head_commit.message 这类可能含中文的
+            # 字段根本不进管道,控制台代码页怎么解码都拼不坏 JSON;对象结构保持不变,后面的 $run.xxx 不用改
+            $r = Invoke-Gh @('api', "repos/$UploadRepo/actions/runs/$SourceRunId", '--jq',
+                '{repository:{full_name:.repository.full_name},head_repository:{full_name:.head_repository.full_name},path,status,conclusion,head_sha,event}')
             if ($r.ExitCode -ne 0) { throw "读取 run $SourceRunId 失败(exit $($r.ExitCode)):$($r.Err)" }
             $run = ($r.Lines -join "`n") | ConvertFrom-Json
             $runRepo  = [string]$run.repository.full_name
@@ -308,8 +364,9 @@ try {
             if ([string]$run.head_sha -cne $headCommit) {
                 throw "run $SourceRunId 构建的是 $($run.head_sha),当前检出是 ${headCommit}:zip 与检出不是同一个 commit"
             }
-            # 取回该 run 的 aax-unsigned-* artifact,其中同名 zip 必须与输入字节相同。目前只有 ci.yml 6e / 8e 产出它;release.yml 的
-            # 同名 artifact 由 AAX-13 接入(tag 版本的件只能从 release run 来),接入前传 release run 会在「找到 0 个 zip」处 FAIL
+            # 取回该 run 的 aax-unsigned-* artifact,其中同名 zip 必须与输入字节相同。ci.yml 6e / 8e(push / workflow_dispatch)与
+            # release.yml 的 release / release-macos 都产出它(aax-unsigned-win64 / aax-unsigned-macos-arm64);签 tag 版本时传该 tag 的
+            # release run ID(见 docs/release.md §7.3)。哪些 run 算合法来源,以上面几条判据为准
             $prov = Join-Path ([System.IO.Path]::GetTempPath()) ('synchain-aax-provenance-' + [guid]::NewGuid().ToString('N'))
             $d = Invoke-Gh @('run', 'download', $SourceRunId, '-R', $UploadRepo, '-p', 'aax-unsigned-*', '-D', $prov)
             if ($d.ExitCode -ne 0) { throw "gh run download $SourceRunId 失败(exit $($d.ExitCode);artifact 过期了?):$($d.Err)" }
@@ -450,7 +507,8 @@ try {
         Write-Host ''
         Write-Host '[DryRun] 签名计划(未执行):'
         Write-Host $(if ($SourceRunId) { "  0) 来源已按 run $SourceRunId 核对(见预检 3b)" } else { '  0) 未给 -SourceRunId:来源未核对(只验了完整性)' })
-        Write-Host '  1) Read-Host -AsSecureString 读 pfx 口令(不进参数 / 日志 / transcript),载入 pfx 取指纹并确认带私钥、未过期'
+        Write-Host '  1) Read-Host -AsSecureString 读 pfx 口令(不进本脚本参数 / 日志 / transcript),载入 pfx 取指纹并确认带私钥、未过期'
+        Write-Host '     注意:签名那几秒口令会以 --keypassword 出现在 wraptool 进程命令行里(wraptool 的限制),签名期间不要让他人登录本机'
         if ($PromptAccountPassword) { Write-Host '     另读 PACE 账号口令(--password,TO-VALIDATE V2)' }
         Write-Host ("  2) wraptool " + (Format-CommandLine $wtShow))
         Write-Host ('  3) 后检:wraptool verify --verbose --in <out> 退出码 0;Authenticode 签名者指纹 = pfx 指纹;' +
@@ -578,6 +636,7 @@ try {
             -BundlePath $outBundle -OutDir $OutDirFull
         if ($LASTEXITCODE -ne 0) { throw "package-aax.ps1 -Mode Signed 失败(exit $LASTEXITCODE)" }
         if (-not (Test-Path -LiteralPath $signedZip -PathType Leaf)) { throw "打包后找不到 $signedZip" }
+        $packaged = $true   # 从这里起失败,finally 删掉本次的发行名 zip / .sha256(打包脚本自己的失败路径由它自己清理)
 
         # 回读:产出的 zip 解到新临时目录,复验 wraptool verify 与指纹(发出去的字节还带着 PACE 签名)
         $rb = Join-Path $work 'readback'
@@ -601,6 +660,24 @@ try {
     Write-Host "sign-aax: FAIL —— $($_.Exception.Message)" -ForegroundColor Red
     $exitCode = 1
 } finally {
+    # 打包之后的步骤(回读复验等)没通过:删掉本次产出的发行名 zip / .sha256 —— 它的文件名与 docs/release.md §7.3 第 5 步的
+    # 上传路径逐字相同,留着就可能被照文档传上去。只在本次确实打过包时删,早期失败不碰上一次成功留下的件。
+    if ($packaged -and -not $succeeded) {
+        $removedAll = $true
+        foreach ($p in @($signedZip, "$signedZip.sha256")) {
+            if ($p -and (Test-Path -LiteralPath $p)) {
+                try { Remove-Item -LiteralPath $p -Force -ErrorAction Stop }
+                catch {
+                    $removedAll = $false
+                    Write-Host "无法删除 ${p}:$($_.Exception.Message) —— 请手动删除,不要上传" -ForegroundColor Red
+                }
+            }
+        }
+        if ($removedAll) {
+            Write-Host ("打包之后的步骤未通过:已删除 $signedZip 及 .sha256(失败路径不留发行名 zip;" +
+                'package-summary.md 里本次追加的段落只是记录)') -ForegroundColor Yellow
+        }
+    }
     if ($kp) { $kp.Dispose() }
     if ($ap) { $ap.Dispose() }
     if ($work -and (Test-Path -LiteralPath $work)) {

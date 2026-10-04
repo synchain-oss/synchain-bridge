@@ -204,6 +204,30 @@ $cmakeArgs = @(
 & cmake @cmakeArgs
 if ($LASTEXITCODE -ne 0) { throw ('cmake configure failed (exit ' + $LASTEXITCODE + ')') }
 
+# AAX 开关被关掉时,构建目录里的 .aaxplugin 是开关打开时留下的旧产物:SYNCHAIN_BRIDGE_AAX 是普通 CACHE 选项,设成 OFF 后
+# 一直留在缓存里(本脚本的 configure 不传它);OFF 时不生成 SynchainBridgeVST_AAX 目标,CMake / MSBuild 也不删已移除目标
+# 的旧产物(旧 .vcxproj 一样残留,不能拿它当判据)。可信的只有缓存值与每次 generate 都重写的 .sln(与 gates.ps1 的
+# gate 5c 同一判据)。-InstallAax 时在构建前就拒绝,不把旧二进制装进 Pro Tools。
+function Get-AaxDisabledReason([string]$Dir) {
+    $cache = Join-Path $Dir 'CMakeCache.txt'
+    if (-not (Test-Path -LiteralPath $cache -PathType Leaf)) { return ('找不到 ' + $cache) }
+    $m = Select-String -LiteralPath $cache -Pattern '^SYNCHAIN_BRIDGE_AAX:[A-Za-z]+=(.*)$' | Select-Object -First 1
+    if (-not $m) { return 'CMakeCache.txt 里没有 SYNCHAIN_BRIDGE_AAX' }
+    $v = $m.Matches[0].Groups[1].Value.Trim()
+    if ($v -notmatch '^(?i)(ON|TRUE|YES|Y|[1-9][0-9]*)$') { return ('CMakeCache.txt 里 SYNCHAIN_BRIDGE_AAX=' + $v) }
+    $sln = @(Get-ChildItem -LiteralPath $Dir -Filter '*.sln' -File -ErrorAction SilentlyContinue)
+    if ($sln.Count -gt 0 -and -not @($sln | Where-Object { Select-String -LiteralPath $_.FullName -SimpleMatch '"SynchainBridgeVST_AAX"' -Quiet }).Count) {
+        return ($sln[0].Name + ' 里没有 SynchainBridgeVST_AAX 目标')
+    }
+    return $null
+}
+$aaxOffReason = Get-AaxDisabledReason $BuildDir
+if ($InstallAax -and $aaxOffReason) {
+    throw ('-InstallAax:' + $aaxOffReason + ' —— AAX 目标没有参与本次构建,构建目录里的 AAX bundle 是旧产物,拒绝安装。' +
+        '重新 configure 时加 -DSYNCHAIN_BRIDGE_AAX=ON(例如 cmake -B "' + $BuildDir + '" -DSYNCHAIN_BRIDGE_AAX=ON),' +
+        '或换一个干净的 -BuildDir 后重跑')
+}
+
 Write-Host '== Build ==' -ForegroundColor Cyan
 & cmake --build $BuildDir --config $Config --parallel
 if ($LASTEXITCODE -ne 0) { throw ('cmake build failed (exit ' + $LASTEXITCODE + ')') }
@@ -216,11 +240,12 @@ if (-not (Test-Path $bundle)) {
     throw ('未找到 VST3 产物: ' + $bundle)
 }
 # AAX 主体 DLL 在 bundle 内的 Contents\x64\(一个文件,后缀也是 .aaxplugin);判「已构建」看它,不看 bundle 目录 ——
-# VS 多配置生成器在 generate 期就为每个配置各建一个只有 desktop.ini 的空壳 .aaxplugin 目录
+# VS 多配置生成器在 generate 期就为每个配置各建一个只有 desktop.ini 的空壳 .aaxplugin 目录。
+# 开关关掉时(见上面的 Get-AaxDisabledReason)即使旧 DLL 还在也不算本次产物,不在下面的摘要里报告
 $aaxBundle = Join-Path $BuildDir ('SynchainBridgeVST_artefacts\' + $Config + '\AAX\Synchain Bridge.aaxplugin')
-$aaxBuilt  = Test-Path -LiteralPath (Join-Path $aaxBundle 'Contents\x64\Synchain Bridge.aaxplugin') -PathType Leaf
+$aaxBuilt  = (-not $aaxOffReason) -and (Test-Path -LiteralPath (Join-Path $aaxBundle 'Contents\x64\Synchain Bridge.aaxplugin') -PathType Leaf)
 if ($InstallAax -and -not $aaxBuilt) {
-    throw ('未找到 AAX 产物: ' + $aaxBundle + '(CMake 缓存里 SYNCHAIN_BRIDGE_AAX 是否被关掉?)')
+    throw ('未找到 AAX 产物: ' + $aaxBundle)
 }
 
 $elapsed = ((Get-Date) - $start).TotalSeconds

@@ -464,7 +464,10 @@ function Test-PcmFrameWiring {
 
 # ---- gate 3h:签名材料 / Avid 评估工具不入库 ----
 # 代码签名材料(pfx / p12 / pvk)是签名凭据(CLAUDE.md §0 铁律 1),Avid DigiShell / AAX Validator 及其安装包、测试计划
-# 属评估许可、不得再分发 —— 两类都只能放仓库外。只按「扩展名 + 文件名」匹配:文档文件名里出现 validator 不会误报。
+# 属评估许可、不得再分发 —— 两类都只能放仓库外。只按「扩展名 + 文件名」匹配:扩展名类(pfx / p12 / pvk)落在任意路径都算;
+# DigiShell / AAX Validator / 测试计划这几类的关键词必须落在**文件名**(最后一段)里,目录名里出现不算 —— 否则
+# -BuildDir build-aax-validator 这类构建目录里的每个 exe / dll / zip 都会误报,把整套门禁打红。文档文件名里出现
+# validator(扩展名不在列表里)同样不会误报。
 # 两轮枚举(-z:NUL 分隔、不做 core.quotePath 转义,否则非 ASCII 文件名会被包成带引号的 "\346..." 而让 $ 锚定失配):
 #   ① --cached --others --exclude-standard:已跟踪的 + `git add .` 会带进去的未跟踪文件;
 #   ② --others --ignored --exclude-standard:被 .gitignore 藏起来的文件。.gitignore 已忽略 *.pfx / *.p12 / *.pvk,
@@ -474,7 +477,37 @@ function Test-PcmFrameWiring {
 # 第 ② 轮会进 node_modules/ 等被忽略的目录,依赖升级后可能撞上第三方自带的 .pfx / .p12 测试证书(TLS 类 npm 包常见)。
 # 命中明细里是完整的仓库相对路径,一眼可见落在哪个顶层目录。确认是第三方测试夹具时,只按**完整相对路径**逐条精确豁免
 # (在下面的循环里跳过该路径并写明理由),不要放宽正则、不要跳过第 ② 轮、不要整目录豁免。
-$script:SigningMaterialPattern = '(?i)\.(pfx|p12|pvk)$|(^|/)dsh\.exe$|(digishell|aax[ _-]?validator).*\.(exe|dll|zip|msi|dmg|pkg|pdf)$|test[ _-]?plan.*\.pdf$'
+# 关键词与扩展名之间用 [^/]*(不跨 '/'),保证关键词落在文件名里;不要改回 .*,也不要靠排除 $BuildDir 来规避误报
+# (构建目录里被 git add -f 的真材料会因此漏检)。
+$script:SigningMaterialPattern = '(?i)\.(pfx|p12|pvk)$|(^|/)dsh\.exe$|(digishell|aax[ _-]?validator)[^/]*\.(exe|dll|zip|msi|dmg|pkg|pdf)$|test[ _-]?plan[^/]*\.pdf$'
+
+# git ls-files -z 的输出是 UTF-8 字节。经 PowerShell 的原生命令管道读取时按 [Console]::OutputEncoding 解码 ——
+# 中文 Windows 默认 CP936,部分中文文件名最后一个字的落单字节会和紧跟的 '.' 拼成替换字符('新证书.pfx' → '新证?pfx'),
+# 扩展名正则随之失配,3h 报 PASS = 假绿。-z 与 core.quotePath=false 只解决转义这一层,解码这一层靠这里:
+# 用 Process 直接按 UTF-8 读 stdout(不碰控制台状态,没有控制台的宿主里同样成立)。git 不在 PATH 时 Start 抛异常,
+# 由调用方记 FAIL(枚举不出来不等于没有)。
+function Get-GitLsFilesUtf8([string[]]$LsArgs) {
+    $utf8 = [System.Text.UTF8Encoding]::new($false)
+    $psi = [System.Diagnostics.ProcessStartInfo]::new('git')
+    foreach ($a in (@('-C', $RepoRoot, '-c', 'core.quotePath=false', 'ls-files', '-z') + $LsArgs)) { $psi.ArgumentList.Add($a) }
+    $psi.UseShellExecute = $false
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    $psi.StandardOutputEncoding = $utf8
+    $psi.StandardErrorEncoding = $utf8
+    $proc = [System.Diagnostics.Process]::Start($psi)
+    try {
+        $errTask = $proc.StandardError.ReadToEndAsync()   # 两个管道都要读空,否则 stderr 写满缓冲区会把 git 卡住
+        $out = $proc.StandardOutput.ReadToEnd()
+        $proc.WaitForExit()
+        $err = $errTask.Result.Trim()
+        if ($proc.ExitCode -ne 0) {
+            throw ('git ls-files ' + ($LsArgs -join ' ') + ' 失败 (exit ' + $proc.ExitCode + ')' + $(if ($err) { ': ' + $err } else { '' }))
+        }
+    } finally { $proc.Dispose() }
+    return @($out -split "`0" | Where-Object { $_ })
+}
+
 function Test-SigningMaterial {
     $label = '签名材料 / Avid 评估工具不入库 (pfx/p12/pvk、DigiShell、AAX Validator、测试计划)'
     $ok = $true
@@ -484,11 +517,8 @@ function Test-SigningMaterial {
         foreach ($pass in @(
                 @{ Tag = ''; Args = @('--cached', '--others', '--exclude-standard') },
                 @{ Tag = '(被 .gitignore 隐藏)'; Args = @('--others', '--ignored', '--exclude-standard') })) {
-            $raw = & git -C $RepoRoot -c core.quotePath=false ls-files -z @($pass.Args)
-            if ($LASTEXITCODE -ne 0) { throw ('git ls-files ' + ($pass.Args -join ' ') + ' 失败 (exit ' + $LASTEXITCODE + ')') }
-            # 原生命令输出按行切成数组;-z 下只有文件名里自带的换行才会被切开,先按 LF 拼回再按 NUL 切
-            foreach ($f in (@($raw) -join "`n") -split "`0") {
-                if ($f -and [regex]::IsMatch($f, $script:SigningMaterialPattern) -and -not $hits.Contains($f + $pass.Tag)) {
+            foreach ($f in (Get-GitLsFilesUtf8 $pass.Args)) {
+                if ([regex]::IsMatch($f, $script:SigningMaterialPattern) -and -not $hits.Contains($f + $pass.Tag)) {
                     $hits.Add($f + $pass.Tag)
                 }
             }
@@ -618,13 +648,35 @@ function Test-Selftests {
 # ---- gate 5c/5d/5e:AAX(仅 -IncludeAax;selftest 之后、pluginval 之前)----
 # 路径与 gate 6 的 VST3 同法写死(JUCE 产物布局):主体 DLL 是 bundle 内的 Contents\x64\Synchain Bridge.aaxplugin
 # (一个文件,后缀也是 .aaxplugin)。pluginval 托管不了 AAX,本机能自动化的只有结构 / 打包 / (可选)Validator 三道。
-$script:AaxBundleLabel    = 'AAX bundle 结构 (PE x64 / desktop.ini / Plugin.ico / 已构建恰好 1 个)'
+$script:AaxBundleLabel    = 'AAX bundle 结构 (AAX 开关 ON / PE x64 / desktop.ini / Plugin.ico / 当前 Config 下已构建恰好 1 个)'
 $script:AaxPackageLabel   = 'AAX 打包冒烟 (package-aax.ps1 Unsigned + Signed 反向断言)'
 $script:AaxValidatorLabel = 'AAX Validator (可选,-AaxValidatorPath)'
 function Add-AaxSkips([string]$why) {
     foreach ($l in @($script:AaxBundleLabel, $script:AaxPackageLabel, $script:AaxValidatorLabel)) { Add-Result $l 'SKIP' $why }
 }
 function Get-AaxBundlePath { return (Join-Path $BuildDir ('SynchainBridgeVST_artefacts\' + $Config + '\AAX\Synchain Bridge.aaxplugin')) }
+
+# AAX 开关被关掉时,构建目录里的 .aaxplugin 是开关打开时留下的旧产物:CMakeLists.txt 的 SYNCHAIN_BRIDGE_AAX 是普通 CACHE
+# 选项,设成 OFF 后一直留在缓存里;OFF 时不生成 SynchainBridgeVST_AAX 目标,CMake / MSBuild 也不删已移除目标的旧产物
+# (旧 .vcxproj 一样残留,不能拿它当判据)。可信的只有缓存值与每次 generate 都重写的 .sln。返回 $null = 开关为 ON 且
+# 生成的工程里有 AAX 目标;否则返回原因(与 scripts/build.ps1 -InstallAax 同一判据)。
+function Get-AaxDisabledReason([string]$Dir) {
+    $cache = Join-Path $Dir 'CMakeCache.txt'
+    if (-not (Test-Path -LiteralPath $cache -PathType Leaf)) { return ('找不到 ' + $cache + '(还没 configure?)') }
+    $m = Select-String -LiteralPath $cache -Pattern '^SYNCHAIN_BRIDGE_AAX:[A-Za-z]+=(.*)$' | Select-Object -First 1
+    if (-not $m) { return 'CMakeCache.txt 里没有 SYNCHAIN_BRIDGE_AAX(不是本仓库的构建目录?)' }
+    $v = $m.Matches[0].Groups[1].Value.Trim()
+    if ($v -notmatch '^(?i)(ON|TRUE|YES|Y|[1-9][0-9]*)$') {
+        return ('CMakeCache.txt 里 SYNCHAIN_BRIDGE_AAX=' + $v + ':AAX 目标没有参与本次构建,构建目录里的 AAX bundle 是旧产物' +
+            '(重新 configure 时加 -DSYNCHAIN_BRIDGE_AAX=ON,或换一个干净的 -BuildDir)')
+    }
+    $sln = @(Get-ChildItem -LiteralPath $Dir -Filter '*.sln' -File -ErrorAction SilentlyContinue)
+    if ($sln.Count -gt 0 -and -not @($sln | Where-Object { Select-String -LiteralPath $_.FullName -SimpleMatch '"SynchainBridgeVST_AAX"' -Quiet }).Count) {
+        return ($sln[0].Name + ' 里没有 SynchainBridgeVST_AAX 目标(SYNCHAIN_BRIDGE_AAX=' + $v + ',但 JUCE 没建 AAX):' +
+            '构建目录里的 AAX bundle 是旧产物')
+    }
+    return $null
+}
 
 # PE 头 Machine 字段:MZ → 偏移 0x3C 处的 e_lfanew → 'PE\0\0' → 紧随其后的 UInt16(与 package-aax.ps1 同一读法)
 function Get-PeMachine([string]$path) {
@@ -643,11 +695,19 @@ function Get-PeMachine([string]$path) {
     }
 }
 
-# gate 5c:结构断言。「已构建恰好 1 个」只计含 Contents\ 的 *.aaxplugin 目录:VS 多配置生成器在 generate 期就为每个配置
-# 各建一个只有 desktop.ini 的空壳目录(JUCE 的 file(GENERATE)),它们不是产物(与 package-aax.ps1 的定位同口径)。
+# gate 5c:结构断言。先确认 AAX 开关在缓存里是 ON 且工程里有 AAX 目标(见 Get-AaxDisabledReason),否则下面的结构检查
+# 验的是旧 bundle,5d 也会拿它打包 —— 假绿。「已构建恰好 1 个」只计含 Contents\ 的 *.aaxplugin 目录:VS 多配置生成器在
+# generate 期就为每个配置各建一个只有 desktop.ini 的空壳目录(JUCE 的 file(GENERATE)),它们不是产物(与 package-aax.ps1
+# 的定位同口径)。计数范围是当前 $Config 的产物目录:同一个 BuildDir 里用 build.ps1 -Config Debug 构建过的 Debug 产物是
+# 正常产物,不是残留,只写进明细、不判 FAIL(CI 只在全新目录里构建 Release,不受影响);artefacts 之外的零散拷贝照样计数。
 # 枚举必须带 -Force:JUCE 给 bundle 目录设了 attrib +s,不带 -Force 可能被滤掉。
 function Test-AaxBundle {
     $bad = @()
+    $offReason = Get-AaxDisabledReason $BuildDir
+    if ($offReason) {
+        Add-Result $script:AaxBundleLabel 'FAIL' $offReason
+        return $false
+    }
     $bundle = Get-AaxBundlePath
     $dll = Join-Path $bundle 'Contents\x64\Synchain Bridge.aaxplugin'
     if (-not (Test-Path -LiteralPath $dll -PathType Leaf)) {
@@ -665,13 +725,23 @@ function Test-AaxBundle {
     }
     $all = @(Get-ChildItem -LiteralPath $BuildDir -Recurse -Directory -Filter '*.aaxplugin' -Force -ErrorAction SilentlyContinue)
     $built = @($all | Where-Object { Test-Path -LiteralPath (Join-Path $_.FullName 'Contents') -PathType Container })
-    if ($built.Count -ne 1) {
-        $bad += ('BuildDir 下已构建(含 Contents\)的 .aaxplugin 应恰好 1 个,实际 ' + $built.Count + ' 个' +
-            $(if ($built.Count) { ': ' + (@($built | ForEach-Object { $_.FullName }) -join '; ') } else { '' }) +
-            '(CI 的 package-aax.ps1 -BuildDir 定位同样要求恰好 1 个;残留的其他配置产物请清掉)')
+    # GetFullPath:统一分隔符、消掉 ..,与 Get-ChildItem 返回的 FullName 同一形态再比前缀
+    $artRoot = [System.IO.Path]::GetFullPath((Join-Path $BuildDir 'SynchainBridgeVST_artefacts')).TrimEnd('\') + '\'
+    $cfgRoot = [System.IO.Path]::GetFullPath((Join-Path $BuildDir ('SynchainBridgeVST_artefacts\' + $Config))).TrimEnd('\') + '\'
+    $cmp = [System.StringComparison]::OrdinalIgnoreCase
+    # 其他配置(Debug / RelWithDebInfo …)的正常产物:不计数,只写进明细
+    $otherCfg = @($built | Where-Object { $_.FullName.StartsWith($artRoot, $cmp) -and -not $_.FullName.StartsWith($cfgRoot, $cmp) })
+    $counted  = @($built | Where-Object { $otherCfg -notcontains $_ })
+    if ($counted.Count -ne 1) {
+        $bad += ('当前配置 ' + $Config + ' 下已构建(含 Contents\)的 .aaxplugin 应恰好 1 个,实际 ' + $counted.Count + ' 个' +
+            $(if ($counted.Count) { ': ' + (@($counted | ForEach-Object { $_.FullName }) -join '; ') } else { '' }) +
+            '(artefacts 之外的零散拷贝同样计数,请清掉)')
     }
     $ok = ($bad.Count -eq 0)
-    $detail = if ($ok) { 'Contents\x64 主体 DLL 为 x64 PE,desktop.ini / Plugin.ico 齐全,已构建 bundle 恰好 1 个' } else { $bad -join '; ' }
+    $detail = if ($ok) {
+        'SYNCHAIN_BRIDGE_AAX=ON;Contents\x64 主体 DLL 为 x64 PE,desktop.ini / Plugin.ico 齐全,当前配置 ' + $Config + ' 下已构建 bundle 恰好 1 个' +
+        $(if ($otherCfg.Count) { '(另有其他配置的产物 ' + $otherCfg.Count + ' 个,不计数;CI 只构建 Release,不受影响)' } else { '' })
+    } else { $bad -join '; ' }
     Add-Result $script:AaxBundleLabel ($(if ($ok) { 'PASS' } else { 'FAIL' })) $detail
     return $ok
 }

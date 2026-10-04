@@ -206,13 +206,20 @@ git tag v1.5.0 && git push origin v1.5.0
 
 ### 7.2 一次性准备（借用的 Mac）
 
-- 在一个独立的 macOS 用户下操作，签完整体清理。
+- 在一个独立的 macOS 用户下操作（不要用机主自己的用户），签完按本节最后一条清理。
 - 安装 PACE 工具（Eden / `wraptool`，默认路径 TO-VALIDATE，可用 `--wraptool` 指定）与 iLok License Manager。
 - 准备 Keychain 代码签名身份，二选一：Xcode → Settings → Accounts 登录 Apple ID 后创建 **Apple Development** 证书；或「钥匙串访问 → 证书助理 → 创建证书」生成自签名的代码签名证书。
 - 用 `security find-identity -p codesigning` 确认身份的完整名字，签名时原样传给 `--signid`。不加 `-v`：自签名身份未被信任时不会出现在 `-v` 列表里（TO-VALIDATE）。
 - 第一次签名可能弹出钥匙串授权框，需要人工点「允许」。
 - macOS 版**未经 Apple 公证**（没有 Developer Program 会员）：用户必须按 `INSTALL-AAX.txt` 去掉隔离属性 Pro Tools 才会加载；去掉隔离属性不影响签名。
-- **用完删除签名身份和临时 keychain，退出 iLok / PACE 登录**，不在别人的机器上留下任何凭据。
+- 签名期间不要让他人登录这台 Mac：加 `--prompt-account-password` 时，PACE 账号口令在签名那几秒会以 `--password <明文>` 出现在 wraptool 的进程命令行里，本机其他用户用 `ps` 就能看到（wraptool 只收命令行参数）。
+- `gh`（§7.3 第 2、4、5 步会用到）在这台 Mac 上**不要 `gh auth login`**：改用只授权本仓库、短有效期的 fine-grained PAT（Actions: read；要在 Mac 上上传再加 Contents: read and write），只经当次 shell 的 `GH_TOKEN` 环境变量传入（`read -rs GH_TOKEN && export GH_TOKEN`，不进历史、不落盘），用完到 GitHub 上吊销。
+- **签完必须清理，不在别人的机器上留下任何凭据。** 首选直接删除这个独立的 macOS 用户（系统设置 → 用户与群组 → 删除该用户，选「删除个人文件夹」）。不删用户时，下面各项逐一做完：
+  1. **GitHub 令牌**：`gh auth logout --hostname github.com`，再用 `gh auth status` 确认已无登录（登录时用过 `--insecure-storage` 的，再删 `~/.config/gh/hosts.yml`）；用的是 `GH_TOKEN` 的，到 GitHub 上吊销该 PAT。
+  2. **Apple ID**：Xcode → Settings → Accounts 移除 Apple ID。
+  3. **签名证书**：在「钥匙串访问」里删除代码签名证书**及其私钥**（Xcode 创建的 Apple Development 证书与自签名证书都在登录钥匙串里）。
+  4. **iLok / PACE**：退出 iLok License Manager 与 PACE 登录。
+  5. **shell 历史**：签名命令里的 `--account` / `--wcguid` 是明文，zsh 会把它们写进 `~/.zsh_history` 与 `~/.zsh_sessions/`，删掉这两处（`rm -f ~/.zsh_history; rm -rf ~/.zsh_sessions`）。也可以签名前先执行 `setopt HIST_IGNORE_SPACE`，再在签名命令前加一个空格，让它不进历史。
 
 ### 7.3 每次发版
 
@@ -236,7 +243,7 @@ git tag v1.5.0 && git push origin v1.5.0
 
    Mac 上：`git clone --depth 1 --branch v<X.Y.Z> https://github.com/synchain-oss/synchain-bridge.git bridge-v<X.Y.Z>`。
 
-4. **签名并打发行包**（在上一步检出的根目录执行；证书口令交互输入，绝不进参数、日志或 transcript）：
+4. **签名并打发行包**（在上一步检出的根目录执行）：
 
    ```powershell
    pwsh scripts/sign-aax.ps1 -UnsignedZip "$env:TEMP\aax-v<X.Y.Z>\SynchainBridge-AAX-v<X.Y.Z>-win64-UNSIGNED.zip" `
@@ -251,7 +258,9 @@ git tag v1.5.0 && git push origin v1.5.0
      --account "<PACE 账号>" --wcguid "<wcguid>" --signid "<Keychain 身份名>"
    ```
 
-   `<run-id>` 就是第 2 步查到并下载过的那个 release run（需要 `gh` 已登录）。给了它，签名脚本会做**来源核对**：该 run 属于本仓库（不是 fork）、是 `release.yml`（或 `ci.yml`）、结论为 success、事件为 push / workflow_dispatch（tag 触发的 release run 是 push）、`head_sha` 等于当前检出（即 tag 所指的提交），再用 `gh run download` 重新取回它的 `aax-unsigned-*` artifact，同名 zip 必须与输入件字节相同 —— 由此确认被盖上签名的字节确实出自这次 tag 的 CI 构建。`.sha256` 只防下载损坏（它与 zip 是同一份下载，防不了替换）。不给 `-SourceRunId` / `--source-run-id` 时这一项只记 WARN、不拦截；只在没有 run 可核对时这样用（§7.4 的本机重建件）。
+   **口令**：证书口令（以及可选的 PACE 账号口令）交互读取，不进签名脚本的参数、脚本日志、transcript 与 shell 历史。但 wraptool 只接受命令行参数（TO-VALIDATE：是否有 stdin / 环境变量通道），签名的那几秒里口令会以 `--keypassword <明文>`（加 `-PromptAccountPassword` / `--prompt-account-password` 时还有 `--password <明文>`）出现在 wraptool 的进程命令行中：本机进程列表短暂可见，开着进程命令行审计（Security 4688 勾选了「包含命令行」、Sysmon EID 1、Defender for Endpoint 等 EDR）时还会被记录下来。这是 wraptool 本身的限制。只在可信的单用户机器上签名，签名期间不要让他人登录本机；事后发现开着这类审计，就当口令已泄露，重新生成证书。
+
+   `<run-id>` 就是第 2 步查到并下载过的那个 release run（需要 `gh` 已登录；借用的 Mac 上按 §7.2 用短有效期的 `GH_TOKEN`）。给了它，签名脚本会做**来源核对**：该 run 属于本仓库（不是 fork）、是 `release.yml`（或 `ci.yml`）、结论为 success、事件为 push / workflow_dispatch（tag 触发的 release run 是 push）、`head_sha` 等于当前检出（即 tag 所指的提交），再用 `gh run download` 重新取回它的 `aax-unsigned-*` artifact，同名 zip 必须与输入件字节相同 —— 由此确认被盖上签名的字节确实出自这次 tag 的 CI 构建。`.sha256` 只防下载损坏（它与 zip 是同一份下载，防不了替换）。不给 `-SourceRunId` / `--source-run-id` 时这一项只记 WARN、不拦截；只在没有 run 可核对时这样用（§7.4 的本机重建件）。
 
    脚本依次做：预检（`.sha256` 完整性、版本与检出一致、来源核对、wraptool 存在且 `help sign` 列出所需 flag、输入件确实未签名且 `wraptool verify` 必须失败；macOS 另要求钥匙串里与 `--signid` 同名的代码签名身份恰好 1 个）→ 交互读入 pfx 口令（Windows）→ `wraptool sign` → 后检（`wraptool verify`；Windows 比对 Authenticode 签名者指纹与 pfx 指纹、默认要求带时间戳，macOS 跑 `codesign --verify --deep --strict` 并核对 `Authority=` 等于 `--signid`、不是 ad-hoc）→ 调用打包脚本的 Signed 模式 → 把产出的 zip 解压回读再验一轮 → 打印第 5 步的上传命令（不自动执行）。产物在 `dist/aax-signed/`（`-OutDir` / `--out-dir` 可改）：`SynchainBridge-AAX-v<X.Y.Z>-win64.zip`（macOS 为 `-macos-arm64.zip`）与同名 `.sha256`。
 
@@ -272,6 +281,7 @@ git tag v1.5.0 && git push origin v1.5.0
 ### 7.4 失败处理
 
 - **本机签名失败不影响 draft**：修掉原因后从同一个 `-UNSIGNED.zip` 重跑即可。签名脚本每次都解压到一个新的临时工作目录，从不修改输入件；失败时保留工作目录并打印路径（里面只有 bundle，没有秘密），排查完直接删掉。
+- **签名脚本失败时 `dist/aax-signed/` 里不会留下本次的发行名 zip**：打包之后的回读复验没通过，脚本会删掉刚产出的 zip 与 `.sha256`（`package-summary.md` 里本次追加的段落会留下，只是记录）。看到 FAIL 就不要去找文件上传。
 - **签名必须是对 bundle 的最后一次修改**：签完之后再改 bundle 里的任何文件都会让签名失效，所以也**不要事后用 signtool 补时间戳**。Windows 签名件没带时间戳时 `sign-aax.ps1` 默认判失败；确认接受无时间戳的签名，再显式加 `-AllowNoTimestamp` 从原始 `-UNSIGNED.zip` 重跑（TO-VALIDATE：wraptool 能否带时间戳）。
 - **正式发布之后也能补传 AAX**：同样用第 5 步的 `gh release upload`，并在 Release notes 里注明补发。
 - **artifact 30 天后过期**：只能在第 3 步的 tag 检出里本机重新构建（[build-windows.md](build-windows.md) / [build-macos.md](build-macos.md)），用 §4 的 AAX 打包命令以 Unsigned 模式（`-Version <X.Y.Z>`，源码链接默认指向 `v<X.Y.Z>`）重新打出 `-UNSIGNED.zip`，再从第 4 步继续 —— 这时没有 CI run 可核对，签名命令不带 `-SourceRunId` / `--source-run-id`（来源核对记 WARN）。本机工具链与 CI 不同，须在 Release notes 里注明。**不要用 Re-run 重跑这次 tag 的 release run 来续 artifact**：GitHub 只允许在原 run 发起后 30 天内重跑（与 artifact 保留期一样长，过期时已经不能重跑）；而且重跑任何构建 job 都会连带重跑依赖它的 `publish`。`softprops/action-gh-release`（v2.6.2）找到同 tag 的现有 Release 时走更新路径：不会把已发布的 Release 改回 draft，但 `overwrite_files` 默认为 true，会删掉并重传四个同名 VST3 / AU 资产 —— 重新构建出的 zip 字节通常不同，用户手里文件的 sha256 就对不上了。

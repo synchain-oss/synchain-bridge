@@ -319,12 +319,14 @@ jobs:
           if (Test-Path (Join-Path $neg 'SynchainBridge-AAX-v0.0.0-ci-win64.zip')) { Write-Error "release-named AAX zip produced from unsigned bundle"; exit 1 }
 
       # 6d) 未签名 AAX 件(维护者本机签名 / Pro Tools Developer 实测用)。版本 = CMake VERSION + -ci.<短 sha>,
-      #     INSTALL-AAX.txt 的源码链接钉 head sha;sha 经 env 间接读入(与 mac job 的 Resolve 步骤同口径)。
-      #     PR 事件下取 head 侧 sha(GITHUB_SHA 是合并提交,源码链接会指向一个用户看不到的 commit)。
+      #     INSTALL-AAX.txt 的源码链接钉本次构建的 commit(GITHUB_SHA);sha 经 env 间接读入(与 mac job 的 Resolve 步骤同口径)。
+      #     只在 push / workflow_dispatch 下出件:pull_request 构建的是合并提交 refs/pull/N/merge,不是 head,
+      #     源码链接与版本号都对不上字节;与 sign-aax 预检 3b 拒收 pull_request run 同口径,PR 上只保留 6c 冒烟。
       - name: Package AAX (unsigned)
+        if: github.event_name != 'pull_request'
         shell: pwsh
         env:
-          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          HEAD_SHA: ${{ github.sha }}
         run: |
           if ($env:HEAD_SHA -cnotmatch '^[0-9a-f]{40}$') { Write-Error "HEAD_SHA is not a 40-hex commit: '$env:HEAD_SHA'"; exit 1 }
           $sha7 = $env:HEAD_SHA.Substring(0, 7)
@@ -336,8 +338,10 @@ jobs:
           }
 
       # 6e) artifact 名刻意叫 aax-unsigned-*(不是 dist-*):release.yml 的 publish 只从 dist-* 取件,未签名件进不了 Release。
-      #     无事件条件:workflow_dispatch 也会上传 —— owner 在子分支上 dispatch 即可取到 AAX 测试件。
+      #     与 6d 同一事件条件:push 与 workflow_dispatch 上传(owner 在子分支上 dispatch 即可取到 AAX 测试件),
+      #     pull_request 不出件(理由见 6d)。
       - name: Upload AAX (unsigned)
+        if: github.event_name != 'pull_request'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: aax-unsigned-win64
@@ -345,7 +349,7 @@ jobs:
             dist/aax/SynchainBridge-AAX-*-win64-UNSIGNED.zip
             dist/aax/SynchainBridge-AAX-*-win64-UNSIGNED.zip.sha256
           if-no-files-found: error
-          retention-days: ${{ github.event_name == 'pull_request' && 14 || 30 }}
+          retention-days: 30
 
       # 7) artifact(命名/保留策略见 06 §6.3;一律用 REF_SLUG,不用 github.ref_name)
       - name: Upload VST3 (PR)
@@ -824,12 +828,14 @@ jobs:
             echo "::error::release-named AAX zip produced from unsigned bundle"; exit 1
           fi
 
-      # 8d) 未签名 AAX 件(与 windows job 的 6d 对称):版本 = CMake VERSION + -ci.<短 sha>,源码链接钉 head sha。
+      # 8d) 未签名 AAX 件(与 windows job 的 6d 对称):版本 = CMake VERSION + -ci.<短 sha>,源码链接钉本次构建的
+      #     commit(GITHUB_SHA)。只在 push / workflow_dispatch 下出件,pull_request(构建的是合并提交)只保留 8c 冒烟,理由同 6d。
       #     随后按 8b 的口径另取 cmake_ver,断言产物名逐字等于预期 —— 顺带在 BSD sed 上验证脚本从 CMake 回落读版本。
       - name: Package AAX (unsigned)
+        if: github.event_name != 'pull_request'
         shell: bash
         env:
-          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          HEAD_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
           [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::HEAD_SHA is not a 40-hex commit: '$HEAD_SHA'"; exit 1; }
@@ -845,9 +851,10 @@ jobs:
           n=$(find dist/aax -maxdepth 1 -type f -name 'SynchainBridge-AAX-*.zip' | wc -l | tr -d '[:space:]')
           [ "$n" = "1" ] || { echo "::error::expected exactly 1 AAX zip in dist/aax, found $n"; exit 1; }
 
-      # 8e) artifact 名刻意叫 aax-unsigned-*(不是 dist-*),理由同 windows job 的 6e。内层 zip 由 ditto 打,
+      # 8e) artifact 名刻意叫 aax-unsigned-*(不是 dist-*),事件条件与 8d 相同,理由同 windows job 的 6e。内层 zip 由 ditto 打,
       #     可执行位保得住(upload-artifact 自己不保留 POSIX 权限,理由同下面第 9 步)。
       - name: Upload AAX (unsigned)
+        if: github.event_name != 'pull_request'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: aax-unsigned-macos-arm64
@@ -855,7 +862,7 @@ jobs:
             dist/aax/SynchainBridge-AAX-*-macos-arm64-UNSIGNED.zip
             dist/aax/SynchainBridge-AAX-*-macos-arm64-UNSIGNED.zip.sha256
           if-no-files-found: error
-          retention-days: ${{ github.event_name == 'pull_request' && 14 || 30 }}
+          retention-days: 30
 
       # 9) artifact 传输封装(**不是发行打包**):这里只解决 upload-artifact 不保留 POSIX
       #    权限位的问题 —— 直接传 bundle 目录 = 下载方拿到不可执行的死壳。合规文件 /
