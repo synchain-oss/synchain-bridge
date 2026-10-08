@@ -5,7 +5,8 @@
   本项目用自签名证书:文件「属性 → 数字签名」里显示签名者不受信任属预期。
   推荐用法:证书留在 Cert:\CurrentUser\My,签名时 scripts/sign-aax.ps1 -CertThumbprint <本脚本最后打印的 Thumbprint>
   (wraptool 的 --signid 收「个人」证书库里证书的 SHA1 指纹,实测 6.0.1;签名时不读 pfx 口令,wraptool 命令行上也没有
-  --keypassword)。导出的 pfx 是放在仓库外的备份,也可以交给 sign-aax.ps1 -KeyFile 使用(备选)。
+  --keypassword)。导出的 pfx 是放在仓库外的备份,也可以交给 sign-aax.ps1 -KeyFile 使用(备选;须加 -LegacySha1Digest,
+  只能出 SHA1 文件摘要)。
 
   先用 -WhatIf 预演:只做参数与路径断言并打印将要执行的操作 —— 不读口令、不写证书库、不生成任何文件。
   真跑(ConfirmImpact = High,会先要求确认)时:
@@ -231,9 +232,9 @@ Write-Host ''
 Write-Host '提醒:把 pfx 和口令备份到密码管理器;绝不入库、不进 CI、不进 artifact。'
 if ($RemoveFromStore) {
     Write-Host ('签名用法:pwsh scripts/sign-aax.ps1 -UnsignedZip <...-win64-UNSIGNED.zip> -SourceRunId <run ID> ' +
-        "-KeyFile `"$OutPfx`" -WcGuid <wrap 配置 GUID>")
+        "-KeyFile `"$OutPfx`" -LegacySha1Digest -WcGuid <wrap 配置 GUID>")
 } else {
     Write-Host ('签名用法(推荐):pwsh scripts/sign-aax.ps1 -UnsignedZip <...-win64-UNSIGNED.zip> -SourceRunId <run ID> ' +
         "-CertThumbprint $($cert.Thumbprint) -WcGuid <wrap 配置 GUID>")
-    Write-Host "备选:把 -CertThumbprint 换成 -KeyFile `"$OutPfx`"(签名时交互读 pfx 口令)。"
+    Write-Host "备选:把 -CertThumbprint 换成 -KeyFile `"$OutPfx`" -LegacySha1Digest(签名时交互读 pfx 口令;只能出 SHA1 文件摘要)。"
 }

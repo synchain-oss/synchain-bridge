@@ -217,6 +217,10 @@ pwsh scripts/gates.ps1 -PluginOnly -IncludeAax -BuildDir build-aax
 - **签名工具**：装 PACE 的 AAX 代码签名工具（wraptool 6.0.1 装在 `%ProgramFiles%\PACEAntiPiracy\Eden\Fusion\Versions\6\bin\`）
   后要**新开一个终端**：安装器设的 Machine 级环境变量 `PACE_FUSION_HOME` 在之前开着的终端里没有，wraptool 会报它未定义。
   签名脚本缺它时会从 Machine 级补上，两处都没有就 FAIL。
+- **signtool**：wraptool 在 Windows 上调 Windows SDK 的 `signtool.exe` 加 Authenticode 签名。6.0.1 在它自己的「默认位置」找不到
+  SDK 10.0.19041 的 signtool，报的却是 "Can't sign with the certificate identified by the thumbprint ..."（2026-10-08 实测），所以签名脚本每次都经
+  `--signtool` 显式指定。查找顺序：`-SignToolPath`、`%ProgramFiles(x86)%\Windows Kits\10\bin\<版本号最高的>\x64\signtool.exe`、PATH。
+  都找不到就 FAIL；这时装 Windows SDK 的「Windows SDK Signing Tools for Desktop Apps」组件。
 - **代码签名证书**：wraptool 在 Windows 上还需要一张 Authenticode 代码签名证书，本项目用自签名证书，一次性生成：
 
   ```powershell
@@ -225,12 +229,18 @@ pwsh scripts/gates.ps1 -PluginOnly -IncludeAax -BuildDir build-aax
   ```
 
   记下最后打印的 Thumbprint，签名时用 `-CertThumbprint <指纹>`（推荐：不读 pfx 口令，wraptool 命令行上没有口令）；只有 pfx
-  时用 `-KeyFile <pfx>`（备选，签名时交互读口令）。pfx 必须放在仓库目录之外（脚本会拒绝仓库内路径），口令只交互输入、不写进任何入库文件。
-- **签名命令**（发布者用 `-WcGuid`；备选 `-CustomerNumber` 加 `-CustomerName`）：
+  时用 `-KeyFile <pfx> -LegacySha1Digest`（备选，签名时交互读口令，只能出 SHA1 文件摘要）。pfx 必须放在仓库目录之外（脚本会拒绝仓库内路径），口令只交互输入、不写进任何入库文件。
+- **签名命令**（在 pwsh 7.3+ 会话里、仓库根目录下用 `&` 调用；发布者用 `-WcGuid`，备选 `-CustomerNumber` 加 `-CustomerName`；
+  `-SignToolPath` 可选，不给就自动找）：
 
   ```powershell
-  pwsh scripts/sign-aax.ps1 -UnsignedZip <...-win64-UNSIGNED.zip> -SourceRunId <run-id> -CertThumbprint <证书 SHA1 指纹> -WcGuid <wcguid> -DryRun
+  & ./scripts/sign-aax.ps1 -UnsignedZip <...-win64-UNSIGNED.zip> -SourceRunId <run-id> -CertThumbprint <证书 SHA1 指纹> -WcGuid <wcguid> -DryRun
   ```
+
+  不要用 `pwsh scripts/sign-aax.ps1 ...` 传数组参数（`-ExtraWraptoolArgs`）：在 `pwsh -File` 下数组不会被解析，参数会错位。
+- **摘要算法**：默认经 `--explicitsigningoptions` 让 signtool 用 SHA256 文件摘要 + RFC 3161 时间戳（Sectigo）。wraptool 自己的默认是
+  SHA1 + 旧式 `/t` 时间戳，`-LegacySha1Digest` 回退到它。后检会核对摘要算法与时间戳形态。细节与实测结论见
+  [release.md §7.3 第 4 步](release.md#73-每次发版)，常见报错见 [§7.4 排障表](release.md#74-失败处理)。
 
 - **PACE 账号口令**：推荐先手动执行一次带 `--password` 的 `wraptool sync --account <PACE 账号>`，把口令存进 wraptool 的钥匙串，
   之后签名不用再给；或者签名时加 `-Account <PACE 账号> -PromptAccountPassword`，交互读入、经 `--pswd-no-save` 传、不保存。
