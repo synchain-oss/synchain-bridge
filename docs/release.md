@@ -192,7 +192,7 @@ git tag v1.5.0 && git push origin v1.5.0
 >
 > 同日完成首次真签名（wraptool 6.0.1 + Windows SDK 10.0.19041 的 signtool + 自签名证书），以下已实测：`--signid` 指纹 + `--wcguid` + `--signtool` 的真签名成功；对内层 DLL 原地签名；已签名件 `wraptool verify` 退出码 0（输出 "The digital signature was verified" 与 "The binary was signed, but not wrapped."）；`--verbose` 不回显口令（会回显 wcguid、默认账号名和它调用 signtool 的整条命令行，前两者脚本已打码）；签名件确实带时间戳。文件摘要默认为 SHA256 + RFC 3161 时间戳，做法见 §7.3 第 4 步。
 >
-> 仍标 **TO-VALIDATE** 的：自签名证书签的件零售版 Pro Tools / Pro Tools Intro 是否接受；`-KeyFile` 身份与 customer number 发布者这两条备选路径还没真签过；`gh release upload` 能否直传 draft；macOS 侧全部（脚本照搬同一套写法，但 mac 上没法实测，相关项全部保留标记）。签名脚本的预检在 flag 不符时会中止并提示；核对完删除脚本与本节里的标记。
+> 仍标 **TO-VALIDATE** 的：自签名证书签的件零售版 Pro Tools / Pro Tools Intro 是否接受；`-KeyFile` 身份与 customer number 发布者这两条备选路径还没真签过；证书放在 `Cert:\LocalMachine\My`（而不是 `CurrentUser\My`）时能否签；`gh release upload` 能否直传 draft；macOS 侧全部（脚本照搬同一套写法，但 mac 上没法实测，相关项全部保留标记）。签名脚本的预检在 flag 不符时会中止并提示；核对完删除脚本与本节里的标记。
 
 ### 7.1 一次性准备（Windows）
 
@@ -286,7 +286,7 @@ git tag v1.5.0 && git push origin v1.5.0
 
    **Windows 上 wraptool 签的是内层 DLL**：`.aaxplugin` 是个目录，Windows 版 wraptool 的 `--in` 只收文件（给目录会报 "A file must be specified ..."）。脚本先把整个 bundle 复制到临时工作目录的 `out\`，只对其中的 `Contents\x64\Synchain Bridge.aaxplugin`（主体 DLL）原地签名；后检要求 bundle 里除这个 DLL 之外的文件与输入件逐字节相同，也没有多出文件。
 
-   **摘要算法（Windows）**：wraptool 6.0.1 默认调用的 signtool 命令是 `sign /sha1 "<指纹>" /t http://timestamp.sectigo.com <文件>`，也就是 SHA1 文件摘要加旧式（`/t`）时间戳。脚本默认经 `--explicitsigningoptions` 改成 SHA256 文件摘要加 RFC 3161 时间戳，交给 wraptool 的值是 `sign /sha1 <指纹> /fd sha256 /tr http://timestamp.sectigo.com /td sha256`。2026-10-08 实测结论：
+   **摘要算法（Windows）**：wraptool 6.0.1 默认调用的 signtool 命令是 `sign /sha1 "<指纹>" /t http://timestamp.sectigo.com <文件>`，也就是 SHA1 文件摘要加旧式（`/t`）时间戳。脚本默认经 `--explicitsigningoptions` 改成 SHA256 文件摘要加 RFC 3161 时间戳，交给 wraptool 的值是 `sign /sha1 <指纹> /fd sha256 /tr http://timestamp.sectigo.com /td sha256`。证书在 `Cert:\LocalMachine\My` 时，脚本会在指纹后加 `/sm`：signtool 默认只查当前用户的库，加 `/sm` 才查本机库。这条路径没有实测过（TO-VALIDATE）。2026-10-08 实测结论：
    - 这个值按空格切开后**整体替换** wraptool 默认的 signtool 参数，所以 `sign` 子命令和 `/sha1` 都要自己写；只给 `/fd sha256 ...` 时 signtool 报 "Invalid command: /fd"；
    - 文件路径仍由 wraptool 追加在最后；
    - 这种方式下 `--signid` 不参与签名，不给也能签，脚本照传；

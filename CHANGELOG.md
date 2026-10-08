@@ -101,8 +101,8 @@
     `--extrasigningoptions`(`-J`)。
   - 已实测、去掉 TO-VALIDATE 的项:`--signid` + `--wcguid` + `--signtool` 真签名成功;对内层 DLL 原地签名;已签名件 verify
     退出码 0;`--verbose` 不回显口令;签名件确实带时间戳(V3)。iLok 上缺签名证书时的报错文案也写进了预检 6。仍标 TO-VALIDATE:
-    零售版 Pro Tools / Intro 是否接受自签名的件;`-KeyFile` 与 customer number 两条备选路径;`--explicitsigningoptions` 下
-    `--timestampretry` 是否生效;macOS 侧全部。
+    零售版 Pro Tools / Intro 是否接受自签名的件;`-KeyFile` 与 customer number 两条备选路径;证书在 `Cert:\LocalMachine\My`
+    时能否签(默认方式按 signtool 文档加 `/sm`);`--explicitsigningoptions` 下 `--timestampretry` 是否生效;macOS 侧全部。
   - 文档:`docs/release.md` §7 的命令改为在 pwsh 会话里用 `&` 调用(经 `pwsh -File` 传数组参数会错位,报出假的互斥错误),并新增
     排障表;`docs/build-windows.md` 同步;`new-selfsigned-codesign-cert.ps1` 打印的 `-KeyFile` 用法带上 `-LegacySha1Digest`。
 

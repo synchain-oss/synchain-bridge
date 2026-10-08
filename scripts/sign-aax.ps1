@@ -86,7 +86,8 @@
   在 signtool verify /pa 下"terminated in a root ... not trusted"、Get-AuthenticodeSignature 为 UnknownError,均属预期。
   TO-VALIDATE:自签名证书签的件零售版 Pro Tools / Pro Tools Intro 是否接受;-KeyFile 身份与 --customernumber 发布者两条
   备选路径未真签过(-KeyFile 下 wraptool 回显的 signtool 命令行可能含 pfx 口令,按字面打码;能否读 AES256 加密的 pfx,V8);
-  --explicitsigningoptions 方式下 --timestampretry 是否仍生效;V11:gh release upload 能否直传 draft Release。
+  --explicitsigningoptions 方式下 --timestampretry 是否仍生效;证书在 Cert:\LocalMachine\My 时能否签(默认方式加 /sm,
+  -LegacySha1Digest 方式看 wraptool 自己怎么找;实测只覆盖 CurrentUser\My);V11:gh release upload 能否直传 draft Release。
 
   禁止 Start-Transcript:本脚本不开 transcript,也不要在开着 transcript 的会话里运行(wraptool 的输出与本脚本的
   日志都不该进任何落盘记录)。口令交互读取,不进本脚本的参数、日志与 shell 历史。-CertThumbprint 方式下 wraptool 的命令行上
@@ -165,7 +166,8 @@ $DigestNames = @{ '1.3.14.3.2.26' = 'sha1'; '2.16.840.1.101.3.4.2.1' = 'sha256';
 # 本脚本自己管理的 flag:-ExtraWraptoolArgs 不得重复给出(否则同一 flag 出现两次,以哪个为准取决于 wraptool 实现)。
 # 长写法不区分大小写;短写法照 wraptool 6.0.1 `help` 的别名表,区分大小写(-p 是 --password、-P 是 --keypassword、
 # -i 是 --in、-I 是 --signid、-J 是 --extrasigningoptions),且 boost 风格允许值紧贴短 flag(-pXXX),所以按前缀拦。
-# signtool 的命令行整个由本脚本决定(--signtool + --explicitsigningoptions),--extrasigningoptions 一并拦下
+# signtool 的命令行整个由本脚本决定(--signtool + --explicitsigningoptions,6.0.1 help 里这两个都没有短写法),
+# --extrasigningoptions 一并拦下
 $ManagedFlagRe      = '^--(account|password|pswd-no-save|wcguid|wcfile|customernumber|customername|productname|signid|keyfile|keypassword|in|out|signtool|explicitsigningoptions|extrasigningoptions)(=|$)'
 $ManagedShortFlagRe = '^-[apPGWCNUIkioJ]'
 $CodeSigningEku     = '1.3.6.1.5.5.7.3.3'
@@ -339,7 +341,8 @@ function Get-DigestName([string]$Oid) {
 
 # 从 PE 的证书表(数据目录第 4 项,它的地址是文件偏移而不是 RVA)取出 Authenticode 的 PKCS#7,解出文件摘要算法
 # (SpcIndirectDataContent 里的 DigestInfo,即 signtool verify 的 "Hash of file (xxx)")、签名者摘要算法与时间戳形态。
-# Get-AuthenticodeSignature 只给签名者 / 时间戳证书,看不出摘要算法,也分不出 RFC 3161 与旧式时间戳
+# Get-AuthenticodeSignature 只给签名者 / 时间戳证书,看不出摘要算法,也分不出 RFC 3161 与旧式时间戳。
+# 只看证书表的第一项和主签名:嵌套签名(signtool /as,未签名属性 1.3.6.1.4.1.311.2.4.1)不解析 —— 本流程只签一次,不会产生
 function Get-AuthenticodeDigest([string]$Path) {
     Add-Type -AssemblyName System.Security.Cryptography.Pkcs
     $b = [System.IO.File]::ReadAllBytes($Path)
@@ -438,9 +441,12 @@ function Get-RequiredFlags {
     return $f
 }
 
-# 默认方式交给 signtool 的完整参数(文件路径由 wraptool 追加)。只在 -CertThumbprint 方式下用(-KeyFile 须 -LegacySha1Digest)
+# 默认方式交给 signtool 的完整参数(文件路径由 wraptool 追加)。只在 -CertThumbprint 方式下用(-KeyFile 须 -LegacySha1Digest)。
+# signtool /sha1 默认只查当前用户的 My 库;预检 4 也接受 Cert:\LocalMachine\My,证书在那里时按 signtool 文档加 /sm 改查本机库
+# (TO-VALIDATE:实测只覆盖了 CurrentUser\My;-LegacySha1Digest 走 wraptool 自己的命令,LocalMachine 下能否签同样未实测)
 function Get-ExplicitSigningOptions {
-    return "sign /sha1 $certThumb /fd sha256 /tr $TimestampUrl /td sha256"
+    $sm = if ($certLoc -ceq 'LocalMachine') { ' /sm' } else { '' }
+    return "sign /sha1 $certThumb$sm /fd sha256 /tr $TimestampUrl /td sha256"
 }
 
 # wraptool sign 的参数表。-Masked 给回显用(口令 / 账号 / wcguid / customer number 换成 ****);真实参数只在签名那一步临时拼出。
@@ -470,6 +476,7 @@ $script:Wraptool = $null
 $script:SignTool = $null
 $certThumb   = ($CertThumbprint -replace '[\s:\u200E\u200F]', '').ToUpperInvariant()   # 证书管理器里复制的指纹常带空格与不可见方向符
 $certWhere   = $null   # -CertThumbprint 找到的证书库位置(回显用)
+$certLoc     = $null   # 同上,CurrentUser / LocalMachine(LocalMachine 时默认方式给 signtool 加 /sm)
 $expectThumb = $null   # 后检要求的 Authenticode 签名者指纹:-CertThumbprint 方式在预检 4 定,-KeyFile 方式在签名前载入 pfx 时定
 $keyFull     = $null
 $fusionAdded = $false  # 本脚本给进程补上了 PACE_FUSION_HOME:退出时撤掉
@@ -684,7 +691,7 @@ try {
                 try {
                     $store.Open([System.Security.Cryptography.X509Certificates.OpenFlags]'ReadOnly, OpenExistingOnly')
                     foreach ($c in $store.Certificates.Find([System.Security.Cryptography.X509Certificates.X509FindType]::FindByThumbprint, $certThumb, $false)) {
-                        $found += [pscustomobject]@{ Where = "Cert:\$loc\My"; Cert = $c }
+                        $found += [pscustomobject]@{ Where = "Cert:\$loc\My"; Loc = $loc; Cert = $c }
                     }
                 } catch {
                     # 该位置没有 My 库 / 打不开:按「这里没找到」处理,另一处照查
@@ -704,6 +711,7 @@ try {
                 throw "证书 $certThumb 的增强型密钥用法里没有代码签名($CodeSigningEku)"
             }
             $certWhere = $hit.Where
+            $certLoc = $hit.Loc
             $expectThumb = $certThumb
             Add-Check '4 签名身份' 'PASS' ("$certWhere\$certThumb;$($cert.Subject);带私钥;有效期至 " +
                 $cert.NotAfter.ToString('yyyy-MM-dd') + ";EKU 含代码签名;不读证书口令")
