@@ -31,10 +31,10 @@
 #   预检 4 security find-identity -p codesigning(不加 -v,TO-VALIDATE V6)里名字与 --signid 完全相等的身份恰好 1 个
 #   预检 5 定位 wraptool(TO-VALIDATE:mac 上未实测):--wraptool → $PACE_FUSION_HOME/bin/wraptool → PATH →
 #          /Applications/PACEAntiPiracy/Eden/Fusion/Versions/<版本号最高的>/bin/wraptool;`wraptool help` 的输出里有本次要用的
-#          全部 flag(按发布者 / 账号方式决定;v6 的 `help sign` 不合法,Windows 实测 exit 9)
+#          全部 flag(按发布者 / 账号方式决定;v6 的 `help sign` 不合法,Windows 实测 exit 9),传值的 flag 在 help 里标着 arg
 #   预检 6 iLok 只提醒不硬检
 #   预检 7 ditto -x -k 解到全新临时目录(保留可执行位):bundle 存在、arm64-only、没有签名 Authority,
-#          且 `wraptool verify` 必须失败(已签过的件重签会报错)
+#          且 `wraptool verify` 必须失败、输出里有 NOT signed(已签过的件重签会报错)
 #   签名   wraptool sign --verbose [--account] --signid (--wcguid | --customernumber --customername --productname)
 #          [--pswd-no-save] --in --out [--extra-arg ...](TO-VALIDATE);
 #          第一次签名可能弹出钥匙串授权框,需要人点;回显的命令里 PACE 账号 / wcguid / customer number / 口令一律打码为 ****;
@@ -194,6 +194,21 @@ fmt_cmd() {
     printf '%s' "${out# }"
 }
 
+# wraptool 的输出逐行把这些值(口令 / 账号 / wcguid / customer number)字面替换成 **** 再显示
+redact_stream() {
+    local line s acct_re='^(.*[Aa]ccount for this operation:[[:space:]]*).+$'
+    while IFS= read -r line || [ -n "$line" ]; do
+        for s in "$@"; do
+            # 引号内的模式按字面匹配,不当通配;子串替换,账号很短或是常见词时会连带替换无关文字,只影响可读性
+            if [ -n "$s" ]; then line="${line//"$s"/****}"; fi
+        done
+        # 不给 --account 时 wraptool 会打印它用的默认账号(Windows 6.0.1 实测:"Using the default iLok License Manager
+        # account for this operation: <账号>"),脚本不知道账号名,按这句文案把冒号后整行打码(账号名带空格 / 引号也不漏)
+        if [[ "$line" =~ $acct_re ]]; then line="${BASH_REMATCH[1]}****"; fi
+        printf '%s\n' "$line"
+    done
+}
+
 # ---- 预检结果登记 ----
 # 非 dry-run:第一项 FAIL 即 die;dry-run:只登记,跑完全部预检后汇总。
 # 注意 set -e:计数用 X=$((X + 1)),不用 ((X++))(后者在 X 为 0 时返回 1,会被 set -e 杀掉)。
@@ -252,6 +267,9 @@ elif [ -z "$CUSTOMER_NUMBER" ] && { [ -n "$CUSTOMER_NAME" ] || [ "$PRODUCT_NAME_
     p0_err="--customer-name / --product-name 只与 --customer-number 同用(--wcguid 方式下发布者与产品信息来自 wrap 配置)"
 elif [[ "$CUSTOMER_NUMBER" =~ [[:space:]] || "$CUSTOMER_NUMBER" == -* ]]; then
     p0_err="--customer-number 不得含空白、不得以 - 开头"
+elif [ -n "$CUSTOMER_NUMBER" ] && [[ "$CUSTOMER_NAME" == -* || "$PRODUCT_NAME" == -* ]]; then
+    # 以 - 开头的值会被 wraptool(boost 风格)当成短 flag
+    p0_err="--customer-name / --product-name 不得以 - 开头"
 elif [ -z "$PRODUCT_NAME" ]; then
     p0_err="--product-name 传入了空串"
 elif [ "$PROMPT_AP" -eq 1 ] && [ -z "$ACCOUNT" ]; then
@@ -493,13 +511,20 @@ if [ -n "$WT" ]; then
     help_out="$("$WT" help 2>&1 || true)"
     need="$(required_flags)"
     missing=""
+    no_arg=""
     for f in $need; do
         grep -Eq -- "(^|[^[:alnum:]_-])${f}([^[:alnum:]_-]|\$)" <<< "$help_out" || missing="$missing $f"
+        # 本脚本给它传值的 flag,help 的选项表里要标着带值(`-I [ --signid ] arg` / `--pswd-no-save arg`)
+        if [ "$f" != "--verbose" ]; then
+            grep -Eq -- "(^|[^[:alnum:]_-])${f}( *\\])? +arg([^[:alnum:]_-]|\$)" <<< "$help_out" || no_arg="$no_arg $f"
+        fi
     done
-    if [ -z "$missing" ]; then
-        check PASS "5b wraptool flag" "$need"
-    else
+    if [ -n "$missing" ]; then
         check FAIL "5b wraptool flag" "「wraptool help」的输出里没有${missing}:wraptool 版本与本脚本不符(本脚本按 wraptool 6.0.1 编写)"
+    elif [ -n "$no_arg" ]; then
+        check FAIL "5b wraptool flag" "「wraptool help」里${no_arg} 没有标成带值的选项(arg),本脚本却要给它传值:wraptool 版本与本脚本不符"
+    else
+        check PASS "5b wraptool flag" "$need"
     fi
 else
     check SKIP "5b wraptool flag" "wraptool 不可用"
@@ -548,13 +573,19 @@ if [ "$ZIP_OK" -eq 1 ]; then
 
     if [ "$BUNDLE_OK" -eq 1 ] && [ -n "$WT" ]; then
         # TO-VALIDATE(mac):verify 能否直接收 bundle 目录(Windows 6.0.1 实测只收文件,mac 上 help 示例给的是 .app),
-        # 以及「未签名 → 非零退出」这一约定(Windows 实测未签名 DLL 退出码 2)。语法若写错这里也会是非零(假 PASS),
-        # 但签名后的后检要求 verify 返回 0,语法错误会在那里暴露。
+        # 以及未签名件的输出文案(Windows 实测:未签名 DLL 退出码 2,输出 "The architecture is NOT signed")。
+        # 只看退出码非零会把别的失败(PACE_FUSION_HOME 缺失、--in 不被接受、参数错误)当成「未签名」,所以与 Windows
+        # 同口径:非零且输出里有 NOT signed 才 PASS,文案对不上就 FAIL(实测后按真实文案改这里)
         echo "> wraptool verify --in $(fmt_cmd "$IN_BUNDLE")"
-        if "$WT" verify --in "$IN_BUNDLE" >/dev/null 2>&1; then
+        v_rc=0
+        v_raw="$("$WT" verify --in "$IN_BUNDLE" 2>&1)" || v_rc=$?
+        v_out="$(printf '%s\n' "$v_raw" | redact_stream "$ACCOUNT" "$WCGUID" "$CUSTOMER_NUMBER")"
+        if [ "$v_rc" -eq 0 ]; then
             check FAIL "7b wraptool verify" "wraptool verify 对输入 bundle 返回成功 —— 它已经签过(重签会报错),中止"
+        elif ! grep -qi 'NOT signed' <<< "$v_out"; then
+            check FAIL "7b wraptool verify" "wraptool verify 失败(exit $v_rc),但输出里没有 NOT signed,失败原因不是「未签名」:$(printf '%s\n' "$v_out" | grep -v '^[[:space:]]*$' | tail -n 3 | tr '\n' '|')"
         else
-            check PASS "7b wraptool verify" "按预期失败:输入件未签名"
+            check PASS "7b wraptool verify" "按预期失败(exit $v_rc,输出 NOT signed):输入件未签名"
         fi
     elif [ "$BUNDLE_OK" -eq 1 ]; then
         check SKIP "7b wraptool verify" "wraptool 不可用"
@@ -658,21 +689,7 @@ WT_ARGS+=(--in "$IN_BUNDLE"      # TO-VALIDATE(mac):给 bundle 目录还是内�
 if [ "$EXTRA_N" -gt 0 ]; then WT_ARGS+=("${EXTRA[@]}"); fi
 echo "> wraptool $(fmt_cmd "${SHOW_ARGS[@]}")"
 echo "(第一次用该身份签名可能弹出钥匙串授权框,需要人点「始终允许」或「允许」)"
-# TO-VALIDATE(待首次真签名):--verbose 是否回显收到的参数未知 —— 输出逐行把口令 / 账号 / wcguid / customer number
-# 字面替换成 **** 再显示
-redact_stream() {
-    local line s acct_re='^(.*[Aa]ccount for this operation:[[:space:]]*)[^[:space:]]+(.*)$'
-    while IFS= read -r line || [ -n "$line" ]; do
-        for s in "$@"; do
-            # 引号内的模式按字面匹配,不当通配;子串替换,账号很短或是常见词时会连带替换无关文字,只影响可读性
-            if [ -n "$s" ]; then line="${line//"$s"/****}"; fi
-        done
-        # 不给 --account 时 wraptool 会打印它用的默认账号(Windows 6.0.1 实测:"Using the default iLok License Manager
-        # account for this operation: <账号>"),脚本不知道账号名,按这句文案把冒号后面的值打码
-        if [[ "$line" =~ $acct_re ]]; then line="${BASH_REMATCH[1]}****${BASH_REMATCH[2]}"; fi
-        printf '%s\n' "$line"
-    done
-}
+# TO-VALIDATE(待首次真签名):--verbose 是否回显收到的参数未知 —— 输出经 redact_stream 逐行打码再显示
 set +e
 "$WT" "${WT_ARGS[@]}" 2>&1 | redact_stream "$AP" "$ACCOUNT" "$WCGUID" "$CUSTOMER_NUMBER"
 sign_rcs=("${PIPESTATUS[@]}")

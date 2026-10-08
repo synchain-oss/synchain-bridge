@@ -188,7 +188,7 @@ git tag v1.5.0 && git push origin v1.5.0
 3. artifact 叫 `aax-unsigned-*` 而不是 `dist-*`，`publish` 不从它取件；
 4. `publish` 的四资产精确名白名单不变，混进任何第五个文件都会红。
 
-> **已实测 / 待验证**：Windows 签名脚本已按 PACE wraptool 6.0.1 实测对齐（2026-10-08）：默认安装路径与 `PACE_FUSION_HOME`、`wraptool help` 列出的 flag、不给账号时用 iLok License Manager 的默认账号、Windows 上签的是 bundle 里的内层 DLL、未签名件 `verify` 的退出码、`--signid` 收证书指纹、时间戳默认就加、`--password` 与 `--pswd-no-save` 的区别。仍标 **TO-VALIDATE** 的，待首次真签名：真签名能否成功、自签名证书签的件零售版 Pro Tools 是否接受、`--verbose` 是否回显收到的参数、已签名件 `verify` 的退出码；另有 `gh release upload` 能否直传 draft。macOS 脚本照搬同一套写法，但 mac 上没法实测，相关项全部保留标记。签名脚本的预检在 flag 不符时会中止并提示；核对完删除脚本与本节里的标记。
+> **已实测 / 待验证**：Windows 签名脚本已按 PACE wraptool 6.0.1 实测对齐（2026-10-08）：默认安装路径与 `PACE_FUSION_HOME`、`wraptool help` 列出的 flag、不给账号时用 iLok License Manager 的默认账号、Windows 上签的是 bundle 里的内层 DLL、未签名件 `verify` 的退出码、`--signid` 收证书指纹、时间戳默认就加、`--password` 与 `--pswd-no-save` 的区别（两者都带口令值）。仍标 **TO-VALIDATE** 的，待首次真签名：真签名能否成功、自签名证书签的件零售版 Pro Tools 是否接受、`--verbose` 是否回显收到的参数、已签名件 `verify` 的退出码；另有 `gh release upload` 能否直传 draft。macOS 脚本照搬同一套写法，但 mac 上没法实测，相关项全部保留标记。签名脚本的预检在 flag 不符时会中止并提示；核对完删除脚本与本节里的标记。
 
 ### 7.1 一次性准备（Windows）
 

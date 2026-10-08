@@ -34,7 +34,8 @@
     预检 5 5a PACE_FUSION_HOME:进程环境里没有就从 Machine 级环境变量补上(装签名工具之前开的终端里没有它);两处都没有 FAIL
            5b 定位 wraptool:-WraptoolPath → $env:PACE_FUSION_HOME\bin\wraptool.exe → PATH →
               %ProgramFiles%\PACEAntiPiracy\Eden\Fusion\Versions\<版本号最高的>\bin\wraptool.exe → %ProgramFiles(x86)% 同一相对路径
-           5c `wraptool help` 的输出里有本次要用的全部 flag(按签名身份 / 发布者 / 账号方式决定)
+           5c `wraptool help` 的输出里有本次要用的全部 flag(按签名身份 / 发布者 / 账号方式决定),本脚本给它传值的
+              flag 在 help 里也标着带值(`--x ] arg` / `--x arg`):哪天某个 flag 变成开关,值会变成多余的位置参数
     预检 6 iLok 只提醒不硬检(wraptool 自己会报错)
     预检 7 解压到全新临时目录:bundle 存在、内层 DLL 为 NotSigned、`wraptool verify --in <内层 DLL>` 必须失败且输出 NOT signed
            (已签过的件重签会报错)
@@ -62,7 +63,8 @@
   Windows 上 verify / sign 的 --in 必须是文件(给 bundle 目录报 "A file must be specified for the 'verify' operation on
   Windows"),--out 可省(原地签名);未签名 DLL 的 verify 退出码 2、输出 "The architecture is NOT signed";--signid 收「个人」
   证书库里证书的 SHA1 指纹;时间戳默认就加(--timestampretry 默认 600 秒、--timestampretrysleep 默认 10 秒);--password 存进
-  wraptool 钥匙串、--pswd-no-save 不存;help 里没有经 stdin / 环境变量传口令的通道。
+  wraptool 钥匙串、--pswd-no-save 不存,两者都带口令值(help 里是 `-p [ --password ] arg` / `--pswd-no-save arg`);help 里没有经
+  stdin / 环境变量传口令的通道。
   TO-VALIDATE(待首次真签名):真签名能否成功(--signid 指纹 / --keyfile 两种身份,--wcguid / --customernumber 两种发布者,
   原地签名);自签名证书签的件零售版 Pro Tools 是否接受;--verbose 是否回显收到的参数;已签名件 verify 的退出码(本脚本按 0
   判通过);签名件是否确实带时间戳(V3);-KeyFile 方式下 wraptool 能否读 AES256 加密的 pfx(V8)。另有 V11:gh release upload
@@ -202,7 +204,8 @@ function Get-RedactTokens([string[]]$Values) {
 # operation: <账号>"),脚本不知道账号名,按这句文案把冒号后面的值打码
 function Hide-Secrets([string]$Line, [string[]]$Tokens) {
     foreach ($s in $Tokens) { $Line = $Line.Replace($s, '****') }
-    return [regex]::Replace($Line, '(?i)(account for this operation:\s*)\S+', '${1}****')
+    # 冒号后整行都遮掉:账号名带空格 / 引号,或者文案改成 "...: <账号> (xxx)" 时也不漏
+    return [regex]::Replace($Line, '(?i)(account for this operation:\s*).+$', '${1}****')
 }
 
 # -Redact:wraptool 的输出逐行把这些值(及其转义形态 / 片段,见 Get-RedactTokens)字面替换成 **** 后再显示 / 返回
@@ -386,6 +389,9 @@ try {
         if ($CustomerNumber -and ($CustomerNumber -match '\s' -or $CustomerNumber.StartsWith('-'))) {
             throw '-CustomerNumber 不得含空白、不得以 - 开头'
         }
+        # 以 - 开头的值会被 wraptool(boost 风格)当成短 flag
+        if ($CustomerNumber -and $CustomerName.StartsWith('-')) { throw '-CustomerName 不得以 - 开头' }
+        if ($CustomerNumber -and $ProductName.StartsWith('-')) { throw '-ProductName 不得以 - 开头' }
         if ($PromptAccountPassword -and -not $Account) {
             throw '-PromptAccountPassword 须同时给 -Account:读入的口令属于哪个 PACE 账号要明确'
         }
@@ -648,20 +654,26 @@ try {
     } catch { $script:Wraptool = $null; Add-Check '5b wraptool' 'FAIL' $_.Exception.Message }
 
     # ---------------------------------------------------------------- 预检 5c:wraptool flag
-    if ($script:Wraptool) {
+    if ($script:Wraptool -and $env:PACE_FUSION_HOME) {
         try {
             # 实测 6.0.1(2026-10-08):`wraptool help` 打印全部选项;`help sign` 在 v6 里不合法(too many positional options,
-            # exit 9)。不看退出码,只看输出里有没有本次要用的 flag
+            # exit 9)。不看退出码,只看输出里有没有本次要用的 flag;本脚本给它传值的 flag 还要在 help 里标着带值
+            # (选项表里是 `-I [ --signid ] arg` / `--pswd-no-save arg` 这种写法)
             $help = Invoke-Wraptool @('help') -Capture
             $need = Get-RequiredFlags
             $missing = @($need | Where-Object { $help.Output -cnotmatch ('(?<![\w-])' + [regex]::Escape($_) + '(?![\w-])') })
             if ($missing.Count) {
                 throw "「wraptool help」的输出里没有 $($missing -join ', '):wraptool 版本与本脚本不符(本脚本按 wraptool 6.0.1 实测编写)"
             }
+            $noArg = @($need | Where-Object { $_ -cne '--verbose' } |
+                Where-Object { $help.Output -cnotmatch ('(?<![\w-])' + [regex]::Escape($_) + '(?:\s*\])?\s+arg(?![\w-])') })
+            if ($noArg.Count) {
+                throw "「wraptool help」里 $($noArg -join ', ') 没有标成带值的选项(arg),本脚本却要给它传值:wraptool 版本与本脚本不符"
+            }
             Add-Check '5c wraptool flag' 'PASS' ($need -join ' ')
         } catch { Add-Check '5c wraptool flag' 'FAIL' $_.Exception.Message }
     } else {
-        Add-Check '5c wraptool flag' 'SKIP' 'wraptool 不可用'
+        Add-Check '5c wraptool flag' 'SKIP' $(if (-not $script:Wraptool) { 'wraptool 不可用' } else { 'PACE_FUSION_HOME 未就绪(见预检 5a)' })
     }
 
     # ---------------------------------------------------------------- 预检 6:iLok(只提醒)
