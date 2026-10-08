@@ -38,8 +38,8 @@
   在本机手工执行,CI 不调用、流水线零 secret。
   - 凭据纪律:pfx 口令(及可选的 PACE 账号口令)只经 `Read-Host -AsSecureString` / `read -s` 交互读入,不进签名脚本的参数、
     日志、transcript 与 shell 历史(脚本不开 `Start-Transcript`、bash 侧显式 `set +x`)。但 wraptool 只收命令行参数,签名那几秒
-    口令会以 `--keypassword`(及可选的 `--password`)出现在 wraptool 的进程命令行里(本机进程列表短暂可见,wraptool 本身的
-    限制,TO-VALIDATE),只在可信的单用户机器上签名、签名期间不要让他人登录本机;回显的命令里口令、PACE 账号与 wcguid 一律打码为 `****`,
+    口令会以 `--keypassword`(`-KeyFile` 方式)或 `--pswd-no-save`(交互读入的账号口令)出现在 wraptool 的进程命令行里(本机进程
+    列表短暂可见,wraptool 本身的限制),只在可信的单用户机器上签名、签名期间不要让他人登录本机;回显的命令里口令、PACE 账号与 wcguid 一律打码为 `****`,
     wraptool 自身的输出也逐行把这些值字面替换成 `****` 再显示(`--verbose` 是否回显参数未知,TO-VALIDATE);透传参数拒收
     含 `password` 的项和脚本自管的 flag(两平台都不区分大小写);Windows 的 pfx 必须在仓库目录之外(路径前缀 + git 公共目录
     两道判定,本仓库的其他 worktree 同样算仓库内)。
@@ -48,16 +48,16 @@
     无未提交改动;**来源核对**(`-SourceRunId` / `--source-run-id`,可选,不给记 WARN):该 run 属于本仓库(非 fork)、是
     `ci.yml` / `release.yml`、结论 success、事件为 push / workflow_dispatch(pull_request 构建的是合并提交,不认)、
     `head_sha` 等于当前检出,再用 `gh run download` 取回它的 `aax-unsigned-*` artifact,同名 zip 必须与输入字节相同;
-    wraptool 存在且 `help sign` 列出所需 flag;输入件确实未签名(Windows DLL 为 `NotSigned`;macOS arm64-only、无签名 Authority),且 `wraptool verify`
+    wraptool 存在且 `help` 列出所需 flag;输入件确实未签名(Windows DLL 为 `NotSigned`;macOS arm64-only、无签名 Authority),且 `wraptool verify`
     必须失败(已签过的件重签会报错)。macOS 另要求钥匙串里与 `--signid` 同名的代码签名身份恰好 1 个。
-  - 后检:`wraptool verify`;Windows 的 Authenticode 签名者指纹必须等于 pfx 指纹、默认要求带时间戳(`-AllowNoTimestamp`
+  - 后检:`wraptool verify`;Windows 的 Authenticode 签名者指纹必须等于 `-CertThumbprint` / pfx 指纹、默认要求带时间戳(`-AllowNoTimestamp`
     显式放行;拿不到也不事后用 signtool 补 —— 签名必须是最后一次修改);macOS `codesign --verify --deep --strict` 通过、
     `Authority=` 等于 `--signid` 且非 ad-hoc。打包后再解压回读复验,最后只**打印** `gh release upload` 命令,不自动上传;
     `-ci.<sha>` 件不给上传命令。成功删临时工作目录,失败保留供排查(里面只有 bundle,没有秘密)。
   - `-DryRun` / `--dry-run`:跑全部预检并汇总 PASS / WARN / FAIL,打印打码后的签名计划与打包脚本自己的 dry-run 输出;
     不读口令、不调用 `wraptool sign`、不产出文件。
-  - 所有 wraptool 子命令 / flag / 默认安装路径都标了 `TO-VALIDATE`(来自公开资料,Eden 版本不同可能有差异),所有者拿到
-    PACE 工具后逐条核对再删标记。
+  - Windows 侧已按 wraptool 6.0.1 实测对齐(见下面 AAX-17 一条);待首次真签名的项与 macOS 侧照搬的写法仍标 `TO-VALIDATE`,
+    所有者核对后再删标记。
 - **自签名代码签名证书助手 `scripts/new-selfsigned-codesign-cert.ps1`**(Windows 签名用的 Authenticode 证书):RSA 3072 /
   SHA256 / 默认 10 年,pfx 默认导出到 `$env:USERPROFILE\.synchain-signing\`,必须在仓库外(判定同签名脚本);脚本新建该目录时
   断开继承、只给当前用户完全控制;口令两次输入一致且至少 12 位;
@@ -71,6 +71,20 @@
   不再漏报、目录名不再误报;gate 5c 按当前 `-Config` 计数,AAX 开关为 OFF 时 `build.ps1 -InstallAax` 与 5c 报错而不用旧
   bundle(判据共用新增的 `scripts/aax-build-state.ps1`);`ci.yml` 的 pull_request 不再出 `aax-unsigned-*` 测试件;
   `docs/release.md` 补全借用 Mac 的清理清单、如实写明口令会出现在 wraptool 进程命令行里。上面各条已按修复后的行为改写。
+- **签名脚本对齐 PACE wraptool 6.0.1 实测(AAX-17)**:`sign-aax.ps1` 的签名身份二选一 —— 新增 `-CertThumbprint <SHA1>`
+  (推荐,经 `--signid` 用「个人」证书库里的证书,预检要求带私钥、未过期、用途含代码签名;不读证书口令,wraptool 命令行上不再有
+  `--keypassword`),保留 `-KeyFile`;发布者二选一 —— `-WcGuid`,或 `-CustomerNumber` + `-CustomerName`(`-ProductName` 默认
+  `Synchain Bridge`);`-Account` 改为可选(不给则用 iLok License Manager 的默认账号,wraptool 打印的默认账号名同样打码);
+  `-PromptAccountPassword` 改经 `--pswd-no-save` 传,口令不写进 wraptool 的钥匙串(另一种用法:手动 `sync --password` 存一次)。
+  wraptool 定位改为 `-WraptoolPath` → `PACE_FUSION_HOME\bin` → PATH → `%ProgramFiles%` 下版本号最高的 `Versions\<N>\bin`,
+  进程里缺 `PACE_FUSION_HOME` 时从 Machine 级补上(两处都没有就 FAIL,提示新开终端);flag 检查改用 `wraptool help`(v6 里
+  `help sign` 不合法)。Windows 上 verify / sign 对 bundle 里的内层 DLL 执行(wraptool 只收文件):整个 bundle 先复制到工作目录、
+  对 DLL 原地签名,后检要求除 DLL 外逐字节不变、没有多出文件;未签名件的 verify 除了非零退出,还要求输出 NOT signed。透传参数
+  另拦短写法与 `pswd`。`sign-aax-macos.sh` 同步(`help`、`--account` 可选、`--customer-number` 发布者方式、`--pswd-no-save`、
+  `PACE_FUSION_HOME` 与 v6 默认路径候选;mac 上没法实测,仍标 TO-VALIDATE);`new-selfsigned-codesign-cert.ps1` 醒目打印
+  Thumbprint、推荐 `-CertThumbprint`,加 `-RemoveFromStore` 时提醒之后只能用 `-KeyFile`。已实测的项去掉 TO-VALIDATE、注明实测
+  日期;真签名能否成功、自签名证书签的件零售版 Pro Tools 是否接受、`--verbose` 是否回显参数、已签名件 verify 的退出码仍标
+  TO-VALIDATE(待首次真签名)。上面各条已按此改写。
 
 ### 构建
 

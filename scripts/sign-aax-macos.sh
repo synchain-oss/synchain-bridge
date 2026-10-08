@@ -8,8 +8,17 @@
 # 只由维护者在本机手工执行;CI 不调用、流水线不持有任何签名凭据(CLAUDE.md §0 铁律 1)。
 # AAX 是本项目唯一签名的格式(零售版 Pro Tools 只加载 PACE 签名件),VST3 / AU 仍按 U13 不签名不公证。
 #
+# 发布者二选一(互斥):--wcguid <GUID>(推荐,PACE Central 里为本产品建的 wrap 配置)或 --customer-number +
+# --customer-name [+ --product-name,默认 "Synchain Bridge"]。--account 可选:不给就不传,wraptool 用 iLok License Manager 的
+# 默认账号。PACE 账号口令两种给法:事先手动执行一次带 --password 的 `wraptool sync --account <PACE 账号>`,口令存进 wraptool
+# 自己的钥匙串(推荐,之后签名不用再给;`wraptool remove-pswd --account <PACE 账号>` 清除);或 --prompt-account-password
+# (须同时给 --account)交互读入,经 --pswd-no-save 传,不写进钥匙串。
+# 这几条与 `help` 写法、v6 安装路径都已在 Windows 版 wraptool 6.0.1 上实测(2026-10-08,见 scripts/sign-aax.ps1),mac 上没法
+# 实测,下面照样标 TO-VALIDATE。
+#
 # 流程(任一步失败即 exit 1):
-#   预检 0 参数:--wcguid 是 GUID;--extra-arg 不含口令、不覆盖本脚本管理的 flag
+#   预检 0 参数:发布者恰好一种;--wcguid 是 GUID;--customer-number 须配 --customer-name;--prompt-account-password 须配
+#          --account;--extra-arg 不含口令、不覆盖本脚本管理的 flag(长短写法都算)
 #   预检 1 完整性:输入 zip 同目录的 .sha256 逐字节等于 "<小写 hash><两个空格><zip 名>\n"(shasum -a 256)。
 #          只防损坏 / 下载不完整 —— .sha256 与 zip 是同一份下载,换得了 zip 就换得了 .sha256,防不了替换
 #   预检 2 从文件名解析版本:SynchainBridge-AAX-v<版本>-macos-arm64-UNSIGNED.zip
@@ -20,13 +29,17 @@
 #          再用 gh run download 取回它的 aax-unsigned-* artifact,其中同名 zip 必须与输入 zip 字节相同。
 #          这是「哪些字节会被盖上签名」的信任根;不给 --source-run-id 只记 WARN(本地自建件没有 run 可核对)
 #   预检 4 security find-identity -p codesigning(不加 -v,TO-VALIDATE V6)里名字与 --signid 完全相等的身份恰好 1 个
-#   预检 5 wraptool 可执行,`wraptool help sign` 列出所需 flag(TO-VALIDATE)
+#   预检 5 定位 wraptool(TO-VALIDATE:mac 上未实测):--wraptool → $PACE_FUSION_HOME/bin/wraptool → PATH →
+#          /Applications/PACEAntiPiracy/Eden/Fusion/Versions/<版本号最高的>/bin/wraptool;`wraptool help` 的输出里有本次要用的
+#          全部 flag(按发布者 / 账号方式决定;v6 的 `help sign` 不合法,Windows 实测 exit 9)
 #   预检 6 iLok 只提醒不硬检
 #   预检 7 ditto -x -k 解到全新临时目录(保留可执行位):bundle 存在、arm64-only、没有签名 Authority,
 #          且 `wraptool verify` 必须失败(已签过的件重签会报错)
-#   签名   wraptool sign --verbose --account --wcguid --signid --in --out [--extra-arg ...](TO-VALIDATE);
-#          第一次签名可能弹出钥匙串授权框,需要人点;回显的命令里 PACE 账号 / wcguid / 口令一律打码为 ****;
-#          wraptool --verbose 是否回显收到的参数未知(TO-VALIDATE V1),它的输出逐行把这些值字面替换成 **** 后再显示
+#   签名   wraptool sign --verbose [--account] --signid (--wcguid | --customernumber --customername --productname)
+#          [--pswd-no-save] --in --out [--extra-arg ...](TO-VALIDATE);
+#          第一次签名可能弹出钥匙串授权框,需要人点;回显的命令里 PACE 账号 / wcguid / customer number / 口令一律打码为 ****;
+#          wraptool --verbose 是否回显收到的参数未知(TO-VALIDATE,待首次真签名),它的输出逐行把这些值字面替换成 **** 后再显示,
+#          不给 --account 时它打印的默认账号名同样打码
 #   后检   wraptool verify;codesign --verify --deep --strict;codesign -dv 的 Authority= 等于 --signid 且不是 ad-hoc;
 #          调 package-aax-macos.sh --mode signed 打包;解压回读后再跑一轮 wraptool 与 codesign 验证;
 #          最后只**打印** gh release upload 命令,不自动执行
@@ -35,23 +48,25 @@
 # (package-summary.md 里本次追加的段落会留下,只是记录,不是可上传的文件)。
 #
 # 口令:--prompt-account-password 的 PACE 账号口令只经 read -s 交互读取,不进本脚本的参数、日志与 shell 历史;但 wraptool
-# 只收命令行参数(TO-VALIDATE 是否有 stdin / 环境变量通道),签名期间它会以 --password <明文> 出现在 wraptool 的进程命令行里 ——
-# macOS 上本机其他用户用 ps 也看得到。签名期间不要让他人登录这台机器(借用的 Mac 尤其注意)。
+# 只收命令行参数(6.0.1 的 help 里没有 stdin / 环境变量通道),签名期间它会以 --pswd-no-save <明文> 出现在 wraptool 的进程
+# 命令行里 —— macOS 上本机其他用户用 ps 也看得到。签名期间不要让他人登录这台机器(借用的 Mac 尤其注意)。
 #
 # --dry-run:跑全部预检(第 7 步的解压也在临时目录里做,结束即删)并汇总,打印签名计划与 package-aax-macos.sh
 # --dry-run 的输出;不读口令、不调用 wraptool sign、不产出任何文件。
 #
-# TO-VALIDATE:所有 wraptool 子命令 / flag / 默认安装路径都来自公开资料,Eden 版本不同可能有差异;所有者拿到
-# PACE 工具后逐条核对(V1 子命令与 flag、V2 是否需要 --password、V5 --extrasigningoptions "--timestamp" 对自签名 /
-# Apple Development 身份是否可用(默认不加)、V6 find-identity 不加 -v 的行为、V11 上传到 draft、V12 默认安装路径),
+# TO-VALIDATE(mac 上都还没实测):wraptool 的 v6 默认安装路径与 PACE_FUSION_HOME、`help` 的 flag、--account / --pswd-no-save /
+# --customernumber 的用法(Windows 6.0.1 已实测,mac 版照搬);verify / sign 给 bundle 目录还是内层可执行文件、--out 能否指向
+# 新路径;待首次真签名:真签名能否成功、已签名件 verify 的退出码、--verbose 是否回显参数;V5 --extrasigningoptions
+# "--timestamp" 对自签名 / Apple Development 身份是否可用(默认不加)、V6 find-identity 不加 -v 的行为、V11 上传到 draft。
 # 核对完删掉对应标记。
 #
 # 绝不 set -x:xtrace 会把账号与口令(若用 --prompt-account-password)逐行回显进终端 / 日志。
 #
 # 用法:
 #   bash scripts/sign-aax-macos.sh --unsigned-zip <SynchainBridge-AAX-v*-macos-arm64-UNSIGNED.zip>
-#        --account <PACE 账号> --wcguid <GUID> --signid "<钥匙串身份名>" [--source-run-id <run ID>]
-#        [--out-dir dist/aax-signed] [--wraptool <path>] [--extra-arg <arg>]... [--prompt-account-password] [--dry-run]
+#        --signid "<钥匙串身份名>" (--wcguid <GUID> | --customer-number <号> --customer-name <公司名> [--product-name <名>])
+#        [--account <PACE 账号> [--prompt-account-password]] [--source-run-id <run ID>]
+#        [--out-dir dist/aax-signed] [--wraptool <path>] [--extra-arg <arg>]... [--dry-run]
 
 set -euo pipefail
 set +x
@@ -63,16 +78,19 @@ die() {
 
 usage() {
     cat <<'USAGE'
-用法: sign-aax-macos.sh --unsigned-zip <zip> --account <PACE 账号> --wcguid <GUID> --signid "<钥匙串身份名>" [选项]
+用法: sign-aax-macos.sh --unsigned-zip <zip> --signid "<钥匙串身份名>" (--wcguid <GUID> | --customer-number <号> --customer-name <公司名>) [选项]
   --unsigned-zip <path>      必填:SynchainBridge-AAX-v<版本>-macos-arm64-UNSIGNED.zip,同目录须有 .sha256
-  --account <name>           必填:PACE 账号(日志里打码)
-  --wcguid <GUID>            必填:PACE wrap 配置 GUID(日志里打码)
   --signid <name>            必填:钥匙串里代码签名身份的完整名字(security find-identity -p codesigning 列出的引号内文字)
+  --wcguid <GUID>            发布者(推荐):PACE wrap 配置 GUID(日志里打码);与 --customer-number 二选一
+  --customer-number <号>     发布者(备选):PACE customer number(日志里打码);须同时给 --customer-name
+  --customer-name <公司名>   与 --customer-number 同用
+  --product-name <名>        与 --customer-number 同用,默认 "Synchain Bridge"
+  --account <name>           可选:PACE 账号(日志里打码);不给则用 iLok License Manager 的默认账号
+  --prompt-account-password  交互读入 PACE 账号口令,经 --pswd-no-save 传(不写进 wraptool 钥匙串);须同时给 --account
   --source-run-id <id>       产出该 zip 的 ci / release run 的 ID:给了就核对来源(需 gh 已登录),不给只记 WARN
   --out-dir <path>           输出目录;相对路径按仓库根解析,默认 dist/aax-signed
-  --wraptool <path>          wraptool 路径;默认先找 PATH,再找 Eden 默认安装路径(TO-VALIDATE)
-  --extra-arg <arg>          原样透传给 wraptool sign,可重复(TO-VALIDATE);不得含 password
-  --prompt-account-password  交互读入 PACE 账号口令并传 --password(V2:是否需要,TO-VALIDATE)
+  --wraptool <path>          wraptool 路径;默认依次找 $PACE_FUSION_HOME/bin、PATH、PACE 默认安装路径(TO-VALIDATE)
+  --extra-arg <arg>          原样透传给 wraptool sign,可重复(TO-VALIDATE);不得含 password / pswd
   --dry-run                  只跑预检并打印计划:不读口令、不调用 wraptool sign、不产出文件
 USAGE
 }
@@ -80,6 +98,10 @@ USAGE
 UNSIGNED_ZIP=""
 ACCOUNT=""
 WCGUID=""
+CUSTOMER_NUMBER=""
+CUSTOMER_NAME=""
+PRODUCT_NAME="Synchain Bridge"
+PRODUCT_NAME_GIVEN=0
 SIGNID=""
 SOURCE_RUN_ID=""
 OUT_DIR="dist/aax-signed"
@@ -94,6 +116,9 @@ while [ $# -gt 0 ]; do
         --unsigned-zip) [ $# -ge 2 ] || die "--unsigned-zip 缺少取值"; UNSIGNED_ZIP="$2"; shift 2 ;;
         --account)      [ $# -ge 2 ] || die "--account 缺少取值";      ACCOUNT="$2"; shift 2 ;;
         --wcguid)       [ $# -ge 2 ] || die "--wcguid 缺少取值";       WCGUID="$2"; shift 2 ;;
+        --customer-number) [ $# -ge 2 ] || die "--customer-number 缺少取值"; CUSTOMER_NUMBER="$2"; shift 2 ;;
+        --customer-name)   [ $# -ge 2 ] || die "--customer-name 缺少取值";   CUSTOMER_NAME="$2"; shift 2 ;;
+        --product-name)    [ $# -ge 2 ] || die "--product-name 缺少取值";    PRODUCT_NAME="$2"; PRODUCT_NAME_GIVEN=1; shift 2 ;;
         --signid)       [ $# -ge 2 ] || die "--signid 缺少取值";       SIGNID="$2"; shift 2 ;;
         --source-run-id) [ $# -ge 2 ] || die "--source-run-id 缺少取值"; SOURCE_RUN_ID="$2"; shift 2 ;;
         --out-dir)      [ $# -ge 2 ] || die "--out-dir 缺少取值";      OUT_DIR="$2"; shift 2 ;;
@@ -107,8 +132,6 @@ while [ $# -gt 0 ]; do
 done
 
 [ -n "$UNSIGNED_ZIP" ] || { usage >&2; die "--unsigned-zip is required"; }
-[ -n "$ACCOUNT" ]      || { usage >&2; die "--account is required"; }
-[ -n "$WCGUID" ]       || { usage >&2; die "--wcguid is required"; }
 [ -n "$SIGNID" ]       || { usage >&2; die "--signid is required"; }
 # ditto / codesign / security / file 都是 macOS 专有,任何模式下都不在别的平台上跑
 [ "$(uname -s)" = "Darwin" ] || die "只支持 macOS(Windows 用 scripts/sign-aax.ps1)"
@@ -135,8 +158,29 @@ OUT_DIR="$(resolve_repo_path "$OUT_DIR")"
 AAX_NAME="Synchain Bridge.aaxplugin"
 EXE_NAME="Synchain Bridge"
 UPLOAD_REPO="synchain-oss/synchain-bridge"
-WRAPTOOL_DEFAULT="/Applications/PACEAntiPiracy/Eden/Fusion/Versions/5/bin/wraptool"   # TO-VALIDATE(V12)
-REQUIRED_FLAGS="--account --wcguid --signid --in --out"                               # TO-VALIDATE(V1)
+# PACE 默认安装布局(TO-VALIDATE:照 Windows 6.0.1 实测的 Versions/<版本>/bin/wraptool 推断,mac 上未实测)
+WRAPTOOL_VERSIONS_DIR="/Applications/PACEAntiPiracy/Eden/Fusion/Versions"
+
+# 本次要用的 wraptool flag(预检 5b 在 `wraptool help` 的输出里逐个找)
+required_flags() {
+    local f="--verbose --signid --in --out"
+    if [ -n "$WCGUID" ]; then f="$f --wcguid"; else f="$f --customernumber --customername --productname"; fi
+    if [ -n "$ACCOUNT" ]; then f="$f --account"; fi
+    if [ "$PROMPT_AP" -eq 1 ]; then f="$f --pswd-no-save"; fi
+    printf '%s' "$f"
+}
+
+# $WRAPTOOL_VERSIONS_DIR/<版本>/bin/wraptool 里版本号最高的一个(目录名按数字逐段比较,不是版本号的跳过);找不到返回 1
+find_wraptool_default() {
+    local d n best ver_re='^[0-9]+(\.[0-9]+)*$'
+    [ -d "$WRAPTOOL_VERSIONS_DIR" ] || return 1
+    best="$(for d in "$WRAPTOOL_VERSIONS_DIR"/*; do
+                n="${d##*/}"
+                if [[ "$n" =~ $ver_re ]] && [ -x "$d/bin/wraptool" ]; then printf '%s\n' "$n"; fi
+            done | sort -t. -k1,1n -k2,2n -k3,3n | tail -n 1)"
+    [ -n "$best" ] || return 1
+    printf '%s' "$WRAPTOOL_VERSIONS_DIR/$best/bin/wraptool"
+}
 
 # 回显命令:含空白的参数加双引号;传进来的必须是打过码的参数表,真实参数(含口令)绝不经这里输出
 fmt_cmd() {
@@ -196,24 +240,50 @@ trap on_exit EXIT
 # ---------------------------------------------------------------- 预检 0:参数
 p0_err=""
 guid_re='^[0-9A-Fa-f]{8}(-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}$'
-[[ "$WCGUID" =~ $guid_re ]] || p0_err="--wcguid 不是 GUID(期望 xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx,不带花括号)"
+if [ -n "$WCGUID" ] && [ -n "$CUSTOMER_NUMBER" ]; then
+    p0_err="--wcguid 与 --customer-number 互斥:发布者信息只能选一种"
+elif [ -z "$WCGUID" ] && [ -z "$CUSTOMER_NUMBER" ]; then
+    p0_err="缺发布者信息:给 --wcguid <GUID>(推荐),或 --customer-number 加 --customer-name(备选)"
+elif [ -n "$WCGUID" ] && ! [[ "$WCGUID" =~ $guid_re ]]; then
+    p0_err="--wcguid 不是 GUID(期望 xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx,不带花括号)"
+elif [ -n "$CUSTOMER_NUMBER" ] && [ -z "$CUSTOMER_NAME" ]; then
+    p0_err="--customer-number 须同时给 --customer-name(公司名)"
+elif [ -z "$CUSTOMER_NUMBER" ] && { [ -n "$CUSTOMER_NAME" ] || [ "$PRODUCT_NAME_GIVEN" -eq 1 ]; }; then
+    p0_err="--customer-name / --product-name 只与 --customer-number 同用(--wcguid 方式下发布者与产品信息来自 wrap 配置)"
+elif [[ "$CUSTOMER_NUMBER" =~ [[:space:]] || "$CUSTOMER_NUMBER" == -* ]]; then
+    p0_err="--customer-number 不得含空白、不得以 - 开头"
+elif [ -z "$PRODUCT_NAME" ]; then
+    p0_err="--product-name 传入了空串"
+elif [ "$PROMPT_AP" -eq 1 ] && [ -z "$ACCOUNT" ]; then
+    p0_err="--prompt-account-password 须同时给 --account:读入的口令属于哪个 PACE 账号要明确"
+fi
+# 本脚本管理的长 flag 不区分大小写(与 Windows 侧 -match 同口径;--password / --pswd-no-save 由 *password* / *pswd* 覆盖);
+# 短写法照 wraptool 6.0.1 `help` 的别名表,区分大小写(-p 是 --password、-P 是 --keypassword、-i 是 --in、-I 是 --signid),
+# boost 风格允许值紧贴短 flag(-pXXX),所以按前缀拦
+managed_re='^--(account|wcguid|wcfile|customernumber|customername|productname|signid|keyfile|keypassword|in|out)(=|$)'
 if [ "$EXTRA_N" -gt 0 ]; then
     for a in "${EXTRA[@]}"; do
         lower="$(printf '%s' "$a" | tr '[:upper:]' '[:lower:]')"
         case "$lower" in
-            *password*) p0_err="--extra-arg 不得含口令类参数('$a'):口令只经交互读入,不进参数" ;;
+            *password*|*pswd*) p0_err="--extra-arg 不得含口令类参数('$a'):口令只经交互读入,不进参数" ;;
         esac
-        # 与 Windows 侧 -match 同口径:不区分大小写(--password 已由上面的 *password* 覆盖)
-        case "$lower" in
-            --account|--account=*|--wcguid|--wcguid=*|--signid|--signid=*|--in|--in=*|--out|--out=*)
-                p0_err="--extra-arg 不得重复本脚本管理的 flag('$a')" ;;
+        if [[ "$lower" =~ $managed_re ]]; then p0_err="--extra-arg 不得重复本脚本管理的 flag('$a')"; fi
+        case "$a" in
+            -[apPGWCNUIkio]*) p0_err="--extra-arg 不得重复本脚本管理的 flag('$a',短写法)" ;;
         esac
     done
 fi
 case "$SOURCE_RUN_ID" in
     *[!0-9]*) p0_err="--source-run-id 应为纯数字的 workflow run ID:'$SOURCE_RUN_ID'" ;;
 esac
-if [ -z "$p0_err" ]; then check PASS "0 参数" "wcguid 格式正确;extra-arg $EXTRA_N 项"; else check FAIL "0 参数" "$p0_err"; fi
+if [ -n "$WCGUID" ]; then p0_publisher="wcguid 格式正确"; else p0_publisher="customer number / customer name \"$CUSTOMER_NAME\" / product name \"$PRODUCT_NAME\""; fi
+if [ -n "$ACCOUNT" ]; then p0_account="--account(打码)"; else p0_account="iLok License Manager 默认账号"; fi
+if [ "$PROMPT_AP" -eq 1 ]; then p0_account="$p0_account + 交互口令(--pswd-no-save)"; fi
+if [ -z "$p0_err" ]; then
+    check PASS "0 参数" "发布者 $p0_publisher;账号 $p0_account;extra-arg $EXTRA_N 项"
+else
+    check FAIL "0 参数" "$p0_err"
+fi
 
 # ---------------------------------------------------------------- 预检 1:.sha256(完整性)
 # 只防损坏 / 下载不完整:.sha256 与 zip 是同一份下载,换得了 zip 就换得了 .sha256 —— 来源由预检 3b 核对
@@ -386,31 +456,42 @@ else
 fi
 
 # ---------------------------------------------------------------- 预检 5:wraptool
+# PACE_FUSION_HOME:Windows 版 wraptool 6.0.1 没有它就报 "The PACE_FUSION_HOME environment variable is not defined"(实测);
+# mac 版是否需要未实测(TO-VALIDATE),这里只提醒、不拦,并把 $PACE_FUSION_HOME/bin/wraptool 当第一个候选
+if [ -n "${PACE_FUSION_HOME:-}" ]; then
+    check INFO "5 PACE_FUSION_HOME" "$PACE_FUSION_HOME"
+else
+    check INFO "5 PACE_FUSION_HOME" "未设置(mac 版 wraptool 是否需要它未实测,TO-VALIDATE):wraptool 报它未定义时,装完签名工具新开终端;仍没有就重装签名工具"
+fi
 WT=""
+WT_SRC=""
 if [ -n "$WRAPTOOL_ARG" ]; then
     cand="$(abs_path "$WRAPTOOL_ARG")"
     if [ -f "$cand" ] && [ -x "$cand" ]; then
         WT="$cand"
-        check PASS "5a wraptool" "$WT"
+        WT_SRC="--wraptool"
     else
         check FAIL "5a wraptool" "--wraptool 指向的文件不存在或不可执行:$cand"
     fi
+elif [ -n "${PACE_FUSION_HOME:-}" ] && [ -f "${PACE_FUSION_HOME%/}/bin/wraptool" ] && [ -x "${PACE_FUSION_HOME%/}/bin/wraptool" ]; then
+    WT="${PACE_FUSION_HOME%/}/bin/wraptool"
+    WT_SRC="PACE_FUSION_HOME"
 elif WT="$(command -v wraptool 2>/dev/null)"; then
-    check PASS "5a wraptool" "$WT"
-elif [ -x "$WRAPTOOL_DEFAULT" ]; then
-    WT="$WRAPTOOL_DEFAULT"
-    check PASS "5a wraptool" "$WT"
+    WT_SRC="PATH"
+elif WT="$(find_wraptool_default)"; then
+    WT_SRC="$WRAPTOOL_VERSIONS_DIR 下版本号最高的"   # TO-VALIDATE:mac 上的 v6 安装布局
 else
     WT=""
-    check FAIL "5a wraptool" "找不到 wraptool:PATH 里没有,默认路径 $WRAPTOOL_DEFAULT 也不存在(TO-VALIDATE:Eden 默认安装路径以实际版本为准)。先装好 PACE Eden 签名工具,再重试或用 --wraptool <path> 指定"
+    check FAIL "5a wraptool" "找不到 wraptool:\$PACE_FUSION_HOME/bin、PATH、$WRAPTOOL_VERSIONS_DIR/<版本>/bin 都没有(TO-VALIDATE:mac 上的安装路径以实际为准)。先装好 PACE 签名工具,再重试或用 --wraptool <path> 指定"
 fi
+if [ -n "$WT" ]; then check PASS "5a wraptool" "$WT(来自 $WT_SRC)"; fi
 
 if [ -n "$WT" ]; then
-    # TO-VALIDATE(V1):子命令写法 `help sign`;不看退出码(有的工具打印帮助后返回非零),只看输出里的 flag
-    echo "> wraptool help sign"
-    help_out="$("$WT" help sign 2>&1 || true)"   # TO-VALIDATE(V1)
-    need="$REQUIRED_FLAGS"
-    if [ "$PROMPT_AP" -eq 1 ]; then need="$need --password"; fi   # TO-VALIDATE(V2)
+    # Windows 6.0.1 实测:`help` 打印全部选项,`help sign` 在 v6 里不合法(exit 9)。mac 版照搬(TO-VALIDATE);
+    # 不看退出码,只看输出里有没有本次要用的 flag
+    echo "> wraptool help"
+    help_out="$("$WT" help 2>&1 || true)"
+    need="$(required_flags)"
     missing=""
     for f in $need; do
         grep -Eq -- "(^|[^[:alnum:]_-])${f}([^[:alnum:]_-]|\$)" <<< "$help_out" || missing="$missing $f"
@@ -418,14 +499,14 @@ if [ -n "$WT" ]; then
     if [ -z "$missing" ]; then
         check PASS "5b wraptool flag" "$need"
     else
-        check FAIL "5b wraptool flag" "Eden 版本 flag 不符,按 TO-VALIDATE 更新脚本:「wraptool help sign」的输出里没有${missing}"
+        check FAIL "5b wraptool flag" "「wraptool help」的输出里没有${missing}:wraptool 版本与本脚本不符(本脚本按 wraptool 6.0.1 编写)"
     fi
 else
     check SKIP "5b wraptool flag" "wraptool 不可用"
 fi
 
 # ---------------------------------------------------------------- 预检 6:iLok(只提醒)
-check INFO "6 iLok" "签名需要插着 iLok(或已激活 iLok Cloud 会话)并运行 iLok License Manager;本脚本不硬检,缺了 wraptool 自己会报错(TO-VALIDATE:报错文案)"
+check INFO "6 iLok" "签名需要插着带签名授权的 iLok(或已激活 iLok Cloud 会话)并运行 iLok License Manager;本脚本不硬检,缺了 wraptool 自己会报错(TO-VALIDATE:报错文案)"
 
 # ---------------------------------------------------------------- 预检 7:解压 + 输入件确实未签名
 IN_BUNDLE=""
@@ -466,10 +547,11 @@ if [ "$ZIP_OK" -eq 1 ]; then
     fi
 
     if [ "$BUNDLE_OK" -eq 1 ] && [ -n "$WT" ]; then
-        # TO-VALIDATE(V1):verify 的语法,以及「未签名 bundle → 非零退出」这一约定。语法若写错这里也会是非零
-        # (假 PASS),但签名后的后检要求 verify 返回 0,语法错误会在那里暴露。
+        # TO-VALIDATE(mac):verify 能否直接收 bundle 目录(Windows 6.0.1 实测只收文件,mac 上 help 示例给的是 .app),
+        # 以及「未签名 → 非零退出」这一约定(Windows 实测未签名 DLL 退出码 2)。语法若写错这里也会是非零(假 PASS),
+        # 但签名后的后检要求 verify 返回 0,语法错误会在那里暴露。
         echo "> wraptool verify --in $(fmt_cmd "$IN_BUNDLE")"
-        if "$WT" verify --in "$IN_BUNDLE" >/dev/null 2>&1; then   # TO-VALIDATE(V1)
+        if "$WT" verify --in "$IN_BUNDLE" >/dev/null 2>&1; then
             check FAIL "7b wraptool verify" "wraptool verify 对输入 bundle 返回成功 —— 它已经签过(重签会报错),中止"
         else
             check PASS "7b wraptool verify" "按预期失败:输入件未签名"
@@ -487,13 +569,18 @@ fi
 SIGNED_ZIP=""
 [ -z "$VER" ] || SIGNED_ZIP="$OUT_DIR/SynchainBridge-AAX-v$VER-macos-arm64.zip"
 
-# 签名命令的打码版(回显用);真实参数只在签名那一步临时拼出
-SHOW_ARGS=(sign --verbose                         # TO-VALIDATE(V1)
-           --account '****' --wcguid '****'       # TO-VALIDATE(V1)
-           --signid "$SIGNID"                     # TO-VALIDATE(V1)
-           --in "${IN_BUNDLE:-<work>/in/$AAX_NAME}"     # TO-VALIDATE(V1):给 bundle 目录还是内层可执行文件
-           --out "${OUT_BUNDLE:-<work>/out/$AAX_NAME}") # TO-VALIDATE(V1):能否指向新路径
-if [ "$PROMPT_AP" -eq 1 ]; then SHOW_ARGS+=(--password '****'); fi   # TO-VALIDATE(V2)
+# 签名命令的打码版(回显用);真实参数(WT_ARGS)只在签名那一步临时拼出,两处的 flag 顺序保持一致
+SHOW_ARGS=(sign --verbose)                        # TO-VALIDATE(待首次真签名):--verbose 是否回显收到的参数
+if [ -n "$ACCOUNT" ]; then SHOW_ARGS+=(--account '****'); fi
+SHOW_ARGS+=(--signid "$SIGNID")
+if [ -n "$WCGUID" ]; then
+    SHOW_ARGS+=(--wcguid '****')
+else
+    SHOW_ARGS+=(--customernumber '****' --customername "$CUSTOMER_NAME" --productname "$PRODUCT_NAME")
+fi
+if [ "$PROMPT_AP" -eq 1 ]; then SHOW_ARGS+=(--pswd-no-save '****'); fi
+SHOW_ARGS+=(--in "${IN_BUNDLE:-<work>/in/$AAX_NAME}"       # TO-VALIDATE(mac):给 bundle 目录还是内层可执行文件
+            --out "${OUT_BUNDLE:-<work>/out/$AAX_NAME}")   # TO-VALIDATE(mac):能否指向新路径
 if [ "$EXTRA_N" -gt 0 ]; then SHOW_ARGS+=("${EXTRA[@]}"); fi
 
 if [ "$DRY_RUN" -eq 1 ]; then
@@ -504,7 +591,11 @@ if [ "$DRY_RUN" -eq 1 ]; then
     else
         echo "  -) 未给 --source-run-id:来源未核对(只验了完整性)"
     fi
-    if [ "$PROMPT_AP" -eq 1 ]; then echo "  0) read -s 读 PACE 账号口令(--password,TO-VALIDATE V2;签名那几秒会出现在 wraptool 进程命令行里,签名期间不要让他人登录本机)"; fi
+    if [ "$PROMPT_AP" -eq 1 ]; then
+        echo "  0) read -s 读 PACE 账号口令,经 --pswd-no-save 传(不写进 wraptool 钥匙串;签名那几秒会出现在 wraptool 进程命令行里,签名期间不要让他人登录本机)"
+    else
+        echo "  0) 不传账号口令:wraptool 用它钥匙串里存过的口令(--wcguid 方式要连 PACE 服务器;没存过就先手动 sync 一次,见 docs/release.md §7.2)"
+    fi
     echo "  1) wraptool $(fmt_cmd "${SHOW_ARGS[@]}")"
     echo "     (第一次用该身份签名可能弹出钥匙串授权框,需要人点;--extrasigningoptions \"--timestamp\" 默认不加,TO-VALIDATE V5)"
     echo "  2) 后检:wraptool verify --verbose --in <out>;codesign --verify --deep --strict;Authority= \"$SIGNID\" 且非 ad-hoc"
@@ -549,47 +640,56 @@ fi
 # ================================================================ 签名
 if [ "$PROMPT_AP" -eq 1 ]; then
     [ -r /dev/tty ] || die "读取 PACE 账号口令需要交互终端"
-    IFS= read -r -s -p "PACE 账号口令: " AP < /dev/tty   # TO-VALIDATE(V2)
+    IFS= read -r -s -p "PACE 账号口令(经 --pswd-no-save 传,不存钥匙串): " AP < /dev/tty
     echo ""
 fi
-WT_ARGS=(sign --verbose                       # TO-VALIDATE(V1)
-         --account "$ACCOUNT"                 # TO-VALIDATE(V1)
-         --wcguid "$WCGUID"                   # TO-VALIDATE(V1)
-         --signid "$SIGNID"                   # TO-VALIDATE(V1)
-         --in "$IN_BUNDLE"                    # TO-VALIDATE(V1):给 bundle 目录还是内层可执行文件
-         --out "$OUT_BUNDLE")                 # TO-VALIDATE(V1):能否指向新路径
-if [ "$PROMPT_AP" -eq 1 ]; then WT_ARGS+=(--password "$AP"); fi   # TO-VALIDATE(V2)
+WT_ARGS=(sign --verbose)
+if [ -n "$ACCOUNT" ]; then WT_ARGS+=(--account "$ACCOUNT"); fi
+WT_ARGS+=(--signid "$SIGNID")
+if [ -n "$WCGUID" ]; then
+    WT_ARGS+=(--wcguid "$WCGUID")
+else
+    WT_ARGS+=(--customernumber "$CUSTOMER_NUMBER" --customername "$CUSTOMER_NAME" --productname "$PRODUCT_NAME")
+fi
+if [ "$PROMPT_AP" -eq 1 ]; then WT_ARGS+=(--pswd-no-save "$AP"); fi
+WT_ARGS+=(--in "$IN_BUNDLE"      # TO-VALIDATE(mac):给 bundle 目录还是内层可执行文件
+          --out "$OUT_BUNDLE")   # TO-VALIDATE(mac):能否指向新路径
 # TO-VALIDATE(V5):--extrasigningoptions "--timestamp" 默认不加,需要时经 --extra-arg 透传
 if [ "$EXTRA_N" -gt 0 ]; then WT_ARGS+=("${EXTRA[@]}"); fi
 echo "> wraptool $(fmt_cmd "${SHOW_ARGS[@]}")"
 echo "(第一次用该身份签名可能弹出钥匙串授权框,需要人点「始终允许」或「允许」)"
-# TO-VALIDATE(V1):--verbose 是否回显收到的参数未知 —— 输出逐行把口令 / 账号 / wcguid 字面替换成 **** 再显示
+# TO-VALIDATE(待首次真签名):--verbose 是否回显收到的参数未知 —— 输出逐行把口令 / 账号 / wcguid / customer number
+# 字面替换成 **** 再显示
 redact_stream() {
-    local line s
+    local line s acct_re='^(.*[Aa]ccount for this operation:[[:space:]]*)[^[:space:]]+(.*)$'
     while IFS= read -r line || [ -n "$line" ]; do
         for s in "$@"; do
             # 引号内的模式按字面匹配,不当通配;子串替换,账号很短或是常见词时会连带替换无关文字,只影响可读性
             if [ -n "$s" ]; then line="${line//"$s"/****}"; fi
         done
+        # 不给 --account 时 wraptool 会打印它用的默认账号(Windows 6.0.1 实测:"Using the default iLok License Manager
+        # account for this operation: <账号>"),脚本不知道账号名,按这句文案把冒号后面的值打码
+        if [[ "$line" =~ $acct_re ]]; then line="${BASH_REMATCH[1]}****${BASH_REMATCH[2]}"; fi
         printf '%s\n' "$line"
     done
 }
 set +e
-"$WT" "${WT_ARGS[@]}" 2>&1 | redact_stream "$AP" "$ACCOUNT" "$WCGUID"
+"$WT" "${WT_ARGS[@]}" 2>&1 | redact_stream "$AP" "$ACCOUNT" "$WCGUID" "$CUSTOMER_NUMBER"
 sign_rcs=("${PIPESTATUS[@]}")
 set -e
 sign_rc="${sign_rcs[0]}"
 AP=""
 WT_ARGS=()
 [ "$sign_rc" -eq 0 ] || die "wraptool sign 失败(exit $sign_rc)"
-[ -d "$OUT_BUNDLE" ] || die "wraptool sign 返回 0,但没有产出 $OUT_BUNDLE(TO-VALIDATE:--out 语义)"
+[ -d "$OUT_BUNDLE" ] || die "wraptool sign 返回 0,但没有产出 $OUT_BUNDLE(TO-VALIDATE(mac):--out 语义)"
 
 # ================================================================ 后检
 assert_signed_bundle() {   # assert_signed_bundle <bundle> <标签>
     local b="$1" label="$2" info
     echo "> wraptool verify --verbose --in $(fmt_cmd "$b")"
     set +e
-    "$WT" verify --verbose --in "$b" 2>&1 | redact_stream "$ACCOUNT" "$WCGUID"   # TO-VALIDATE(V1):语法与退出码
+    # TO-VALIDATE(待首次真签名):已签名件 verify 的退出码,这里按 0 判通过
+    "$WT" verify --verbose --in "$b" 2>&1 | redact_stream "$ACCOUNT" "$WCGUID" "$CUSTOMER_NUMBER"
     local rcs=("${PIPESTATUS[@]}")
     set -e
     [ "${rcs[0]}" -eq 0 ] || die "$label:wraptool verify 失败(exit ${rcs[0]})"

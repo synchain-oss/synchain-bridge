@@ -211,14 +211,30 @@ pwsh scripts/gates.ps1 -PluginOnly -IncludeAax -BuildDir build-aax
 
 签名与上传由维护者在本机完成，流程见 [release.md §7](release.md#7-aaxpro-tools本机签名--手工上传)：
 `scripts/sign-aax.ps1` 把 CI 产出的 `-UNSIGNED.zip` 经 PACE wraptool 签名后，调用 `package-aax.ps1 -Mode Signed` 出发行包。
-wraptool 在 Windows 上还需要一张代码签名证书（.pfx），本项目用自签名证书，一次性生成：
+`.aaxplugin` 是目录，Windows 版 wraptool 只收文件：脚本把整个 bundle 复制到临时工作目录，只对其中的内层 DLL
+（`Contents\x64\Synchain Bridge.aaxplugin`）原地签名。
 
-```powershell
-pwsh scripts/new-selfsigned-codesign-cert.ps1 -WhatIf   # 先预演：不读口令、不写证书库、不生成文件
-pwsh scripts/new-selfsigned-codesign-cert.ps1           # 默认导出到 $env:USERPROFILE\.synchain-signing\synchain-aax-codesign.pfx
-```
+- **签名工具**：装 PACE 的 AAX 代码签名工具（wraptool 6.0.1 装在 `%ProgramFiles%\PACEAntiPiracy\Eden\Fusion\Versions\6\bin\`）
+  后要**新开一个终端**：安装器设的 Machine 级环境变量 `PACE_FUSION_HOME` 在之前开着的终端里没有，wraptool 会报它未定义。
+  签名脚本缺它时会从 Machine 级补上，两处都没有就 FAIL。
+- **代码签名证书**：wraptool 在 Windows 上还需要一张 Authenticode 代码签名证书，本项目用自签名证书，一次性生成：
 
-pfx 必须放在仓库目录之外（脚本会拒绝仓库内路径），口令只交互输入、不写进任何入库文件。
+  ```powershell
+  pwsh scripts/new-selfsigned-codesign-cert.ps1 -WhatIf   # 先预演：不读口令、不写证书库、不生成文件
+  pwsh scripts/new-selfsigned-codesign-cert.ps1           # 证书留在 Cert:\CurrentUser\My;pfx 备份默认导出到 $env:USERPROFILE\.synchain-signing\
+  ```
+
+  记下最后打印的 Thumbprint，签名时用 `-CertThumbprint <指纹>`（推荐：不读 pfx 口令，wraptool 命令行上没有口令）；只有 pfx
+  时用 `-KeyFile <pfx>`（备选，签名时交互读口令）。pfx 必须放在仓库目录之外（脚本会拒绝仓库内路径），口令只交互输入、不写进任何入库文件。
+- **签名命令**（发布者用 `-WcGuid`；备选 `-CustomerNumber` 加 `-CustomerName`）：
+
+  ```powershell
+  pwsh scripts/sign-aax.ps1 -UnsignedZip <...-win64-UNSIGNED.zip> -SourceRunId <run-id> -CertThumbprint <证书 SHA1 指纹> -WcGuid <wcguid> -DryRun
+  ```
+
+- **PACE 账号口令**：推荐先手动执行一次带 `--password` 的 `wraptool sync --account <PACE 账号>`，把口令存进 wraptool 的钥匙串，
+  之后签名不用再给；或者签名时加 `-Account <PACE 账号> -PromptAccountPassword`，交互读入、经 `--pswd-no-save` 传、不保存。
+  不给 `-Account` 时 wraptool 用 iLok License Manager 的默认账号。细节见 [release.md §7.1](release.md#71-一次性准备windows)。
 
 ### 诊断日志
 

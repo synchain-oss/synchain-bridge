@@ -258,12 +258,13 @@ JUCE 写到进程的标准错误输出。要看到它们，从「终端」直接
 
 签名由维护者在本机完成，流程见 [release.md §7](release.md#7-aaxpro-tools本机签名--手工上传)（一次性准备见
 [§7.2](release.md#72-一次性准备借用的-mac)）：`scripts/sign-aax-macos.sh` 把 CI 产出的 `-UNSIGNED.zip` 经 PACE wraptool
-签名（`--signid` 传钥匙串里代码签名身份的完整名字），后检 `wraptool verify`、`codesign --verify --deep --strict` 与
+签名（`--signid` 传钥匙串里代码签名身份的完整名字；发布者用 `--wcguid`，备选 `--customer-number` 加 `--customer-name`；
+`--account` 可选，账号口令用 `--prompt-account-password` 交互读入、经 `--pswd-no-save` 传、不保存），后检 `wraptool verify`、`codesign --verify --deep --strict` 与
 `Authority=`，再调 `package-aax-macos.sh --mode signed` 出发行包并解压回读复验。借用别人的 Mac 时：在独立的 macOS 用户下
 操作，签名期间不要让他人登录这台 Mac；签完按 [release.md §7.2 的清理清单](release.md#72-一次性准备借用的-mac)清理（以那里为准）——
 首选直接删除这个 macOS 用户；不删用户就逐项清掉 GitHub 令牌（`gh auth logout`，更推荐一开始就只用当次 shell 的短有效期
-`GH_TOKEN`，用完吊销）、Xcode 里的 Apple ID、钥匙串里的签名证书与私钥、iLok / PACE 登录，以及记着 `--account` / `--wcguid`
-明文的 `~/.zsh_history` 与 `~/.zsh_sessions/`。不要在共用机器上留下任何凭据。
+`GH_TOKEN`，用完吊销）、Xcode 里的 Apple ID、钥匙串里的签名证书与私钥、iLok / PACE 登录，以及记着 `--account` / `--wcguid` /
+`--customer-number` 明文的 `~/.zsh_history` 与 `~/.zsh_sessions/`。不要在共用机器上留下任何凭据。
 
 ## CI 对照
 
