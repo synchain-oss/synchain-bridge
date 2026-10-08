@@ -712,10 +712,11 @@ try {
             try {
                 # 实测 6.0.1(2026-10-08):Windows 上 --in 必须是文件(给 bundle 目录报 "A file must be specified for the
                 # 'verify' operation on Windows");未签名 DLL → 退出码 2,输出 "The architecture is NOT signed"。只看退出码非零
-                # 会把别的失败(PACE_FUSION_HOME 缺失、参数错误)当成「未签名」,所以同时要求输出里有 NOT signed
+                # 会把别的失败(PACE_FUSION_HOME 缺失、参数错误)当成「未签名」,所以同时要求输出里有 NOT signed。
+                # 区分大小写:「not signed in」一类的未登录报错不能算
                 $v = Invoke-Wraptool @('verify', '--in', $inDll) -Capture
                 if ($v.ExitCode -eq 0) { throw "wraptool verify 对输入 DLL 返回成功 —— 它已经签过(重签会报错),中止" }
-                if ($v.Output -notmatch 'NOT signed') {
+                if ($v.Output -cnotmatch 'NOT signed') {
                     $tail = @($v.Output -split "`n" | Where-Object { $_.Trim() } | Select-Object -Last 3) -join ' | '
                     throw "wraptool verify 失败(exit $($v.ExitCode)),但输出里没有 NOT signed,失败原因不是「未签名」:$tail"
                 }

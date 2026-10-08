@@ -575,14 +575,15 @@ if [ "$ZIP_OK" -eq 1 ]; then
         # TO-VALIDATE(mac):verify 能否直接收 bundle 目录(Windows 6.0.1 实测只收文件,mac 上 help 示例给的是 .app),
         # 以及未签名件的输出文案(Windows 实测:未签名 DLL 退出码 2,输出 "The architecture is NOT signed")。
         # 只看退出码非零会把别的失败(PACE_FUSION_HOME 缺失、--in 不被接受、参数错误)当成「未签名」,所以与 Windows
-        # 同口径:非零且输出里有 NOT signed 才 PASS,文案对不上就 FAIL(实测后按真实文案改这里)
+        # 同口径:非零且输出里有 NOT signed(区分大小写,「not signed in」一类的未登录报错不算)才 PASS,文案对不上就 FAIL
+        # (实测后按真实文案改这里)
         echo "> wraptool verify --in $(fmt_cmd "$IN_BUNDLE")"
         v_rc=0
         v_raw="$("$WT" verify --in "$IN_BUNDLE" 2>&1)" || v_rc=$?
         v_out="$(printf '%s\n' "$v_raw" | redact_stream "$ACCOUNT" "$WCGUID" "$CUSTOMER_NUMBER")"
         if [ "$v_rc" -eq 0 ]; then
             check FAIL "7b wraptool verify" "wraptool verify 对输入 bundle 返回成功 —— 它已经签过(重签会报错),中止"
-        elif ! grep -qi 'NOT signed' <<< "$v_out"; then
+        elif ! grep -q 'NOT signed' <<< "$v_out"; then
             check FAIL "7b wraptool verify" "wraptool verify 失败(exit $v_rc),但输出里没有 NOT signed,失败原因不是「未签名」:$(printf '%s\n' "$v_out" | grep -v '^[[:space:]]*$' | tail -n 3 | tr '\n' '|')"
         else
             check PASS "7b wraptool verify" "按预期失败(exit $v_rc,输出 NOT signed):输入件未签名"
