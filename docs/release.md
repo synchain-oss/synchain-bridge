@@ -188,38 +188,54 @@ git tag v1.5.0 && git push origin v1.5.0
 3. artifact 叫 `aax-unsigned-*` 而不是 `dist-*`，`publish` 不从它取件；
 4. `publish` 的四资产精确名白名单不变，混进任何第五个文件都会红。
 
-> **TO-VALIDATE**：签名脚本用到的 wraptool 子命令与 flag、PACE 工具的默认安装路径、`gh release upload` 能否直传 draft 等，来自公开资料或尚未实测，Eden 版本不同可能有差异。维护者拿到 PACE 工具后逐条核对（签名脚本的预检在 flag 不符时会中止并提示），核对完删除脚本与本节里的标记。
+> **已实测 / 待验证**：Windows 签名脚本已按 PACE wraptool 6.0.1 实测对齐（2026-10-08）：默认安装路径与 `PACE_FUSION_HOME`、`wraptool help` 列出的 flag、不给账号时用 iLok License Manager 的默认账号、Windows 上签的是 bundle 里的内层 DLL、未签名件 `verify` 的退出码、`--signid` 收证书指纹、时间戳默认就加、`--password` 与 `--pswd-no-save` 的区别（两者都带口令值）。仍标 **TO-VALIDATE** 的，待首次真签名：真签名能否成功、自签名证书签的件零售版 Pro Tools 是否接受、`--verbose` 是否回显收到的参数、已签名件 `verify` 的退出码；另有 `gh release upload` 能否直传 draft。macOS 脚本照搬同一套写法，但 mac 上没法实测，相关项全部保留标记。签名脚本的预检在 flag 不符时会中止并提示；核对完删除脚本与本节里的标记。
 
 ### 7.1 一次性准备（Windows）
 
-1. 安装 PACE 提供的 Eden 签名工具（含 `wraptool`）与 iLok License Manager。`sign-aax.ps1` 先在 PATH 里找 `wraptool`，找不到再试 Eden 的默认安装路径（TO-VALIDATE），也可以用 `-WraptoolPath` 显式指定。
-2. 生成自签名代码签名证书（先 `-WhatIf` 预演，不写证书库）：
+1. 安装 PACE 的 AAX 代码签名工具（含 `wraptool`，本节按 6.0.1 编写）与 iLok License Manager；签名授权在维护者的 iLok 上，签名时插着。
+   - 安装器把 `wraptool.exe` 放在 `%ProgramFiles%\PACEAntiPiracy\Eden\Fusion\Versions\6\bin\`，并设置 Machine 级环境变量 `PACE_FUSION_HOME`。**装完要新开一个终端**：装之前就开着的终端里没有这个变量，wraptool 会报 "The PACE_FUSION_HOME environment variable is not defined"。`sign-aax.ps1` 发现进程里没有它时会从 Machine 级补上（退出时撤掉）；两处都没有就 FAIL，提示新开终端或重装签名工具。
+   - `sign-aax.ps1` 依次找 `-WraptoolPath`、`$env:PACE_FUSION_HOME\bin\wraptool.exe`、PATH、`%ProgramFiles%\PACEAntiPiracy\Eden\Fusion\Versions\<版本号最高的>\bin\wraptool.exe`，最后试 `%ProgramFiles(x86)%` 下的同一路径。
+2. 在 PACE Central 里为本产品建好产品与 wrap 配置，拿到 wcguid。没有 wcguid 时，可以改用 PACE 发的 customer number（`-CustomerNumber` 加 `-CustomerName`）。
+3. 生成自签名代码签名证书（先 `-WhatIf` 预演，不写证书库）：
 
    ```powershell
    pwsh scripts/new-selfsigned-codesign-cert.ps1 -WhatIf
-   pwsh scripts/new-selfsigned-codesign-cert.ps1   # 默认输出 $env:USERPROFILE\.synchain-signing\synchain-aax-codesign.pfx
+   pwsh scripts/new-selfsigned-codesign-cert.ps1   # 证书留在 Cert:\CurrentUser\My;pfx 默认导出到 $env:USERPROFILE\.synchain-signing\synchain-aax-codesign.pfx
    ```
 
-   pwsh 7 里没有 PKI cmdlet 时，改用 `powershell.exe -File scripts/new-selfsigned-codesign-cert.ps1`（TO-VALIDATE）。证书是自签名的：用户在「属性 → 数字签名」里会看到不受信任的签名者，属预期，不影响 Pro Tools 加载（TO-VALIDATE，以签名件实测为准）。
+   记下脚本最后打印的 **Thumbprint**，签名时传给 `sign-aax.ps1 -CertThumbprint`（推荐方式：wraptool 直接用「个人」证书库里的证书签名，不读 pfx 口令，wraptool 的命令行上也没有 `--keypassword`）。这种方式要求证书留在 `Cert:\CurrentUser\My`，所以**不要加 `-RemoveFromStore`**；加了就只能用 `-KeyFile <pfx>` 方式。pwsh 7 里没有 PKI cmdlet 时，改用 `powershell.exe -File scripts/new-selfsigned-codesign-cert.ps1`（TO-VALIDATE）。证书是自签名的：用户在「属性 → 数字签名」里会看到不受信任的签名者，属预期；零售版 Pro Tools 是否照常加载待首次真签名验证（TO-VALIDATE）。
 
-3. 把 pfx 和口令备份进密码管理器。pfx 只放在仓库外（`.gitignore` 也已忽略 `*.pfx` / `*.p12` / `*.pvk`）；PACE 账号和 wcguid 只在签名时作为命令行参数传入，**不写进任何入库文件**。
+4. 把 pfx 和口令备份进密码管理器：pfx 是证书的仓库外备份（换机器时导入「个人」证书库，就能接着用 `-CertThumbprint`），也可以直接交给 `-KeyFile`。pfx 只放在仓库外（`.gitignore` 也已忽略 `*.pfx` / `*.p12` / `*.pvk`）；PACE 账号、wcguid 与 customer number 只在签名时作为命令行参数传入，**不写进任何入库文件**。
+5. **PACE 账号口令**。`-WcGuid` 方式签名要连 PACE 服务器，需要账号口令。两种处理方式：
+   - 推荐：先手动执行一次带 `--password` 的 `sync`，口令存进 wraptool 自己的钥匙串（与 iLok License Manager 的口令分开保存），之后签名不用再给：
+
+     ```powershell
+     $p = Read-Host -AsSecureString 'PACE 账号口令'
+     & "$env:PACE_FUSION_HOME\bin\wraptool.exe" sync --account <PACE 账号> --password ([System.Net.NetworkCredential]::new('', $p).Password)
+     Remove-Variable p
+     ```
+
+     这样写，口令不进 PowerShell 历史（历史里只有表达式）；`sync` 运行的那几秒它同样出现在 wraptool 的进程命令行里。要清除时执行 `wraptool remove-pswd --account <PACE 账号>`。
+   - 不想存进钥匙串：签名时加 `-Account <PACE 账号> -PromptAccountPassword`，脚本交互读入口令，经 `--pswd-no-save` 交给 wraptool，不保存。
+
+   不给 `-Account` 时，wraptool 用 iLok License Manager 的默认账号（实测 6.0.1）。
 
 ### 7.2 一次性准备（借用的 Mac）
 
 - 在一个独立的 macOS 用户下操作（不要用机主自己的用户），签完按本节最后一条清理。
-- 安装 PACE 工具（Eden / `wraptool`，默认路径 TO-VALIDATE，可用 `--wraptool` 指定）与 iLok License Manager。
+- 安装 PACE 的 AAX 代码签名工具（含 `wraptool`）与 iLok License Manager。`sign-aax-macos.sh` 依次找 `--wraptool`、`$PACE_FUSION_HOME/bin/wraptool`、PATH、`/Applications/PACEAntiPiracy/Eden/Fusion/Versions/<版本号最高的>/bin/wraptool`（照 Windows 实测的布局推断，TO-VALIDATE）。装完新开一个终端。
 - 准备 Keychain 代码签名身份，二选一：Xcode → Settings → Accounts 登录 Apple ID 后创建 **Apple Development** 证书；或「钥匙串访问 → 证书助理 → 创建证书」生成自签名的代码签名证书。
 - 用 `security find-identity -p codesigning` 确认身份的完整名字，签名时原样传给 `--signid`。不加 `-v`：自签名身份未被信任时不会出现在 `-v` 列表里（TO-VALIDATE）。
 - 第一次签名可能弹出钥匙串授权框，需要人工点「允许」。
 - macOS 版**未经 Apple 公证**（没有 Developer Program 会员）：用户必须按 `INSTALL-AAX.txt` 去掉隔离属性 Pro Tools 才会加载；去掉隔离属性不影响签名。
-- 签名期间不要让他人登录这台 Mac：加 `--prompt-account-password` 时，PACE 账号口令在签名那几秒会以 `--password <明文>` 出现在 wraptool 的进程命令行里，本机其他用户用 `ps` 就能看到（wraptool 只收命令行参数）。
+- PACE 账号口令：借用的 Mac 上不要用 `sync --password` 把口令存进 wraptool 的钥匙串，签名时加 `--account "<PACE 账号>" --prompt-account-password`，口令交互读入、经 `--pswd-no-save` 传，不保存（TO-VALIDATE）。签名期间不要让他人登录这台 Mac：口令在签名那几秒会以 `--pswd-no-save <明文>` 出现在 wraptool 的进程命令行里，本机其他用户用 `ps` 就能看到（wraptool 只收命令行参数）。
 - `gh`（§7.3 第 2、4、5 步会用到）在这台 Mac 上**不要 `gh auth login`**：改用只授权本仓库、短有效期的 fine-grained PAT（Actions: read；要在 Mac 上上传再加 Contents: read and write），只经当次 shell 的 `GH_TOKEN` 环境变量传入（`read -rs GH_TOKEN && export GH_TOKEN`，不进历史、不落盘），用完到 GitHub 上吊销。
 - **签完必须清理，不在别人的机器上留下任何凭据。** 首选直接删除这个独立的 macOS 用户（系统设置 → 用户与群组 → 删除该用户，选「删除个人文件夹」）。不删用户时，下面各项逐一做完：
   1. **GitHub 令牌**：`gh auth logout --hostname github.com`，再用 `gh auth status` 确认已无登录（登录时用过 `--insecure-storage` 的，再删 `~/.config/gh/hosts.yml`）；用的是 `GH_TOKEN` 的，到 GitHub 上吊销该 PAT。
   2. **Apple ID**：Xcode → Settings → Accounts 移除 Apple ID。
   3. **签名证书**：在「钥匙串访问」里删除代码签名证书**及其私钥**（Xcode 创建的 Apple Development 证书与自签名证书都在登录钥匙串里）。
-  4. **iLok / PACE**：退出 iLok License Manager 与 PACE 登录。
-  5. **shell 历史**：签名命令里的 `--account` / `--wcguid` 是明文，zsh 会把它们写进 `~/.zsh_history` 与 `~/.zsh_sessions/`，删掉这两处（`rm -f ~/.zsh_history; rm -rf ~/.zsh_sessions`）。也可以签名前先执行 `setopt HIST_IGNORE_SPACE`，再在签名命令前加一个空格，让它不进历史。
+  4. **iLok / PACE**：退出 iLok License Manager 与 PACE 登录；万一把账号口令存进过 wraptool 的钥匙串，用 `wraptool remove-pswd --account <PACE 账号>` 清掉。
+  5. **shell 历史**：签名命令里的 `--account` / `--wcguid` / `--customer-number` 是明文，zsh 会把它们写进 `~/.zsh_history` 与 `~/.zsh_sessions/`，删掉这两处（`rm -f ~/.zsh_history; rm -rf ~/.zsh_sessions`）。也可以签名前先执行 `setopt HIST_IGNORE_SPACE`，再在签名命令前加一个空格，让它不进历史。
 
 ### 7.3 每次发版
 
@@ -248,23 +264,29 @@ git tag v1.5.0 && git push origin v1.5.0
    ```powershell
    pwsh scripts/sign-aax.ps1 -UnsignedZip "$env:TEMP\aax-v<X.Y.Z>\SynchainBridge-AAX-v<X.Y.Z>-win64-UNSIGNED.zip" `
      -SourceRunId <run-id> `
-     -Account <PACE 账号> -WcGuid <wcguid> `
-     -KeyFile "$env:USERPROFILE\.synchain-signing\synchain-aax-codesign.pfx"
+     -CertThumbprint <证书 SHA1 指纹> -WcGuid <wcguid>
    ```
 
    ```bash
    bash scripts/sign-aax-macos.sh --unsigned-zip "<下载目录>/SynchainBridge-AAX-v<X.Y.Z>-macos-arm64-UNSIGNED.zip" \
      --source-run-id <run-id> \
-     --account "<PACE 账号>" --wcguid "<wcguid>" --signid "<Keychain 身份名>"
+     --signid "<Keychain 身份名>" --wcguid "<wcguid>"
    ```
 
-   **口令**：证书口令（以及可选的 PACE 账号口令）交互读取，不进签名脚本的参数、脚本日志、transcript 与 shell 历史。但 wraptool 只接受命令行参数（TO-VALIDATE：是否有 stdin / 环境变量通道），签名的那几秒里口令会以 `--keypassword <明文>`（加 `-PromptAccountPassword` / `--prompt-account-password` 时还有 `--password <明文>`）出现在 wraptool 的进程命令行中：本机进程列表短暂可见，开着进程命令行审计（Security 4688 勾选了「包含命令行」、Sysmon EID 1、Defender for Endpoint 等 EDR）时还会被记录下来。这是 wraptool 本身的限制。只在可信的单用户机器上签名，签名期间不要让他人登录本机；事后发现开着这类审计，就当口令已泄露，重新生成证书。
+   参数各有备选（每组只能选一种，脚本预检会拦下混用）：
+   - **签名身份**（Windows）：`-CertThumbprint` 换成 `-KeyFile "$env:USERPROFILE\.synchain-signing\synchain-aax-codesign.pfx"`，签名时交互读 pfx 口令。
+   - **发布者**：`-WcGuid` 换成 `-CustomerNumber <customer number> -CustomerName <公司名>`（`-ProductName` 默认 `Synchain Bridge`）；macOS 为 `--customer-number` / `--customer-name` / `--product-name`。
+   - **账号**：不给 `-Account` / `--account` 时 wraptool 用 iLok License Manager 的默认账号；账号口令没按 §7.1 第 5 步存进 wraptool 钥匙串时，加 `-Account <PACE 账号> -PromptAccountPassword`（macOS 为 `--account` + `--prompt-account-password`），口令经 `--pswd-no-save` 传、不保存。
+
+   **Windows 上 wraptool 签的是内层 DLL**：`.aaxplugin` 是个目录，Windows 版 wraptool 的 `--in` 只收文件（给目录会报 "A file must be specified ..."）。脚本先把整个 bundle 复制到临时工作目录的 `out\`，只对其中的 `Contents\x64\Synchain Bridge.aaxplugin`（主体 DLL）原地签名；后检要求 bundle 里除这个 DLL 之外的文件与输入件逐字节相同，也没有多出文件。
+
+   **口令**：`-CertThumbprint` 方式不读证书口令，wraptool 的命令行上也没有 `--keypassword`。`-KeyFile` 方式的 pfx 口令与 `-PromptAccountPassword` / `--prompt-account-password` 的账号口令交互读取，不进签名脚本的参数、脚本日志、transcript 与 shell 历史；但 wraptool 只接受命令行参数（6.0.1 的 help 里没有 stdin / 环境变量通道），签名的那几秒里它们会以 `--keypassword <明文>` / `--pswd-no-save <明文>` 出现在 wraptool 的进程命令行中：本机进程列表短暂可见，开着进程命令行审计（Security 4688 勾选了「包含命令行」、Sysmon EID 1、Defender for Endpoint 等 EDR）时还会被记录下来。这是 wraptool 本身的限制。只在可信的单用户机器上签名，签名期间不要让他人登录本机；事后发现开着这类审计，就当口令已泄露：pfx 口令泄露就重新生成证书，账号口令泄露就改 PACE 账号口令。
 
    `<run-id>` 就是第 2 步查到并下载过的那个 release run（需要 `gh` 已登录；借用的 Mac 上按 §7.2 用短有效期的 `GH_TOKEN`）。给了它，签名脚本会做**来源核对**：该 run 属于本仓库（不是 fork）、是 `release.yml`（或 `ci.yml`）、结论为 success、事件为 push / workflow_dispatch（tag 触发的 release run 是 push）、`head_sha` 等于当前检出（即 tag 所指的提交），再用 `gh run download` 重新取回它的 `aax-unsigned-*` artifact，同名 zip 必须与输入件字节相同 —— 由此确认被盖上签名的字节确实出自这次 tag 的 CI 构建。`.sha256` 只防下载损坏（它与 zip 是同一份下载，防不了替换）。不给 `-SourceRunId` / `--source-run-id` 时这一项只记 WARN、不拦截；只在没有 run 可核对时这样用（§7.4 的本机重建件）。
 
-   脚本依次做：预检（`.sha256` 完整性、版本与检出一致、来源核对、wraptool 存在且 `help sign` 列出所需 flag、输入件确实未签名且 `wraptool verify` 必须失败；macOS 另要求钥匙串里与 `--signid` 同名的代码签名身份恰好 1 个）→ 交互读入 pfx 口令（Windows）→ `wraptool sign` → 后检（`wraptool verify`；Windows 比对 Authenticode 签名者指纹与 pfx 指纹、默认要求带时间戳，macOS 跑 `codesign --verify --deep --strict` 并核对 `Authority=` 等于 `--signid`、不是 ad-hoc）→ 调用打包脚本的 Signed 模式 → 把产出的 zip 解压回读再验一轮 → 打印第 5 步的上传命令（不自动执行）。产物在 `dist/aax-signed/`（`-OutDir` / `--out-dir` 可改）：`SynchainBridge-AAX-v<X.Y.Z>-win64.zip`（macOS 为 `-macos-arm64.zip`）与同名 `.sha256`。
+   脚本依次做：预检（参数组合、`.sha256` 完整性、版本与检出一致、来源核对、签名身份可用（Windows `-CertThumbprint` 的证书在「个人」证书库里、带私钥、未过期、用途含代码签名；`-KeyFile` 在仓库外；macOS 要求钥匙串里与 `--signid` 同名的代码签名身份恰好 1 个）、补齐 `PACE_FUSION_HOME`、wraptool 存在且 `wraptool help` 列出本次要用的 flag、输入件确实未签名且 `wraptool verify` 必须失败（Windows 对内层 DLL 执行，要求输出 NOT signed））→ 交互读入口令（只在 `-KeyFile` / `-PromptAccountPassword` 时）→ `wraptool sign` → 后检（`wraptool verify`；Windows 核对 bundle 只有内层 DLL 变了、Authenticode 签名者指纹等于 `-CertThumbprint` / pfx 指纹、默认要求带时间戳，macOS 跑 `codesign --verify --deep --strict` 并核对 `Authority=` 等于 `--signid`、不是 ad-hoc）→ 调用打包脚本的 Signed 模式 → 把产出的 zip 解压回读再验一轮 → 打印第 5 步的上传命令（不自动执行）。产物在 `dist/aax-signed/`（`-OutDir` / `--out-dir` 可改）：`SynchainBridge-AAX-v<X.Y.Z>-win64.zip`（macOS 为 `-macos-arm64.zip`）与同名 `.sha256`。
 
-   其他开关：`-DryRun` / `--dry-run` 只跑预检并打印打码后的签名计划（不读口令、不调用 `wraptool sign`、不产出文件）；`-WraptoolPath` / `--wraptool` 显式指定 wraptool；`-ExtraWraptoolArgs` / `--extra-arg`（可重复）原样透传给 `wraptool sign`（含 `password` 的项与脚本自管的 flag 会被拒收，TO-VALIDATE）；PACE 账号需要口令时加 `-PromptAccountPassword` / `--prompt-account-password`（交互读入，TO-VALIDATE）；Windows 确认接受无时间戳的签名时加 `-AllowNoTimestamp`（见 §7.4）。
+   其他开关：`-DryRun` / `--dry-run` 只跑预检并打印打码后的签名计划（不读口令、不调用 `wraptool sign`、不产出文件）；`-WraptoolPath` / `--wraptool` 显式指定 wraptool；`-ExtraWraptoolArgs` / `--extra-arg`（可重复）原样透传给 `wraptool sign`，例如 `--timestampretry 120`（含 `password` / `pswd` 的项与脚本自管的 flag，长短写法都算，会被拒收）；Windows 确认接受无时间戳的签名时加 `-AllowNoTimestamp`（见 §7.4）。
 
 5. **上传到 draft**（签名脚本只打印这条命令，不自动执行）：
 
@@ -282,6 +304,7 @@ git tag v1.5.0 && git push origin v1.5.0
 
 - **本机签名失败不影响 draft**：修掉原因后从同一个 `-UNSIGNED.zip` 重跑即可。签名脚本每次都解压到一个新的临时工作目录，从不修改输入件；失败时保留工作目录并打印路径（里面只有 bundle，没有秘密），排查完直接删掉。
 - **签名脚本失败时 `dist/aax-signed/` 里不会留下本次的发行名 zip**：打包之后的回读复验没通过，脚本会删掉刚产出的 zip 与 `.sha256`（`package-summary.md` 里本次追加的段落会留下，只是记录）。看到 FAIL 就不要去找文件上传。
-- **签名必须是对 bundle 的最后一次修改**：签完之后再改 bundle 里的任何文件都会让签名失效，所以也**不要事后用 signtool 补时间戳**。Windows 签名件没带时间戳时 `sign-aax.ps1` 默认判失败；确认接受无时间戳的签名，再显式加 `-AllowNoTimestamp` 从原始 `-UNSIGNED.zip` 重跑（TO-VALIDATE：wraptool 能否带时间戳）。
+- **签名必须是对 bundle 的最后一次修改**：签完之后再改 bundle 里的任何文件都会让签名失效，所以也**不要事后用 signtool 补时间戳**。Windows 签名件没带时间戳时 `sign-aax.ps1` 默认判失败；确认接受无时间戳的签名，再显式加 `-AllowNoTimestamp` 从原始 `-UNSIGNED.zip` 重跑。wraptool 默认就加时间戳（6.0.1 help：时间戳服务器不可用时每 10 秒重试一次，最多 600 秒，可用 `--timestampretry` / `--timestampretrysleep` 调整）；签名件是否确实带上，待首次真签名验证（TO-VALIDATE）。
+- **wraptool 报 "The PACE_FUSION_HOME environment variable is not defined"**：终端是装签名工具之前开的。签名脚本会自己补上这个变量；手动跑 wraptool 时新开一个终端，新终端里仍没有就重装签名工具。
 - **正式发布之后也能补传 AAX**：同样用第 5 步的 `gh release upload`，并在 Release notes 里注明补发。
 - **artifact 30 天后过期**：只能在第 3 步的 tag 检出里本机重新构建（[build-windows.md](build-windows.md) / [build-macos.md](build-macos.md)），用 §4 的 AAX 打包命令以 Unsigned 模式（`-Version <X.Y.Z>`，源码链接默认指向 `v<X.Y.Z>`）重新打出 `-UNSIGNED.zip`，再从第 4 步继续 —— 这时没有 CI run 可核对，签名命令不带 `-SourceRunId` / `--source-run-id`（来源核对记 WARN）。本机工具链与 CI 不同，须在 Release notes 里注明。**不要用 Re-run 重跑这次 tag 的 release run 来续 artifact**：GitHub 只允许在原 run 发起后 30 天内重跑（与 artifact 保留期一样长，过期时已经不能重跑）；而且重跑任何构建 job 都会连带重跑依赖它的 `publish`。`softprops/action-gh-release`（v2.6.2）找到同 tag 的现有 Release 时走更新路径：不会把已发布的 Release 改回 draft，但 `overwrite_files` 默认为 true，会删掉并重传四个同名 VST3 / AU 资产 —— 重新构建出的 zip 字节通常不同，用户手里文件的 sha256 就对不上了。

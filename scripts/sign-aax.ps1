@@ -4,8 +4,21 @@
   只由维护者在本机手工执行;CI 不调用、流水线不持有任何签名凭据(CLAUDE.md §0 铁律 1)。
   AAX 是本项目唯一签名的格式(零售版 Pro Tools 只加载 PACE 签名件),VST3 / AU 仍按 U13 不签名。
 
+  两组参数各二选一(互斥,预检 0 判定):
+    签名身份  -CertThumbprint <SHA1>(推荐)→ --signid:证书留在「个人」证书库(CurrentUser\My 或 LocalMachine\My),
+              不读证书口令,wraptool 的命令行上也没有 --keypassword
+              -KeyFile <pfx>(备选)→ --keyfile + --keypassword:pfx 口令交互读入
+    发布者    -WcGuid <GUID>(推荐)→ --wcguid:PACE Central 里为本产品建的 wrap 配置(要连 PACE 服务器,需账号口令,见下)
+              -CustomerNumber + -CustomerName [+ -ProductName,默认 'Synchain Bridge'](备选)
+              → --customernumber / --customername / --productname
+  -Account 可选:不给就不传 --account,wraptool 用 iLok License Manager 的默认账号。PACE 账号口令两种给法:
+    ① 推荐:事先手动执行一次带 --password 的 `wraptool sync --account <PACE 账号>`,口令存进 wraptool 自己的钥匙串,之后签名
+       不用再给(`wraptool remove-pswd --account <PACE 账号>` 清除);
+    ② -PromptAccountPassword(须同时给 -Account):交互读入,经 --pswd-no-save 传给 wraptool,不写进钥匙串。
+
   流程(任一步失败即 exit 1):
-    预检 0 参数:Windows;-WcGuid 是 GUID;-ExtraWraptoolArgs 不含口令、不覆盖本脚本管理的 flag
+    预检 0 参数:Windows;两组参数各恰好一种;-WcGuid 是 GUID;-CertThumbprint 是 40 位 hex(容忍空格 / 冒号 / 从证书管理器
+           复制带出的不可见方向符);-ExtraWraptoolArgs 不含口令、不覆盖本脚本管理的 flag(长短写法都算)
     预检 1 完整性:输入 zip 同目录的 .sha256 逐字节符合「64 位小写 hex + 两个空格 + zip 名 + LF」,且与实际哈希相等。
            只防损坏 / 下载不完整 —— .sha256 与 zip 是同一份下载,换得了 zip 就换得了 .sha256,防不了替换
     预检 2 从文件名解析版本:SynchainBridge-AAX-v<版本>-win64-UNSIGNED.zip
@@ -15,54 +28,85 @@
            (pull_request 构建的是合并提交,不认)、head_sha = HEAD;
            再用 gh run download 取回它的 aax-unsigned-* artifact,其中同名 zip 必须与输入 zip 字节相同。
            这是「哪些字节会被盖上签名」的信任根;不给 -SourceRunId 只记 WARN(本地自建件没有 run 可核对)
-    预检 4 KeyFile 存在,且解析后的完整路径不在仓库目录下(路径前缀 + git 公共目录两道判定,覆盖本仓库的其他 worktree)
-    预检 5 wraptool 可执行,`wraptool help sign` 列出所需 flag(TO-VALIDATE)
+    预检 4 签名身份:-CertThumbprint 的证书在 Cert:\CurrentUser\My 或 Cert:\LocalMachine\My 里(只读打开证书库)、带私钥、
+           在有效期内、EKU 含代码签名;-KeyFile 存在,且解析后的完整路径不在仓库目录下(路径前缀 + git 公共目录两道判定,
+           覆盖本仓库的其他 worktree)
+    预检 5 5a PACE_FUSION_HOME:进程环境里没有就从 Machine 级环境变量补上(装签名工具之前开的终端里没有它);两处都没有 FAIL
+           5b 定位 wraptool:-WraptoolPath → $env:PACE_FUSION_HOME\bin\wraptool.exe → PATH →
+              %ProgramFiles%\PACEAntiPiracy\Eden\Fusion\Versions\<版本号最高的>\bin\wraptool.exe → %ProgramFiles(x86)% 同一相对路径
+           5c `wraptool help` 的输出里有本次要用的全部 flag(按签名身份 / 发布者 / 账号方式决定),本脚本给它传值的
+              flag 在 help 里也标着带值(`--x ] arg` / `--x arg`):哪天某个 flag 变成开关,值会变成多余的位置参数
     预检 6 iLok 只提醒不硬检(wraptool 自己会报错)
-    预检 7 解压到全新临时目录:bundle 存在、DLL 为 NotSigned、`wraptool verify` 必须失败(已签过的件重签会报错)
-    签名   pfx 口令只经 Read-Host -AsSecureString 读入;BSTR → 明文只在调用瞬间存在,finally 里 ZeroFreeBSTR;
-           回显的命令里口令 / PACE 账号 / wcguid 一律打码为 ****
-    后检   wraptool verify 通过;Authenticode 签名者指纹 = pfx 指纹;默认要求带时间戳(-AllowNoTimestamp 显式放行);
-           调 package-aax.ps1 -Mode Signed 打包;再把产出的 zip 解压回读,复验 wraptool verify 与指纹;
-           最后只**打印** gh release upload 命令,不自动执行
+    预检 7 解压到全新临时目录:bundle 存在、内层 DLL 为 NotSigned、`wraptool verify --in <内层 DLL>` 必须失败且输出 NOT signed
+           (已签过的件重签会报错)
+    签名   整个 bundle 复制到 <work>\out 并核对与 <work>\in 逐文件相同,再对 out 里的内层 DLL 原地签名(不给 --out)。
+           Windows 上 wraptool 的 --in 必须是文件,签的就是 Contents\x64\Synchain Bridge.aaxplugin 这个 DLL;in 保持未签名原样,
+           后检拿它比对。选原地签名而不是 --in <in DLL> --out <out DLL>:help 写明「不给输出路径就原地签名」,而 --out 指向一个
+           已存在的文件时是否覆盖没有实测过;原地签名只依赖写明了的行为,失败时 in 与输入 zip 都没动过,从同一个 zip 重跑即可。
+           口令(-KeyFile 的 pfx 口令、-PromptAccountPassword 的账号口令)只经 Read-Host -AsSecureString 读入;BSTR → 明文只在
+           调用瞬间存在,finally 里 ZeroFreeBSTR;回显的命令里口令 / PACE 账号 / wcguid / customer number 一律打码为 ****
+    后检   wraptool verify --in <out DLL> 退出码 0;out 与 in 的文件清单相同、除 DLL 外逐字节相同(wraptool 只改了 DLL、没在
+           bundle 里留下多余文件);Authenticode 签名者指纹 = -CertThumbprint / pfx 指纹;默认要求带时间戳(-AllowNoTimestamp
+           显式放行);调 package-aax.ps1 -Mode Signed 打包;再把产出的 zip 解压回读,复验 bundle 与 out 逐文件相同、wraptool
+           verify 与指纹;最后只**打印** gh release upload 命令,不自动执行
   成功即删除临时工作目录;失败则保留并打印路径(里面只有 bundle,没有秘密)。
   打包之后的任何一步(回读复验等)失败,都删掉本次产出的发行名 zip 与 .sha256:失败路径上 OutDir 里不留可上传的发行名 zip
   (package-summary.md 里本次追加的段落会留下,只是记录,不是可上传的文件)。
 
   -DryRun:跑全部预检(第 7 步的解压也在临时目录里做,结束即删)并汇总 PASS / WARN / FAIL / SKIP,打印签名计划
-  (口令占位打码)与 package-aax.ps1 -DryRun 的输出;不读口令、不载入 pfx、不调用 wraptool sign、不产出任何文件。
-  KeyFile 不存在在 DryRun 下只记 WARN;KeyFile 位于仓库内则任何模式都 FAIL。
+  (口令占位打码)与 package-aax.ps1 -DryRun 的输出;不读口令、不载入 pfx、不复制 bundle、不调用 wraptool sign、不产出任何文件。
+  KeyFile 不存在在 DryRun 下只记 WARN;KeyFile 位于仓库内、-CertThumbprint 在证书库里找不到,任何模式都 FAIL。
 
-  TO-VALIDATE:所有 wraptool 子命令 / flag / 默认安装路径都来自公开资料,Eden 版本不同可能有差异;所有者拿到
-  PACE 工具后逐条核对(V1 子命令与 flag、V2 账号口令、V3 时间戳、V8 pfx 加密算法、V11 上传到 draft、
-  V12 默认安装路径),核对完删掉对应标记。
+  已在 wraptool 6.0.1 实测(2026-10-08):默认安装位置 %ProgramFiles%\PACEAntiPiracy\Eden\Fusion\Versions\6\bin\wraptool.exe,
+  安装器设 Machine 级 PACE_FUSION_HOME(没有它 wraptool 报 "The PACE_FUSION_HOME environment variable is not defined");
+  `wraptool help` 打印全部选项(`help sign` 在 v6 里不合法,exit 9);不给 --account 时用 iLok License Manager 的默认账号;
+  Windows 上 verify / sign 的 --in 必须是文件(给 bundle 目录报 "A file must be specified for the 'verify' operation on
+  Windows"),--out 可省(原地签名);未签名 DLL 的 verify 退出码 2、输出 "The architecture is NOT signed";--signid 收「个人」
+  证书库里证书的 SHA1 指纹;时间戳默认就加(--timestampretry 默认 600 秒、--timestampretrysleep 默认 10 秒);--password 存进
+  wraptool 钥匙串、--pswd-no-save 不存,两者都带口令值(help 里是 `-p [ --password ] arg` / `--pswd-no-save arg`);help 里没有经
+  stdin / 环境变量传口令的通道。
+  TO-VALIDATE(待首次真签名):真签名能否成功(--signid 指纹 / --keyfile 两种身份,--wcguid / --customernumber 两种发布者,
+  原地签名);自签名证书签的件零售版 Pro Tools 是否接受;--verbose 是否回显收到的参数;已签名件 verify 的退出码(本脚本按 0
+  判通过);签名件是否确实带时间戳(V3);-KeyFile 方式下 wraptool 能否读 AES256 加密的 pfx(V8)。另有 V11:gh release upload
+  能否直传 draft Release。
 
   禁止 Start-Transcript:本脚本不开 transcript,也不要在开着 transcript 的会话里运行(wraptool 的输出与本脚本的
-  日志都不该进任何落盘记录)。口令交互读取,不进本脚本的参数、日志与 shell 历史;但 wraptool 只收命令行参数(TO-VALIDATE
-  是否有 stdin / 环境变量通道),签名期间口令会以 --keypassword <明文>(加 -PromptAccountPassword 时还有 --password)出现在
-  wraptool 的进程命令行里:本机进程列表短暂可见,开着进程命令行审计(Security 4688 含命令行 / Sysmon / EDR)时会被记录。
-  只在可信的单用户机器上执行,签名期间不要让他人登录本机。wraptool --verbose 是否回显收到的参数未知(TO-VALIDATE V1):
-  它的输出逐行把口令(含它在命令行里的转义形态)/ PACE 账号 / wcguid 字面替换成 **** 后再显示。
+  日志都不该进任何落盘记录)。口令交互读取,不进本脚本的参数、日志与 shell 历史。-CertThumbprint 方式下 wraptool 的命令行上
+  没有证书口令;-KeyFile 方式的 pfx 口令与 -PromptAccountPassword 的账号口令只能经命令行参数交给 wraptool(--keypassword /
+  --pswd-no-save):签名那几秒本机进程列表可见,开着进程命令行审计(Security 4688 含命令行 / Sysmon / EDR)时会被记录。
+  只在可信的单用户机器上执行,签名期间不要让他人登录本机。wraptool 的输出逐行把口令(含它在命令行里的转义形态)/ PACE 账号 /
+  wcguid / customer number 字面替换成 **** 后再显示,不给 -Account 时它打印的默认账号名同样打码。
 
   原生命令传参:$PSNativeCommandArgumentPassing 从 7.3 起才是正式特性(故 #Requires 7.3);Invoke-Wraptool 在函数作用域内
   显式设为 Standard,含双引号 / 空格的口令按 Windows 规则转义后原样交给 wraptool(7.2 的 Legacy 模式会把含 " 的口令
   拆错、把后面的参数吞掉)。git / gh 的输出按 UTF-8 解码(中文 Windows 默认 CP936,按它解码会把 JSON 拼坏)。
+  本脚本给进程补上的 PACE_FUSION_HOME 在退出时撤掉,不改调用方会话的环境(新开的终端本来就有)。
 .EXAMPLE
   gh run download <run ID> -R synchain-oss/synchain-bridge -n aax-unsigned-win64 -D <下载目录>
   pwsh scripts/sign-aax.ps1 -UnsignedZip <下载目录>\SynchainBridge-AAX-v1.6.0-win64-UNSIGNED.zip -SourceRunId <run ID> `
-       -Account <PACE 账号> -WcGuid <wrap 配置 GUID> -KeyFile $env:USERPROFILE\.synchain-signing\synchain-aax-codesign.pfx -DryRun
+       -CertThumbprint <证书 SHA1 指纹> -WcGuid <wrap 配置 GUID> -DryRun
+.EXAMPLE
+  备选组合:pfx + customer number,账号口令交互读入、不存钥匙串
+  pwsh scripts/sign-aax.ps1 -UnsignedZip <下载目录>\SynchainBridge-AAX-v1.6.0-win64-UNSIGNED.zip -SourceRunId <run ID> `
+       -KeyFile $env:USERPROFILE\.synchain-signing\synchain-aax-codesign.pfx `
+       -CustomerNumber <PACE customer number> -CustomerName <公司名> -Account <PACE 账号> -PromptAccountPassword -DryRun
 #>
 #Requires -Version 7.3
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)][string]$UnsignedZip,   # SynchainBridge-AAX-v<版本>-win64-UNSIGNED.zip,同目录须有 .sha256
-    [Parameter(Mandatory)][string]$Account,       # PACE 账号(日志里打码)
-    [Parameter(Mandatory)][string]$WcGuid,        # PACE wrap 配置 GUID(日志里打码)
-    [Parameter(Mandatory)][string]$KeyFile,       # 代码签名证书 .pfx,必须在仓库外
+    [string]$CertThumbprint = '',                 # 签名身份(推荐):「个人」证书库里代码签名证书的 SHA1 指纹 → --signid
+    [string]$KeyFile = '',                        # 签名身份(备选):代码签名证书 .pfx,必须在仓库外 → --keyfile + --keypassword
+    [string]$WcGuid = '',                         # 发布者(推荐):PACE wrap 配置 GUID → --wcguid(日志里打码)
+    [string]$CustomerNumber = '',                 # 发布者(备选):PACE customer number → --customernumber(日志里打码)
+    [string]$CustomerName = '',                   # 与 -CustomerNumber 同用:公司名 → --customername
+    [string]$ProductName = 'Synchain Bridge',     # 与 -CustomerNumber 同用 → --productname
+    [string]$Account = '',                        # 可选:PACE 账号 → --account(日志里打码);不给则用 iLok License Manager 的默认账号
     [string]$OutDir = 'dist/aax-signed',          # 相对路径按仓库根解析;dist/ 已被 .gitignore 覆盖
-    [string]$WraptoolPath = '',                   # 默认先找 PATH,再找 Eden 默认安装路径(TO-VALIDATE)
-    [string[]]$ExtraWraptoolArgs = @(),           # 原样透传给 wraptool sign,例如 '--dsig1-compat','off'(TO-VALIDATE)
+    [string]$WraptoolPath = '',                   # 不给就按预检 5b 的顺序找
+    [string[]]$ExtraWraptoolArgs = @(),           # 原样透传给 wraptool sign,例如 '--timestampretry','120'
     [string]$SourceRunId = '',                    # 产出该 zip 的 CI / release run 的 ID:给了就核对来源(预检 3b),不给只记 WARN
-    [switch]$PromptAccountPassword,               # 交互读入 PACE 账号口令并传 --password(V2:是否需要,TO-VALIDATE)
+    [switch]$PromptAccountPassword,               # 交互读入 PACE 账号口令,经 --pswd-no-save 传(不写进钥匙串);须同时给 -Account
     [switch]$AllowNoTimestamp,                    # 放行不带时间戳的 Authenticode 签名(V3)
     [switch]$DryRun
 )
@@ -73,19 +117,20 @@ $ErrorActionPreference = 'Stop'
 $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 
 $BundleName = 'Synchain Bridge.aaxplugin'
-$DllRel     = 'Contents\x64\Synchain Bridge.aaxplugin'   # 主体 DLL:一个文件,后缀也是 .aaxplugin
+$DllRel     = 'Contents\x64\Synchain Bridge.aaxplugin'   # 主体 DLL:一个文件,后缀也是 .aaxplugin;Windows 上 wraptool 签的就是它
 $UploadRepo = 'synchain-oss/synchain-bridge'
 
-# wraptool 默认安装路径(TO-VALIDATE V12:Eden 版本号目录 Versions\5 与 Fusion 子目录以实际安装为准)。
-# 走环境变量而不是写字面盘符:系统盘不是 C: 时同样成立。
-$WraptoolDefault = if (${env:ProgramFiles(x86)}) {
-    Join-Path ${env:ProgramFiles(x86)} 'PACEAntiPiracy\Eden\Fusion\Versions\5\wraptool.exe'   # TO-VALIDATE(V12)
-} else { '' }
+# wraptool 的安装布局(实测 6.0.1,2026-10-08):%ProgramFiles%\PACEAntiPiracy\Eden\Fusion\Versions\6\bin\wraptool.exe,
+# Machine 级 PACE_FUSION_HOME = ...\Versions\6\。版本目录名按版本号比较,取最高的
+$FusionVersionsRel = 'PACEAntiPiracy\Eden\Fusion\Versions'
+$WraptoolRel       = 'bin\wraptool.exe'
 
-# wraptool sign 必须支持的 flag(TO-VALIDATE V1:来自公开资料;核对 `wraptool help sign` 的真实输出后再删标记)
-$RequiredSignFlags = @('--account', '--wcguid', '--keyfile', '--keypassword', '--in', '--out')   # TO-VALIDATE(V1)
-# 本脚本自己管理的 flag:-ExtraWraptoolArgs 不得重复给出(否则同一 flag 出现两次,以哪个为准取决于 wraptool 实现)
-$ManagedFlagRe = '^--(account|wcguid|keyfile|keypassword|password|in|out)(=|$)'
+# 本脚本自己管理的 flag:-ExtraWraptoolArgs 不得重复给出(否则同一 flag 出现两次,以哪个为准取决于 wraptool 实现)。
+# 长写法不区分大小写;短写法照 wraptool 6.0.1 `help` 的别名表,区分大小写(-p 是 --password、-P 是 --keypassword、
+# -i 是 --in、-I 是 --signid),且 boost 风格允许值紧贴短 flag(-pXXX),所以按前缀拦
+$ManagedFlagRe      = '^--(account|password|pswd-no-save|wcguid|wcfile|customernumber|customername|productname|signid|keyfile|keypassword|in|out)(=|$)'
+$ManagedShortFlagRe = '^-[apPGWCNUIkio]'
+$CodeSigningEku     = '1.3.6.1.5.5.7.3.3'
 
 function Resolve-RepoPath([string]$p) {
     if ($p -match '^([a-zA-Z]:[\\/]|\\\\|/)') { return $p }
@@ -154,27 +199,31 @@ function Get-RedactTokens([string[]]$Values) {
     return @($set | Sort-Object -Property Length -Descending)
 }
 
-# -Redact:回显 wraptool 输出前逐行把这些值(及其转义形态 / 片段,见 Get-RedactTokens)字面替换成 ****
-# (TO-VALIDATE V1:--verbose 是否回显收到的参数未知,先按会回显处理)
+# 一行 wraptool 输出的打码:String.Replace 是字面子串替换,不经正则 —— 账号很短或是常见词时会连带替换无关文字,只影响可读性。
+# 不给 --account 时 wraptool 会打印它用的默认账号(实测 6.0.1:"Using the default iLok License Manager account for this
+# operation: <账号>"),脚本不知道账号名,按这句文案把冒号后面的值打码
+function Hide-Secrets([string]$Line, [string[]]$Tokens) {
+    foreach ($s in $Tokens) { $Line = $Line.Replace($s, '****') }
+    # 冒号后整行都遮掉:账号名带空格 / 引号,或者文案改成 "...: <账号> (xxx)" 时也不漏
+    return [regex]::Replace($Line, '(?i)(account for this operation:\s*).+$', '${1}****')
+}
+
+# -Redact:wraptool 的输出逐行把这些值(及其转义形态 / 片段,见 Get-RedactTokens)字面替换成 **** 后再显示 / 返回
+# (TO-VALIDATE,待首次真签名:--verbose 是否回显收到的参数,先按会回显处理)。-Capture 只收集不显示
 function Invoke-Wraptool([string[]]$Arguments, [string[]]$Display = $null, [switch]$Capture, [string[]]$Redact = @()) {
     if ($null -eq $Display) { $Display = $Arguments }
     Write-Host ("> wraptool " + (Format-CommandLine $Display))
     $ErrorActionPreference = 'Continue'
     # 只在本函数作用域内生效:不论调用方 / profile 怎么设,传给 wraptool.exe 的参数都按 Standard 规则转义
-    # (含 " 与空格的口令原样到达 wraptool,后面的 --in / --out 不会错位)。需要 7.3+(见 #Requires)
+    # (含 " 与空格的口令原样到达 wraptool,后面的参数不会错位)。需要 7.3+(见 #Requires)
     $PSNativeCommandArgumentPassing = 'Standard'
-    if ($Capture) {
-        $text = (& $script:Wraptool @Arguments 2>&1 | ForEach-Object { "$_" }) -join "`n"
-        return [pscustomobject]@{ ExitCode = $LASTEXITCODE; Output = $text }
-    }
-    $secrets = Get-RedactTokens $Redact
+    $tokens = Get-RedactTokens $Redact
+    $lines = [System.Collections.Generic.List[string]]::new()
     & $script:Wraptool @Arguments 2>&1 | ForEach-Object {
-        $line = "$_"
-        # String.Replace:字面子串替换,不经正则。账号很短或是常见词时会连带替换无关文字,只影响可读性(TO-VALIDATE V1 时顺带看)
-        foreach ($s in $secrets) { $line = $line.Replace($s, '****') }
-        Write-Host "  $line"
+        $line = Hide-Secrets "$_" $tokens
+        if ($Capture) { $lines.Add($line) } else { Write-Host "  $line" }
     }
-    return [pscustomobject]@{ ExitCode = $LASTEXITCODE; Output = '' }
+    return [pscustomobject]@{ ExitCode = $LASTEXITCODE; Output = ($lines -join "`n") }
 }
 
 function Invoke-Gh([string[]]$GhArgs) {
@@ -223,7 +272,87 @@ function Test-InsideRepo([string]$FullPath) {
     return [bool]($common -and $common.Equals($repoCommon, $cmp))
 }
 
+function Get-EkuOids([System.Security.Cryptography.X509Certificates.X509Certificate2]$Cert) {
+    return @($Cert.Extensions | Where-Object { $_ -is [System.Security.Cryptography.X509Certificates.X509EnhancedKeyUsageExtension] } |
+        ForEach-Object { $_.EnhancedKeyUsages } | ForEach-Object { $_.Value })
+}
+
+# <Root>\PACEAntiPiracy\Eden\Fusion\Versions\<版本>\bin\wraptool.exe 里版本号最高的一个;目录名不是版本号的跳过
+function Find-WraptoolUnder([string]$Root) {
+    if (-not $Root) { return $null }
+    $vdir = Join-Path $Root $FusionVersionsRel
+    if (-not (Test-Path -LiteralPath $vdir -PathType Container)) { return $null }
+    $best = Get-ChildItem -LiteralPath $vdir -Directory -ErrorAction SilentlyContinue | ForEach-Object {
+        $v = $null
+        $n = if ($_.Name -match '^[0-9]+$') { "$($_.Name).0" } else { $_.Name }   # [version] 至少要 major.minor
+        $exe = Join-Path $_.FullName $WraptoolRel
+        if ([version]::TryParse($n, [ref]$v) -and (Test-Path -LiteralPath $exe -PathType Leaf)) {
+            [pscustomobject]@{ Version = $v; Path = $exe }
+        }
+    } | Sort-Object -Property Version -Descending | Select-Object -First 1
+    if ($best) { return $best.Path }
+    return $null
+}
+
+# bundle 内的相对文件清单(含隐藏 / 系统文件:desktop.ini 可能带 System 属性)
+function Get-BundleFiles([string]$Bundle) {
+    return @(Get-ChildItem -LiteralPath $Bundle -Recurse -File -Force |
+        ForEach-Object { [System.IO.Path]::GetRelativePath($Bundle, $_.FullName) } | Sort-Object)
+}
+
+# 两个 bundle 的文件清单必须相同,且逐文件字节相同;-AllowDllChange 时只有内层 DLL 可以不同(签名改的就是它)
+function Assert-SameBundle([string]$Ref, [string]$Bundle, [string]$Label, [switch]$AllowDllChange) {
+    $a = Get-BundleFiles $Ref
+    $b = Get-BundleFiles $Bundle
+    $extra = @($b | Where-Object { $a -notcontains $_ })
+    $gone  = @($a | Where-Object { $b -notcontains $_ })
+    if ($extra.Count -or $gone.Count) {
+        throw "${Label}:bundle 的文件清单变了(多出:$(if ($extra.Count) { $extra -join ', ' } else { '无' });缺少:$(if ($gone.Count) { $gone -join ', ' } else { '无' }))"
+    }
+    foreach ($rel in $a) {
+        if ($AllowDllChange -and $rel -eq $DllRel) { continue }
+        $h1 = (Get-FileHash -LiteralPath (Join-Path $Ref $rel) -Algorithm SHA256).Hash
+        $h2 = (Get-FileHash -LiteralPath (Join-Path $Bundle $rel) -Algorithm SHA256).Hash
+        if ($h1 -ne $h2) { throw "${Label}:$rel 与对照件字节不同" }
+    }
+}
+
+# 本次要用的 wraptool flag(预检 5c 在 `wraptool help` 的输出里逐个找)
+function Get-RequiredFlags {
+    $f = @('--verbose', '--in')
+    if ($CertThumbprint) { $f += '--signid' } else { $f += @('--keyfile', '--keypassword') }
+    if ($WcGuid) { $f += '--wcguid' } else { $f += @('--customernumber', '--customername', '--productname') }
+    if ($Account) { $f += '--account' }
+    if ($PromptAccountPassword) { $f += '--pswd-no-save' }
+    return $f
+}
+
+# wraptool sign 的参数表。-Masked 给回显用(口令 / 账号 / wcguid / customer number 换成 ****);真实参数只在签名那一步临时拼出。
+# 不给 --out:对 --in 指向的 DLL 原地签名(理由见文件头「签名」一段)
+function Get-SignArgs([string]$Dll, [string]$KeyPw = '', [string]$AccountPw = '', [switch]$Masked) {
+    $a = @('sign', '--verbose')   # TO-VALIDATE(待首次真签名):--verbose 是否回显收到的参数
+    if ($Account) { $a += @('--account', $(if ($Masked) { '****' } else { $Account })) }
+    if ($CertThumbprint) {
+        $a += @('--signid', $certThumb)   # 指纹是证书的公开属性,不打码
+    } else {
+        $a += @('--keyfile', $(if ($keyFull) { $keyFull } else { '<KeyFile>' }), '--keypassword', $(if ($Masked) { '****' } else { $KeyPw }))
+    }
+    if ($WcGuid) {
+        $a += @('--wcguid', $(if ($Masked) { '****' } else { $WcGuid }))
+    } else {
+        $a += @('--customernumber', $(if ($Masked) { '****' } else { $CustomerNumber }), '--customername', $CustomerName, '--productname', $ProductName)
+    }
+    if ($PromptAccountPassword) { $a += @('--pswd-no-save', $(if ($Masked) { '****' } else { $AccountPw })) }
+    $a += @('--in', $Dll)
+    return @($a + $ExtraWraptoolArgs)
+}
+
 $script:Wraptool = $null
+$certThumb   = ($CertThumbprint -replace '[\s:\u200E\u200F]', '').ToUpperInvariant()   # 证书管理器里复制的指纹常带空格与不可见方向符
+$certWhere   = $null   # -CertThumbprint 找到的证书库位置(回显用)
+$expectThumb = $null   # 后检要求的 Authenticode 签名者指纹:-CertThumbprint 方式在预检 4 定,-KeyFile 方式在签名前载入 pfx 时定
+$keyFull     = $null
+$fusionAdded = $false  # 本脚本给进程补上了 PACE_FUSION_HOME:退出时撤掉
 $work      = $null
 $succeeded = $false
 $packaged  = $false   # 本次运行已产出发行名 zip:之后任何一步失败都要删掉它(见 finally)
@@ -236,16 +365,46 @@ try {
     # ---------------------------------------------------------------- 预检 0:参数
     try {
         if (-not $IsWindows) { throw '只支持 Windows(Authenticode 断言依赖 Get-AuthenticodeSignature);macOS 用 scripts/sign-aax-macos.sh' }
-        if ($WcGuid -cnotmatch '^[0-9A-Fa-f]{8}(-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}$') {
+        foreach ($n in 'CertThumbprint', 'KeyFile', 'WcGuid', 'CustomerNumber', 'CustomerName', 'ProductName', 'Account', 'WraptoolPath') {
+            if ($PSBoundParameters.ContainsKey($n) -and -not ([string]$PSBoundParameters[$n]).Trim()) { throw "-$n 传入了空串" }
+        }
+        if ($CertThumbprint -and $KeyFile) { throw '-CertThumbprint 与 -KeyFile 互斥:签名身份只能选一种' }
+        if (-not $CertThumbprint -and -not $KeyFile) {
+            throw '缺签名身份:给 -CertThumbprint <SHA1 指纹>(推荐,证书在「个人」证书库)或 -KeyFile <pfx>(备选)'
+        }
+        if ($WcGuid -and $CustomerNumber) { throw '-WcGuid 与 -CustomerNumber 互斥:发布者信息只能选一种' }
+        if (-not $WcGuid -and -not $CustomerNumber) {
+            throw '缺发布者信息:给 -WcGuid <wrap 配置 GUID>(推荐),或 -CustomerNumber 加 -CustomerName(备选)'
+        }
+        if ($CustomerNumber -and -not $CustomerName) { throw '-CustomerNumber 须同时给 -CustomerName(公司名)' }
+        if (-not $CustomerNumber -and ($PSBoundParameters.ContainsKey('CustomerName') -or $PSBoundParameters.ContainsKey('ProductName'))) {
+            throw '-CustomerName / -ProductName 只与 -CustomerNumber 同用(-WcGuid 方式下发布者与产品信息来自 wrap 配置)'
+        }
+        if ($WcGuid -and $WcGuid -cnotmatch '^[0-9A-Fa-f]{8}(-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}$') {
             throw '-WcGuid 不是 GUID(期望 xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx,不带花括号)'
         }
-        if (-not $Account.Trim()) { throw '-Account 为空' }
+        if ($CertThumbprint -and $certThumb -cnotmatch '^[0-9A-F]{40}$') {
+            throw '-CertThumbprint 不是 40 位十六进制的 SHA1 指纹(证书「详细信息 → 指纹」,或 Get-ChildItem Cert:\CurrentUser\My 的 Thumbprint 列)'
+        }
+        if ($CustomerNumber -and ($CustomerNumber -match '\s' -or $CustomerNumber.StartsWith('-'))) {
+            throw '-CustomerNumber 不得含空白、不得以 - 开头'
+        }
+        # 以 - 开头的值会被 wraptool(boost 风格)当成短 flag
+        if ($CustomerNumber -and $CustomerName.StartsWith('-')) { throw '-CustomerName 不得以 - 开头' }
+        if ($CustomerNumber -and $ProductName.StartsWith('-')) { throw '-ProductName 不得以 - 开头' }
+        if ($PromptAccountPassword -and -not $Account) {
+            throw '-PromptAccountPassword 须同时给 -Account:读入的口令属于哪个 PACE 账号要明确'
+        }
         foreach ($a in $ExtraWraptoolArgs) {
-            if ($a -like '*password*') { throw "-ExtraWraptoolArgs 不得含口令类参数('$a'):口令只经交互读入,不进参数" }
-            if ($a -match $ManagedFlagRe) { throw "-ExtraWraptoolArgs 不得重复本脚本管理的 flag('$a')" }
+            if ($a -like '*password*' -or $a -like '*pswd*') { throw "-ExtraWraptoolArgs 不得含口令类参数('$a'):口令只经交互读入,不进参数" }
+            if ($a -match $ManagedFlagRe -or $a -cmatch $ManagedShortFlagRe) { throw "-ExtraWraptoolArgs 不得重复本脚本管理的 flag('$a')" }
         }
         if ($SourceRunId -and $SourceRunId -cnotmatch '^[0-9]+$') { throw "-SourceRunId 应为纯数字的 workflow run ID:'$SourceRunId'" }
-        Add-Check '0 参数' 'PASS' ("WcGuid 格式正确;ExtraWraptoolArgs {0} 项" -f $ExtraWraptoolArgs.Count)
+        Add-Check '0 参数' 'PASS' ("签名身份 {0};发布者 {1};账号 {2};ExtraWraptoolArgs {3} 项" -f `
+            $(if ($CertThumbprint) { "-CertThumbprint $certThumb" } else { '-KeyFile' }),
+            $(if ($WcGuid) { '-WcGuid(格式正确)' } else { "-CustomerNumber / -CustomerName '$CustomerName' / -ProductName '$ProductName'" }),
+            $(if ($Account) { '-Account(打码)' + $(if ($PromptAccountPassword) { ' + 交互口令(--pswd-no-save)' } else { '' }) } else { 'iLok License Manager 默认账号' }),
+            $ExtraWraptoolArgs.Count)
     } catch { Add-Check '0 参数' 'FAIL' $_.Exception.Message }
 
     # ---------------------------------------------------------------- 预检 1:.sha256(完整性)
@@ -385,68 +544,147 @@ try {
         }
     }
 
-    # ---------------------------------------------------------------- 预检 4:KeyFile
-    $keyFull = $null
-    $keyOk = $false
-    try {
-        $keyFull = Resolve-UserPath $KeyFile
-        if (Test-InsideRepo $keyFull) {
-            throw "KeyFile 位于仓库目录内($keyFull):pfx 必须放在仓库外(CLAUDE.md §0 铁律 1),例如 `$env:USERPROFILE\.synchain-signing\"
-        }
-        if (Test-Path -LiteralPath $keyFull -PathType Leaf) {
-            Add-Check '4 KeyFile' 'PASS' "$keyFull(仓库外)"
-            $keyOk = $true
-        } elseif ($DryRun) {
-            Add-Check '4 KeyFile' 'WARN' "不存在:$keyFull —— DryRun 放行(位置在仓库外);真签名时必须存在"
-        } else {
-            throw "KeyFile 不存在:$keyFull"
-        }
-    } catch { Add-Check '4 KeyFile' 'FAIL' $_.Exception.Message }
+    # ---------------------------------------------------------------- 预检 4:签名身份
+    if ($CertThumbprint -and $KeyFile) {
+        Add-Check '4 签名身份' 'SKIP' '-CertThumbprint 与 -KeyFile 互斥(见预检 0)'
+    } elseif ($CertThumbprint) {
+        try {
+            if ($certThumb -cnotmatch '^[0-9A-F]{40}$') { throw '指纹格式不对(见预检 0)' }
+            # wraptool 的 --signid 在当前用户与本机两个「个人」库里找(实测 6.0.1 help);这里同样两处都查,只读打开,不写证书库
+            $found = @()
+            foreach ($loc in 'CurrentUser', 'LocalMachine') {
+                $store = [System.Security.Cryptography.X509Certificates.X509Store]::new('My', $loc)
+                try {
+                    $store.Open([System.Security.Cryptography.X509Certificates.OpenFlags]'ReadOnly, OpenExistingOnly')
+                    foreach ($c in $store.Certificates.Find([System.Security.Cryptography.X509Certificates.X509FindType]::FindByThumbprint, $certThumb, $false)) {
+                        $found += [pscustomobject]@{ Where = "Cert:\$loc\My"; Cert = $c }
+                    }
+                } catch {
+                    # 该位置没有 My 库 / 打不开:按「这里没找到」处理,另一处照查
+                } finally { $store.Close() }
+            }
+            if (-not $found.Count) {
+                throw ("证书库里找不到指纹 $certThumb(查了 Cert:\CurrentUser\My 与 Cert:\LocalMachine\My):先用 " +
+                    'scripts/new-selfsigned-codesign-cert.ps1 生成(不加 -RemoveFromStore),或把 pfx 导入「个人」证书库;只有 pfx 时改用 -KeyFile')
+            }
+            $hit = $found | Where-Object { $_.Cert.HasPrivateKey } | Select-Object -First 1
+            if (-not $hit) { throw "$($found[0].Where) 里的证书 $certThumb 没有关联私钥:wraptool 用它签不了名" }
+            $cert = $hit.Cert
+            $now = Get-Date
+            if ($cert.NotAfter -lt $now) { throw "证书 $certThumb 已于 $($cert.NotAfter) 过期" }
+            if ($cert.NotBefore -gt $now) { throw "证书 $certThumb 要到 $($cert.NotBefore) 才生效" }
+            if ((Get-EkuOids $cert) -notcontains $CodeSigningEku) {
+                throw "证书 $certThumb 的增强型密钥用法里没有代码签名($CodeSigningEku)"
+            }
+            $certWhere = $hit.Where
+            $expectThumb = $certThumb
+            Add-Check '4 签名身份' 'PASS' ("$certWhere\$certThumb;$($cert.Subject);带私钥;有效期至 " +
+                $cert.NotAfter.ToString('yyyy-MM-dd') + ";EKU 含代码签名;不读证书口令")
+        } catch { Add-Check '4 签名身份' 'FAIL' $_.Exception.Message }
+    } elseif ($KeyFile) {
+        try {
+            $keyFull = Resolve-UserPath $KeyFile
+            if (Test-InsideRepo $keyFull) {
+                throw "KeyFile 位于仓库目录内($keyFull):pfx 必须放在仓库外(CLAUDE.md §0 铁律 1),例如 `$env:USERPROFILE\.synchain-signing\"
+            }
+            if (Test-Path -LiteralPath $keyFull -PathType Leaf) {
+                Add-Check '4 签名身份' 'PASS' "-KeyFile $keyFull(仓库外;口令签名时交互读入)"
+            } elseif ($DryRun) {
+                Add-Check '4 签名身份' 'WARN' "-KeyFile 不存在:$keyFull —— DryRun 放行(位置在仓库外);真签名时必须存在"
+            } else {
+                throw "KeyFile 不存在:$keyFull"
+            }
+        } catch { Add-Check '4 签名身份' 'FAIL' $_.Exception.Message }
+    } else {
+        Add-Check '4 签名身份' 'SKIP' '没给签名身份(见预检 0)'
+    }
 
-    # ---------------------------------------------------------------- 预检 5:wraptool
+    # ---------------------------------------------------------------- 预检 5a:PACE_FUSION_HOME
+    # 实测 6.0.1(2026-10-08):安装器设的是 Machine 级环境变量,装之前就开着的终端里没有,wraptool 会报
+    # "The PACE_FUSION_HOME environment variable is not defined"。进程里没有就从 Machine 级补上(退出时撤掉)
     try {
+        if (-not $env:PACE_FUSION_HOME) {
+            $machine = [Environment]::GetEnvironmentVariable('PACE_FUSION_HOME', 'Machine')
+            if (-not $machine) {
+                throw ('PACE_FUSION_HOME 未定义(进程环境与 Machine 级环境变量里都没有),wraptool 没有它就报 "The PACE_FUSION_HOME ' +
+                    'environment variable is not defined":装完 PACE 签名工具要新开一个终端再跑;新终端里仍没有,就重装签名工具')
+            }
+            $env:PACE_FUSION_HOME = $machine
+            $fusionAdded = $true
+        }
+        if (-not (Test-Path -LiteralPath $env:PACE_FUSION_HOME -PathType Container)) {
+            throw "PACE_FUSION_HOME = $env:PACE_FUSION_HOME 不是存在的目录:签名工具装坏了或被删了,重装签名工具"
+        }
+        Add-Check '5a PACE_FUSION_HOME' 'PASS' $(if ($fusionAdded) {
+            "进程环境里没有(多半是装签名工具之前开的终端),已从 Machine 级补上:$env:PACE_FUSION_HOME"
+        } else { "进程环境里已有:$env:PACE_FUSION_HOME" })
+    } catch { Add-Check '5a PACE_FUSION_HOME' 'FAIL' $_.Exception.Message }
+
+    # ---------------------------------------------------------------- 预检 5b:wraptool
+    try {
+        $src = $null
         if ($WraptoolPath) {
             $p = Resolve-UserPath $WraptoolPath
             if (-not (Test-Path -LiteralPath $p -PathType Leaf)) { throw "-WraptoolPath 指向的文件不存在:$p" }
             $script:Wraptool = $p
+            $src = '-WraptoolPath'
         } else {
+            $fromHome = if ($env:PACE_FUSION_HOME) { Join-Path $env:PACE_FUSION_HOME $WraptoolRel } else { $null }
             $cmd = Get-Command wraptool -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
-            if ($cmd) {
-                $script:Wraptool = $cmd.Source
-            } elseif ($WraptoolDefault -and (Test-Path -LiteralPath $WraptoolDefault -PathType Leaf)) {
-                $script:Wraptool = $WraptoolDefault
+            if ($fromHome -and (Test-Path -LiteralPath $fromHome -PathType Leaf)) {
+                $script:Wraptool = $fromHome; $src = 'PACE_FUSION_HOME'
+            } elseif ($cmd) {
+                $script:Wraptool = $cmd.Source; $src = 'PATH'
+            } elseif ($p = Find-WraptoolUnder $env:ProgramFiles) {
+                $script:Wraptool = $p; $src = '%ProgramFiles% 下版本号最高的'
+            } elseif ($p = Find-WraptoolUnder ${env:ProgramFiles(x86)}) {
+                $script:Wraptool = $p; $src = '%ProgramFiles(x86)% 下版本号最高的'   # TO-VALIDATE:6.0.1 装在 64 位 Program Files,x86 布局未见过
             } else {
-                $shown = if ($WraptoolDefault) { $WraptoolDefault } else { '(无 ProgramFiles(x86))' }
-                throw ("找不到 wraptool:PATH 里没有,默认路径 $shown 也不存在(TO-VALIDATE:Eden 默认安装路径以实际版本为准)。" +
-                    "先装好 PACE Eden 签名工具,再重试或用 -WraptoolPath <wraptool.exe> 指定")
+                throw ("找不到 wraptool:PACE_FUSION_HOME\$WraptoolRel、PATH、%ProgramFiles% / %ProgramFiles(x86)%\$FusionVersionsRel\<版本>\$WraptoolRel " +
+                    '都没有。先装好 PACE 签名工具(装完新开终端),或用 -WraptoolPath <wraptool.exe> 指定')
             }
         }
-        Add-Check '5a wraptool' 'PASS' $script:Wraptool
-    } catch { $script:Wraptool = $null; Add-Check '5a wraptool' 'FAIL' $_.Exception.Message }
+        # wraptool 按 PACE_FUSION_HOME 找自己的资源:选中的 wraptool 不在它下面(PATH 上的旧版本 / -WraptoolPath 指向别处)就提醒
+        $fusionRoot = if ($env:PACE_FUSION_HOME) { [System.IO.Path]::GetFullPath($env:PACE_FUSION_HOME).TrimEnd('\') + '\' } else { $null }
+        if ($fusionRoot -and -not $script:Wraptool.StartsWith($fusionRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+            Add-Check '5b wraptool' 'WARN' "$($script:Wraptool)(来自 $src)不在 PACE_FUSION_HOME = $env:PACE_FUSION_HOME 下:确认两者是同一套安装"
+        } else {
+            Add-Check '5b wraptool' 'PASS' "$($script:Wraptool)(来自 $src)"
+        }
+    } catch { $script:Wraptool = $null; Add-Check '5b wraptool' 'FAIL' $_.Exception.Message }
 
-    if ($script:Wraptool) {
+    # ---------------------------------------------------------------- 预检 5c:wraptool flag
+    if ($script:Wraptool -and $env:PACE_FUSION_HOME) {
         try {
-            # TO-VALIDATE(V1):子命令写法 `help sign`;不看退出码(有的工具打印帮助后返回非零),只看输出里的 flag
-            $help = Invoke-Wraptool @('help', 'sign') -Capture   # TO-VALIDATE(V1)
-            $need = @($RequiredSignFlags)
-            if ($PromptAccountPassword) { $need += '--password' }   # TO-VALIDATE(V2)
+            # 实测 6.0.1(2026-10-08):`wraptool help` 打印全部选项;`help sign` 在 v6 里不合法(too many positional options,
+            # exit 9)。不看退出码,只看输出里有没有本次要用的 flag;本脚本给它传值的 flag 还要在 help 里标着带值
+            # (选项表里是 `-I [ --signid ] arg` / `--pswd-no-save arg` 这种写法)
+            $help = Invoke-Wraptool @('help') -Capture
+            $need = Get-RequiredFlags
             $missing = @($need | Where-Object { $help.Output -cnotmatch ('(?<![\w-])' + [regex]::Escape($_) + '(?![\w-])') })
             if ($missing.Count) {
-                throw "Eden 版本 flag 不符,按 TO-VALIDATE 更新脚本:「wraptool help sign」的输出里没有 $($missing -join ', ')"
+                throw "「wraptool help」的输出里没有 $($missing -join ', '):wraptool 版本与本脚本不符(本脚本按 wraptool 6.0.1 实测编写)"
             }
-            Add-Check '5b wraptool flag' 'PASS' ($need -join ' ')
-        } catch { Add-Check '5b wraptool flag' 'FAIL' $_.Exception.Message }
+            $noArg = @($need | Where-Object { $_ -cne '--verbose' } |
+                Where-Object { $help.Output -cnotmatch ('(?<![\w-])' + [regex]::Escape($_) + '(?:\s*\])?\s+arg(?![\w-])') })
+            if ($noArg.Count) {
+                throw "「wraptool help」里 $($noArg -join ', ') 没有标成带值的选项(arg),本脚本却要给它传值:wraptool 版本与本脚本不符"
+            }
+            Add-Check '5c wraptool flag' 'PASS' ($need -join ' ')
+        } catch { Add-Check '5c wraptool flag' 'FAIL' $_.Exception.Message }
     } else {
-        Add-Check '5b wraptool flag' 'SKIP' 'wraptool 不可用'
+        Add-Check '5c wraptool flag' 'SKIP' $(if (-not $script:Wraptool) { 'wraptool 不可用' } else { 'PACE_FUSION_HOME 未就绪(见预检 5a)' })
     }
 
     # ---------------------------------------------------------------- 预检 6:iLok(只提醒)
-    Add-Check '6 iLok' 'INFO' ('签名需要插着 iLok(或已激活 iLok Cloud 会话)并运行 iLok License Manager;' +
-        '本脚本不硬检,缺了 wraptool 自己会报错(TO-VALIDATE:进程名 / 报错文案)')
+    Add-Check '6 iLok' 'INFO' ('签名需要插着带签名授权的 iLok(或已激活 iLok Cloud 会话)并运行 iLok License Manager;' +
+        '本脚本不硬检,缺了 wraptool 自己会报错(TO-VALIDATE,待首次真签名:报错文案)')
 
     # ---------------------------------------------------------------- 预检 7:解压 + 输入件确实未签名
     $inBundle = $null
     $outBundle = $null
+    $inDll = $null
+    $outDll = $null
     if ($zipOk) {
         $bundleOk = $false
         try {
@@ -458,6 +696,7 @@ try {
             [System.IO.Compression.ZipFile]::ExtractToDirectory($zipFull, $inDir)
             $inBundle = Join-Path $inDir $BundleName
             $outBundle = Join-Path (Join-Path $work 'out') $BundleName
+            $outDll = Join-Path $outBundle $DllRel
             if (-not (Test-Path -LiteralPath $inBundle -PathType Container)) { throw "zip 根目录下没有 '$BundleName'" }
             $inDll = Join-Path $inBundle $DllRel
             if (-not (Test-Path -LiteralPath $inDll -PathType Leaf)) { throw "bundle 缺 $DllRel" }
@@ -465,20 +704,26 @@ try {
             if ([string]$inSig.Status -ne 'NotSigned') {
                 throw "输入 DLL 的 Authenticode 状态是 $($inSig.Status)(应为 NotSigned):输入件已签过或被改过,拒绝"
             }
-            Add-Check '7a 输入 bundle' 'PASS' "已解压到 $inDir;DLL = NotSigned"
+            Add-Check '7a 输入 bundle' 'PASS' "已解压到 $inDir;内层 DLL = NotSigned"
             $bundleOk = $true
         } catch { Add-Check '7a 输入 bundle' 'FAIL' $_.Exception.Message }
 
-        if ($bundleOk -and $script:Wraptool) {
+        if ($bundleOk -and $script:Wraptool -and $env:PACE_FUSION_HOME) {
             try {
-                # TO-VALIDATE(V1):verify 的语法,以及「未签名 bundle → 非零退出」这一约定。语法若写错这里也会是非零
-                # (假 PASS),但签名后的后检要求 verify 返回 0,语法错误会在那里暴露。
-                $v = Invoke-Wraptool @('verify', '--in', $inBundle) -Capture   # TO-VALIDATE(V1)
-                if ($v.ExitCode -eq 0) { throw "wraptool verify 对输入 bundle 返回成功 —— 它已经签过(重签会报错),中止" }
-                Add-Check '7b wraptool verify' 'PASS' "按预期失败(exit $($v.ExitCode)):输入件未签名"
+                # 实测 6.0.1(2026-10-08):Windows 上 --in 必须是文件(给 bundle 目录报 "A file must be specified for the
+                # 'verify' operation on Windows");未签名 DLL → 退出码 2,输出 "The architecture is NOT signed"。只看退出码非零
+                # 会把别的失败(PACE_FUSION_HOME 缺失、参数错误)当成「未签名」,所以同时要求输出里有 NOT signed。
+                # 区分大小写:「not signed in」一类的未登录报错不能算
+                $v = Invoke-Wraptool @('verify', '--in', $inDll) -Capture
+                if ($v.ExitCode -eq 0) { throw "wraptool verify 对输入 DLL 返回成功 —— 它已经签过(重签会报错),中止" }
+                if ($v.Output -cnotmatch 'NOT signed') {
+                    $tail = @($v.Output -split "`n" | Where-Object { $_.Trim() } | Select-Object -Last 3) -join ' | '
+                    throw "wraptool verify 失败(exit $($v.ExitCode)),但输出里没有 NOT signed,失败原因不是「未签名」:$tail"
+                }
+                Add-Check '7b wraptool verify' 'PASS' "按预期失败(exit $($v.ExitCode),输出 NOT signed):输入 DLL 未签名"
             } catch { Add-Check '7b wraptool verify' 'FAIL' $_.Exception.Message }
         } else {
-            Add-Check '7b wraptool verify' 'SKIP' $(if ($bundleOk) { 'wraptool 不可用' } else { '输入 bundle 未就绪' })
+            Add-Check '7b wraptool verify' 'SKIP' $(if (-not $bundleOk) { '输入 bundle 未就绪' } elseif (-not $script:Wraptool) { 'wraptool 不可用' } else { 'PACE_FUSION_HOME 未就绪' })
         }
     } else {
         Add-Check '7a 输入 bundle' 'SKIP' '输入 zip 未通过完整性校验,不解压'
@@ -491,35 +736,39 @@ try {
     $signedZip  = if ($ver) { Join-Path $OutDirFull "SynchainBridge-AAX-v$ver-win64.zip" } else { $null }
     $isCiBuild  = [bool]($ver -and $ver -cmatch '-ci\.[0-9a-f]{7,40}$')
 
-    # 签名命令的打码版(回显用);真实参数只在签名那一步的 try 里临时拼出
-    $wtShow = @(
-        'sign', '--verbose',                                       # TO-VALIDATE(V1)
-        '--account', '****', '--wcguid', '****',                   # TO-VALIDATE(V1)
-        '--keyfile', $(if ($keyFull) { $keyFull } else { '<KeyFile>' }),
-        '--keypassword', '****',                                   # TO-VALIDATE(V1)
-        '--in', $(if ($inBundle) { $inBundle } else { "<work>\in\$BundleName" }),     # TO-VALIDATE(V1):给 bundle 目录还是内层 DLL
-        '--out', $(if ($outBundle) { $outBundle } else { "<work>\out\$BundleName" })  # TO-VALIDATE(V1):能否指向新路径
-    )
-    if ($PromptAccountPassword) { $wtShow += @('--password', '****') }   # TO-VALIDATE(V2)
-    $wtShow += $ExtraWraptoolArgs
+    # 签名命令的打码版(回显用)
+    $wtShow = Get-SignArgs $(if ($outDll) { $outDll } else { "<work>\out\$BundleName\$DllRel" }) -Masked
 
     if ($DryRun) {
         Write-Host ''
         Write-Host '[DryRun] 签名计划(未执行):'
         Write-Host $(if ($SourceRunId) { "  0) 来源已按 run $SourceRunId 核对(见预检 3b)" } else { '  0) 未给 -SourceRunId:来源未核对(只验了完整性)' })
-        Write-Host '  1) Read-Host -AsSecureString 读 pfx 口令(不进本脚本参数 / 日志 / transcript),载入 pfx 取指纹并确认带私钥、未过期'
-        Write-Host '     注意:签名那几秒口令会以 --keypassword 出现在 wraptool 进程命令行里(wraptool 的限制),签名期间不要让他人登录本机'
-        if ($PromptAccountPassword) { Write-Host '     另读 PACE 账号口令(--password,TO-VALIDATE V2)' }
-        Write-Host ("  2) wraptool " + (Format-CommandLine $wtShow))
-        Write-Host ('  3) 后检:wraptool verify --verbose --in <out> 退出码 0;Authenticode 签名者指纹 = pfx 指纹;' +
-            $(if ($AllowNoTimestamp) { '时间戳缺失放行(-AllowNoTimestamp)' } else { '必须带时间戳' }))
-        Write-Host ("  4) package-aax.ps1 -Mode Signed -Version {0} -SourceRef {1} -BundlePath <out> -OutDir {2}" -f `
-            $(if ($ver) { $ver } else { '<版本>' }), $(if ($sourceRef) { $sourceRef } else { '<SourceRef>' }), $OutDirFull)
-        Write-Host '  5) 回读:把产出的 zip 解到新临时目录,复验 wraptool verify 与签名者指纹'
-        if ($isCiBuild) {
-            Write-Host "  6) 版本 $ver 是 CI 预发布件,没有对应 Release:只打印提示,不给上传命令"
+        Write-Host ("  1) 复制整个 bundle:{0} → {1},核对逐文件相同;之后只对 out 里的内层 DLL 原地签名" -f `
+            $(if ($inBundle) { $inBundle } else { "<work>\in\$BundleName" }), $(if ($outBundle) { $outBundle } else { "<work>\out\$BundleName" }))
+        if ($CertThumbprint) {
+            Write-Host ("  2) 签名身份:{0}\{1} —— 不读证书口令,wraptool 命令行上没有 --keypassword" -f `
+                $(if ($certWhere) { $certWhere } else { '<个人证书库>' }), $certThumb)
         } else {
-            Write-Host ("  6) 打印(不执行):gh release upload v{0} <zip> <zip>.sha256 --repo {1}" -f $(if ($ver) { $ver } else { '<版本>' }), $UploadRepo)
+            Write-Host '  2) 签名身份:Read-Host -AsSecureString 读 pfx 口令(不进本脚本参数 / 日志 / transcript),载入 pfx 取指纹并确认带私钥、未过期'
+            Write-Host '     注意:签名那几秒 pfx 口令会以 --keypassword 出现在 wraptool 进程命令行里(wraptool 的限制),签名期间不要让他人登录本机'
+        }
+        if ($PromptAccountPassword) {
+            Write-Host '     另读 PACE 账号口令,经 --pswd-no-save 传(不写进 wraptool 钥匙串;签名那几秒同样出现在 wraptool 进程命令行里)'
+        } else {
+            Write-Host ('     不传账号口令:wraptool 用它钥匙串里存过的口令(-WcGuid 方式要连 PACE 服务器;没存过就先手动 sync 一次,' +
+                '见 docs/release.md §7.1)')
+        }
+        Write-Host ("  3) wraptool " + (Format-CommandLine $wtShow))
+        Write-Host ('  4) 后检:wraptool verify --verbose --in <out DLL> 退出码 0;out 与 in 只有内层 DLL 不同;Authenticode 签名者指纹 = ' +
+            $(if ($CertThumbprint) { '-CertThumbprint' } else { 'pfx 指纹' }) + ';' +
+            $(if ($AllowNoTimestamp) { '时间戳缺失放行(-AllowNoTimestamp)' } else { '必须带时间戳' }))
+        Write-Host ("  5) package-aax.ps1 -Mode Signed -Version {0} -SourceRef {1} -BundlePath <out bundle> -OutDir {2}" -f `
+            $(if ($ver) { $ver } else { '<版本>' }), $(if ($sourceRef) { $sourceRef } else { '<SourceRef>' }), $OutDirFull)
+        Write-Host '  6) 回读:把产出的 zip 解到新临时目录,复验 bundle 与 out 逐文件相同、wraptool verify 与签名者指纹'
+        if ($isCiBuild) {
+            Write-Host "  7) 版本 $ver 是 CI 预发布件,没有对应 Release:只打印提示,不给上传命令"
+        } else {
+            Write-Host ("  7) 打印(不执行):gh release upload v{0} <zip> <zip>.sha256 --repo {1}" -f $(if ($ver) { $ver } else { '<版本>' }), $UploadRepo)
         }
 
         # 用打包脚本自己的 -DryRun 校验「版本 + SourceRef」组合会被 Signed 模式接受(它不碰 bundle、不产出文件)
@@ -551,26 +800,30 @@ try {
         $succeeded = $true   # DryRun 的临时目录一律删
     } else {
         # ================================================================ 签名
-        # pfx 口令:只经交互读入,SecureString 全程;载入 pfx 同时验证口令、取预期指纹(EphemeralKeySet:私钥不落盘)
-        $kp = Read-Host -AsSecureString '代码签名证书 (.pfx) 口令'
-        try {
-            $pfx = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new($keyFull, $kp,
-                [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::EphemeralKeySet)
-        } catch {
-            throw "载入 pfx 失败(口令错误或文件损坏 / 加密算法不受支持,见 V8):$($_.Exception.Message)"
+        # 整个 bundle 复制到 out(-Force:带 System 属性的 desktop.ini 也要拷),核对与 in 逐文件相同;in 从此不再动
+        Copy-Item -LiteralPath $inBundle -Destination $outBundle -Recurse -Force
+        Assert-SameBundle $inBundle $outBundle '复制'
+
+        if ($KeyFile) {
+            # pfx 口令:只经交互读入,SecureString 全程;载入 pfx 同时验证口令、取预期指纹(EphemeralKeySet:私钥不落盘)
+            $kp = Read-Host -AsSecureString '代码签名证书 (.pfx) 口令'
+            try {
+                $pfx = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new($keyFull, $kp,
+                    [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::EphemeralKeySet)
+            } catch {
+                throw "载入 pfx 失败(口令错误或文件损坏 / 加密算法不受支持,见 V8):$($_.Exception.Message)"
+            }
+            try {
+                $expectThumb = $pfx.Thumbprint
+                if (-not $pfx.HasPrivateKey) { throw "pfx 里没有私钥:$keyFull" }
+                if ($pfx.NotAfter -lt (Get-Date)) { throw "证书已于 $($pfx.NotAfter) 过期" }
+                if ((Get-EkuOids $pfx) -notcontains $CodeSigningEku) { Write-Warning "证书没有 Code Signing EKU($CodeSigningEku);wraptool 可能拒收" }
+                Write-Host "pfx: Subject=$($pfx.Subject) Thumbprint=$expectThumb NotAfter=$($pfx.NotAfter)"
+            } finally {
+                $pfx.Dispose()
+            }
         }
-        try {
-            $pfxThumb = $pfx.Thumbprint
-            if (-not $pfx.HasPrivateKey) { throw "pfx 里没有私钥:$keyFull" }
-            if ($pfx.NotAfter -lt (Get-Date)) { throw "证书已于 $($pfx.NotAfter) 过期" }
-            $eku = @($pfx.Extensions | Where-Object { $_ -is [System.Security.Cryptography.X509Certificates.X509EnhancedKeyUsageExtension] } |
-                ForEach-Object { $_.EnhancedKeyUsages } | ForEach-Object { $_.Value })
-            if ($eku -notcontains '1.3.6.1.5.5.7.3.3') { Write-Warning '证书没有 Code Signing EKU(1.3.6.1.5.5.7.3.3);wraptool 可能拒收' }
-            Write-Host "pfx: Subject=$($pfx.Subject) Thumbprint=$pfxThumb NotAfter=$($pfx.NotAfter)"
-        } finally {
-            $pfx.Dispose()
-        }
-        if ($PromptAccountPassword) { $ap = Read-Host -AsSecureString 'PACE 账号口令' }   # TO-VALIDATE(V2)
+        if ($PromptAccountPassword) { $ap = Read-Host -AsSecureString 'PACE 账号口令(经 --pswd-no-save 传,不存钥匙串)' }
 
         $bstrK = [IntPtr]::Zero
         $bstrA = [IntPtr]::Zero
@@ -579,25 +832,17 @@ try {
         $wtArgs = $null
         try {
             # BSTR → 明文只在这次调用期间存在;finally 里 ZeroFreeBSTR + 置空引用
-            $bstrK = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($kp)
-            $plainK = [System.Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstrK)
-            $wtArgs = @(
-                'sign', '--verbose',              # TO-VALIDATE(V1)
-                '--account', $Account,            # TO-VALIDATE(V1)
-                '--wcguid', $WcGuid,              # TO-VALIDATE(V1)
-                '--keyfile', $keyFull,            # TO-VALIDATE(V1)
-                '--keypassword', $plainK,         # TO-VALIDATE(V1)
-                '--in', $inBundle,                # TO-VALIDATE(V1):给 bundle 目录还是内层 DLL
-                '--out', $outBundle               # TO-VALIDATE(V1):能否指向新路径
-            )
-            if ($PromptAccountPassword) {
+            if ($kp) {
+                $bstrK = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($kp)
+                $plainK = [System.Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstrK)
+            }
+            if ($ap) {
                 $bstrA = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($ap)
                 $plainA = [System.Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstrA)
-                $wtArgs += @('--password', $plainA)   # TO-VALIDATE(V2)
             }
-            $wtArgs += $ExtraWraptoolArgs             # TO-VALIDATE:例如 --dsig1-compat off
-            # TO-VALIDATE(V1):--verbose 是否回显收到的参数未知 —— 输出里的口令 / 账号 / wcguid 一律字面替换成 ****
-            $sign = Invoke-Wraptool $wtArgs -Display $wtShow -Redact @($plainK, $plainA, $Account, $WcGuid)
+            $wtArgs = Get-SignArgs $outDll -KeyPw $plainK -AccountPw $plainA
+            # TO-VALIDATE(待首次真签名):--verbose 是否回显收到的参数 —— 输出里的口令 / 账号 / wcguid / customer number 一律打码
+            $sign = Invoke-Wraptool $wtArgs -Display $wtShow -Redact @($plainK, $plainA, $Account, $WcGuid, $CustomerNumber)
         } finally {
             if ($bstrK -ne [IntPtr]::Zero) { [System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstrK) }
             if ($bstrA -ne [IntPtr]::Zero) { [System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstrA) }
@@ -606,29 +851,31 @@ try {
             $wtArgs = $null
         }
         if ($sign.ExitCode -ne 0) { throw "wraptool sign 失败(exit $($sign.ExitCode))" }
-        if (-not (Test-Path -LiteralPath $outBundle -PathType Container)) { throw "wraptool sign 返回 0,但没有产出 $outBundle(TO-VALIDATE:--out 语义)" }
 
         # ================================================================ 后检
         function Assert-SignedBundle([string]$Bundle, [string]$Label) {
-            $vr = Invoke-Wraptool @('verify', '--verbose', '--in', $Bundle) -Redact @($Account, $WcGuid)   # TO-VALIDATE(V1):语法与退出码
-            if ($vr.ExitCode -ne 0) { throw "${Label}:wraptool verify 失败(exit $($vr.ExitCode))" }
             $dll = Join-Path $Bundle $DllRel
             if (-not (Test-Path -LiteralPath $dll -PathType Leaf)) { throw "${Label}:缺 $DllRel" }
+            # TO-VALIDATE(待首次真签名):已签名 DLL 的 verify 退出码,这里按 0 判通过
+            $vr = Invoke-Wraptool @('verify', '--verbose', '--in', $dll) -Redact @($Account, $WcGuid, $CustomerNumber)
+            if ($vr.ExitCode -ne 0) { throw "${Label}:wraptool verify 失败(exit $($vr.ExitCode))" }
             $sig = Get-AuthenticodeSignature -LiteralPath $dll
             if ($null -eq $sig.SignerCertificate) { throw "${Label}:DLL 没有 Authenticode 签名(Status=$($sig.Status))" }
             if (@('NotSigned', 'HashMismatch', 'NotSupportedFileFormat') -contains [string]$sig.Status) {
                 throw "${Label}:Authenticode 签名不完好(Status=$($sig.Status))"
             }
-            if ($sig.SignerCertificate.Thumbprint -ne $pfxThumb) {
-                throw "${Label}:签名者指纹 $($sig.SignerCertificate.Thumbprint) ≠ pfx 指纹 $pfxThumb"
+            if ($sig.SignerCertificate.Thumbprint -ne $expectThumb) {
+                throw "${Label}:签名者指纹 $($sig.SignerCertificate.Thumbprint) ≠ 预期指纹 $expectThumb"
             }
             if ($null -eq $sig.TimeStamperCertificate) {
                 # V3:拿不到时间戳也不要事后用 signtool 补 —— 那会改动已签名的文件,签名必须是最后一次修改
                 if ($AllowNoTimestamp) { Write-Warning "${Label}:Authenticode 签名没有时间戳(-AllowNoTimestamp 放行;证书过期后签名随之失效)" }
-                else { throw "${Label}:Authenticode 签名没有时间戳(V3:确认 wraptool 的时间戳选项;确实拿不到时显式传 -AllowNoTimestamp)" }
+                else { throw "${Label}:Authenticode 签名没有时间戳(V3:wraptool 默认就加时间戳,查它的输出;确实拿不到时显式传 -AllowNoTimestamp)" }
             }
             Write-Host "$Label OK:Status=$($sig.Status) Signer=$($sig.SignerCertificate.Subject) Thumbprint=$($sig.SignerCertificate.Thumbprint)"
         }
+        # wraptool 只该改内层 DLL:bundle 里多出 / 少了文件(例如原地签名留下的临时文件)或别的文件被改,都不能进发行包
+        Assert-SameBundle $inBundle $outBundle '后检' -AllowDllChange
         Assert-SignedBundle $outBundle '后检'
 
         # 打包:Signed 模式会再做一遍 Authenticode 断言与 zip 回读比对字节;独立 pwsh 进程,状态与本脚本隔离
@@ -638,9 +885,10 @@ try {
         if (-not (Test-Path -LiteralPath $signedZip -PathType Leaf)) { throw "打包后找不到 $signedZip" }
         $packaged = $true   # 从这里起失败,finally 删掉本次的发行名 zip / .sha256(打包脚本自己的失败路径由它自己清理)
 
-        # 回读:产出的 zip 解到新临时目录,复验 wraptool verify 与指纹(发出去的字节还带着 PACE 签名)
+        # 回读:产出的 zip 解到新临时目录,bundle 必须与签好的 out 逐文件相同,再复验 wraptool verify 与指纹(发出去的字节还带着签名)
         $rb = Join-Path $work 'readback'
         [System.IO.Compression.ZipFile]::ExtractToDirectory($signedZip, $rb)
+        Assert-SameBundle $outBundle (Join-Path $rb $BundleName) '回读'
         Assert-SignedBundle (Join-Path $rb $BundleName) '回读'
 
         Write-Host ''
@@ -680,6 +928,7 @@ try {
     }
     if ($kp) { $kp.Dispose() }
     if ($ap) { $ap.Dispose() }
+    if ($fusionAdded) { Remove-Item -Path Env:PACE_FUSION_HOME -ErrorAction SilentlyContinue }
     if ($work -and (Test-Path -LiteralPath $work)) {
         if ($succeeded) {
             Remove-Item -LiteralPath $work -Recurse -Force

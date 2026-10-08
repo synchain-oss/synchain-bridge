@@ -1,9 +1,11 @@
 ﻿<#
 .SYNOPSIS  生成 AAX Windows 签名用的自签名代码签名证书,并把 pfx 导出到仓库外。维护者本机一次性操作。
 .DESCRIPTION
-  Pro Tools 加载 AAX 靠的是 PACE 签名;wraptool 在 Windows 上还要一张 Authenticode 代码签名证书(.pfx)。
-  本项目用自签名证书:文件「属性 → 数字签名」里显示签名者不受信任属预期。生成的 pfx 交给
-  scripts/sign-aax.ps1 -KeyFile 使用。
+  Pro Tools 加载 AAX 靠的是 PACE 签名;wraptool 在 Windows 上还要一张 Authenticode 代码签名证书。
+  本项目用自签名证书:文件「属性 → 数字签名」里显示签名者不受信任属预期。
+  推荐用法:证书留在 Cert:\CurrentUser\My,签名时 scripts/sign-aax.ps1 -CertThumbprint <本脚本最后打印的 Thumbprint>
+  (wraptool 的 --signid 收「个人」证书库里证书的 SHA1 指纹,实测 6.0.1;签名时不读 pfx 口令,wraptool 命令行上也没有
+  --keypassword)。导出的 pfx 是放在仓库外的备份,也可以交给 sign-aax.ps1 -KeyFile 使用(备选)。
 
   先用 -WhatIf 预演:只做参数与路径断言并打印将要执行的操作 —— 不读口令、不写证书库、不生成任何文件。
   真跑(ConfirmImpact = High,会先要求确认)时:
@@ -11,7 +13,7 @@
     2. New-SelfSignedCertificate 在 Cert:\CurrentUser\My 生成证书(RSA 3072 / SHA256 / 私钥可导出);
     3. Export-PfxCertificate 导出(默认 AES256_SHA256;wraptool 读不了时用 -PfxEncryption TripleDES_SHA1 重新生成,V8);
     4. 用同一口令 Get-PfxData 回读,指纹必须一致;
-    5. -RemoveFromStore 时把证书连同私钥从证书库删掉(此后只剩 pfx 这一份)。
+    5. -RemoveFromStore 时把证书连同私钥从证书库删掉(此后只剩 pfx 这一份,签名只能走 sign-aax.ps1 -KeyFile)。
   断言:Windows;-OutPfx 的完整路径不在仓库目录下;-OutPfx 不存在(除非 -Force);-Subject 不含邮箱。
 
   语法保持 Windows PowerShell 5.1 兼容(不用 ?? / 三元运算符 / -AsHashtable):pwsh 7 里若 PKI cmdlet 不可用或
@@ -26,13 +28,18 @@
 .PARAMETER PfxEncryption
   pfx 加密算法:AES256_SHA256(默认)或 TripleDES_SHA1(V8:wraptool 读不了 AES 加密的 pfx 时用)。
 .PARAMETER RemoveFromStore
-  导出并回读成功后,把证书连同私钥从 Cert:\CurrentUser\My 删除。
+  导出并回读成功后,把证书连同私钥从 Cert:\CurrentUser\My 删除。删除后 sign-aax.ps1 -CertThumbprint(推荐方式)就用不了,
+  只能用 -KeyFile 方式(pfx 口令会在签名那几秒出现在 wraptool 的进程命令行里)。
 .PARAMETER Force
   允许覆盖已存在的 -OutPfx。
 .EXAMPLE
   pwsh scripts/new-selfsigned-codesign-cert.ps1 -WhatIf
 .EXAMPLE
+  pwsh scripts/new-selfsigned-codesign-cert.ps1
+  证书留在证书库(推荐):记下最后打印的 Thumbprint,签名时传给 sign-aax.ps1 -CertThumbprint
+.EXAMPLE
   powershell.exe -File scripts/new-selfsigned-codesign-cert.ps1 -RemoveFromStore
+  只留 pfx:之后签名只能用 sign-aax.ps1 -KeyFile
 #>
 [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'High')]
 param(
@@ -142,7 +149,12 @@ foreach ($c in @('New-SelfSignedCertificate', 'Export-PfxCertificate', 'Get-PfxD
 $notAfter = (Get-Date).AddYears($Years)
 $plan = "在 Cert:\CurrentUser\My 生成自签名代码签名证书($Subject;RSA 3072 / SHA256;私钥可导出;有效期至 " +
     $notAfter.ToString('yyyy-MM-dd') + "),以 $PfxEncryption 导出 pfx"
-if ($RemoveFromStore) { $plan += ',导出并回读后从证书库删除证书与私钥' }
+if ($RemoveFromStore) {
+    $plan += ',导出并回读后从证书库删除证书与私钥'
+    # 在 ShouldProcess 之前提醒:-WhatIf 预演时同样看得到
+    Write-Warning ('-RemoveFromStore:证书删出 Cert:\CurrentUser\My 之后,sign-aax.ps1 -CertThumbprint(推荐方式)就用不了,' +
+        '只能用 -KeyFile 方式签名(pfx 口令会在签名那几秒出现在 wraptool 的进程命令行里)。想用 -CertThumbprint 就去掉这个开关')
+}
 
 # 唯一的写操作闸门:-WhatIf(或确认时答 No)到此为止 —— 不读口令、不写证书库、不生成文件
 if (-not $PSCmdlet.ShouldProcess($OutPfx, $plan)) {
@@ -204,14 +216,24 @@ if ($RemoveFromStore) {
     # -DeleteKey 是证书提供程序的动态参数,随 -Path 解析出提供程序后才可用(指纹是纯 hex,不含通配符)
     Remove-Item -Path ('Cert:\CurrentUser\My\' + $cert.Thumbprint) -DeleteKey -Confirm:$false
     Write-Host '已从 Cert:\CurrentUser\My 删除证书与私钥:此后 pfx 是唯一副本。'
+    Write-Warning '证书已不在证书库:sign-aax.ps1 -CertThumbprint 用不了,签名只能用 -KeyFile <上面的 Pfx 路径>。'
 } else {
-    Write-Host "证书仍在 Cert:\CurrentUser\My(指纹 $($cert.Thumbprint));不需要时用 Remove-Item ... -DeleteKey 删除。"
+    Write-Host "证书留在 Cert:\CurrentUser\My(sign-aax.ps1 -CertThumbprint 要用它,别删);不再需要时用 Remove-Item ... -DeleteKey 删除。"
 }
 
 Write-Host ''
-Write-Host "Thumbprint : $($cert.Thumbprint)"
+Write-Host '================================================================'
+Write-Host "  Thumbprint : $($cert.Thumbprint)" -ForegroundColor Green
+Write-Host '================================================================'
 Write-Host "NotAfter   : $($cert.NotAfter.ToString('yyyy-MM-dd HH:mm:ss'))"
-Write-Host "Pfx        : $OutPfx($PfxEncryption)"
+Write-Host "Pfx        : $OutPfx($PfxEncryption;仓库外备份)"
 Write-Host ''
 Write-Host '提醒:把 pfx 和口令备份到密码管理器;绝不入库、不进 CI、不进 artifact。'
-Write-Host '签名用法:pwsh scripts/sign-aax.ps1 -UnsignedZip <...-win64-UNSIGNED.zip> -Account <PACE 账号> -WcGuid <GUID> -KeyFile <上面的 Pfx 路径>'
+if ($RemoveFromStore) {
+    Write-Host ('签名用法:pwsh scripts/sign-aax.ps1 -UnsignedZip <...-win64-UNSIGNED.zip> -SourceRunId <run ID> ' +
+        "-KeyFile `"$OutPfx`" -WcGuid <wrap 配置 GUID>")
+} else {
+    Write-Host ('签名用法(推荐):pwsh scripts/sign-aax.ps1 -UnsignedZip <...-win64-UNSIGNED.zip> -SourceRunId <run ID> ' +
+        "-CertThumbprint $($cert.Thumbprint) -WcGuid <wrap 配置 GUID>")
+    Write-Host "备选:把 -CertThumbprint 换成 -KeyFile `"$OutPfx`"(签名时交互读 pfx 口令)。"
+}
