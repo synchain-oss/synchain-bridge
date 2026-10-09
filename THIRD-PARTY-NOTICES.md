@@ -98,6 +98,13 @@ ixwebsocket / mbedtls / zlib 三行的版本、以及**闭包集合本身**(本 
   (由仓库根 `LICENSE` 复制,内容为 GPL 第 3 版全文),zip 内 `INSTALL-AAX.txt` 的许可证一节指向本条。
   (仓库不另放 GPL-3.0-only 的许可证文本文件:SDK 不在本仓库里,没有任何入库文件声明这个 SPDX 标识,放进去只会让
   `reuse lint` 报未使用的许可证。)
+- **Windows AAX 产物里的 JUCE AAX 封装是构建期改动版**:`CMakeLists.txt` 在 configure 期读 JUCE 8.0.8 的
+  `modules/juce_audio_plugin_client/juce_audio_plugin_client_AAX.cpp`,应用上游 JUCE 提交
+  [`20872887e`](https://github.com/juce-framework/JUCE/commit/20872887e7b8e889b192cb3c4a435c99ec4e16e8)(修 Windows
+  非 100% 显示缩放下的编辑器尺寸),把修改后的源码生成到构建目录(`<构建目录>/_deps/juce-aax-patched/`,文件头注明改动与来源)
+  并替代原文件编进 AAX 目标;JUCE 目录本身不改,VST3 / AU 与 macOS AAX 产物不含此改动。改动后的文件仍属上表 JUCE 行的
+  AGPLv3 部分;完整对应源码 = 本仓库(含生成规则)+ 上游 JUCE 8.0.8,按 `docs/build-windows.md` 的步骤即可复现。
+  升到 JUCE 9(已含该提交)时移除此补丁。
 - **PACE wraptool 与 iLok** 只在维护者本机做签名时使用:这两个工具本身不随任何产物分发、不进 CI,更不入库。
 - **Avid DigiShell / AAX Validator 与相关测试计划**是 Avid 向 AAX 开发者提供、按 Avid 条款使用的材料:不入库、
   不分发,CI 不下载;仓库只保留我们自己写的调用方式与判据说明。

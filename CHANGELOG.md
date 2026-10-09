@@ -6,8 +6,8 @@
 
 ## [未发布]
 
-<!-- AAX 线(feature/aax)的小节骨架:各子分支只往自己负责的小节追加,不新增/重排小节;
-     切版时把仍为空的小节删掉。 -->
+<!-- AAX 线(feature/aax)的小节骨架:各子分支只往自己负责的小节追加,不新增/重排小节
+     (「修复」由 AAX-08 经主控同意补进骨架);切版时把仍为空的小节删掉。 -->
 
 ### 新增
 
@@ -29,6 +29,27 @@
     缩放档位被宿主拒绝;音频设置(采样率 / 声道 / 延迟)变化;宿主 non-realtime 状态切换。音频线程零改动。
 - 插件界面文案不再写死格式与旧版本号:副标题 `VST3 · AUDIO BRIDGE` → `DAW · AUDIO BRIDGE`;
   角标 `Synchain VST · v…` → `Synchain Bridge · v…`,首帧占位不再显示写死的 `v1.3.1`。
+
+### 修复
+
+- **AAX(Windows):系统显示缩放非 100%(实测 175%)时 Pro Tools 插件窗只显示网页左上约 57%**,右侧与下方被裁。
+  根因是 WebView2 的光栅化缩放与 JUCE peer 缩放不一致:Pro Tools 是 System DPI-aware,JUCE peer 在它里面的物理/逻辑比为 1
+  (编辑器 460 逻辑像素 = 460 物理像素);JUCE 的 WebView2 后端只设 bounds、不设 RasterizationScale,WebView2 按显示器缩放
+  (1.75)光栅化,CSS 视口只剩约 263 px;网页按固定设计盒 460×560 × zoom(uiScale) 排版、不读视口,于是被裁。per-monitor
+  DPI-aware 宿主(多数 VST3 宿主)里两者一致,所以一直没暴露。修复只在原生侧、只对 Windows AAX 生效:编辑器第一次挂上原生
+  窗口时算补偿系数 comp = 显示器有效 DPI 缩放 / JUCE peer 缩放,编辑器尺寸改为 设计尺寸 × uiScale × comp(175% 下
+  805×980),JUCE AAX 封装随之让 Pro Tools 把容器调大,WebView 视口回到 460×560 CSS px。comp 只在运行期用、不持久化;
+  回报网页的 `uiScale` 与 `setUiScale` 回执的 `w` / `h` 都不含它,`web/` 与桥 #1 契约不变。
+  - 诊断:开窗时各写一次 `editor peer: platformScale=… desktopScale=… logical=WxH`(所有格式)与
+    `aax dpi compensation: monitorScale=… peerScale=… comp=… logical=WxH`(仅 Windows AAX),都在 message 线程。
+  - 已知限制:插件窗拖到另一块 DPI 不同的显示器时不会重算(System-aware 宿主本来也收不到 per-monitor 的 DPI 变化),关掉重开即可。
+- **AAX(Windows):构建期回移上游 JUCE 提交
+  [`20872887e`](https://github.com/juce-framework/JUCE/commit/20872887e7b8e889b192cb3c4a435c99ec4e16e8)**(JUCE 9 才带,
+  8.0.x 线没有):JUCE 8.0.8 的 AAX 封装报给宿主的编辑器尺寸只乘了 JUCE 全局缩放、漏乘窗口的平台 DPI 缩放,per-monitor
+  DPI-aware 的宿主里插件窗会被裁。当前 Pro Tools 是 System DPI-aware、peer 平台缩放为 1,这个补丁在它里面不起作用(上一条才是
+  Pro Tools 175% 的修复),保留是为 per-monitor-aware 宿主。`CMakeLists.txt` 只在 Windows + AAX 目标 + JUCE < 9 时读 JUCE
+  原文件、按上游三处逐块替换(任一处对不上 configure 即 FATAL),生成到构建目录 `_deps/juce-aax-patched/` 并替代原文件编进
+  AAX 目标。不升 JUCE、不改 JUCE 目录;VST3 / AU 与 macOS AAX 产物不受影响。升 JUCE 9 时整段删除。
 
 ### 安全
 

@@ -4,6 +4,7 @@
 
 #include "WebViewEditor.h"
 #include "BinaryData.h" // 由 juce_add_binary_data(SynchainBridgeWebAssets) 生成
+#include "MonitorDpi.h"
 
 #include <cmath>
 #include <cstdint>
@@ -29,7 +30,8 @@ using WBC = juce::WebBrowserComponent;
 namespace
 {
 
-// 100% 设计基准尺寸：编辑器窗口 = DESIGN × uiScale；web 侧 zoom = innerWidth/kDesignW 精确铺满。
+// 100% 设计基准尺寸：编辑器窗口 = DESIGN × uiScale（Windows AAX 再乘 DPI 补偿，见 applyDpiCompensation）；
+// web 侧卡片 = 固定设计盒 DESIGN × zoom(uiScale)，不读视口（docs/webview-ui-pattern.md §10）。
 // 卡片按 space-between 铺满该盒；改这两个数即整体改窗口比例（web 常量需同步，见 index.html DESIGN_W/H）。
 constexpr int kDesignW = 460;
 constexpr int kDesignH = 560;
@@ -276,8 +278,8 @@ SynchainBridgeWebEditor::SynchainBridgeWebEditor(SynchainBridgeAudioProcessor& p
 
     setResizable(false, false); // 仅经缩放档位下拉（setUiScale）编程改尺寸，不开自由拖角
     {
-        const float s = mProcessor.getUiScale();
-        setSize(juce::roundToInt(kDesignW * s), juce::roundToInt(kDesignH * s));
+        const auto size = editorSizeForUiScale(); // 此时还没有 peer，mDpiComp 恒为 1；peer 就绪后再补偿
+        setSize(size.x, size.y);
     }
 
     // [AAX 诊断] 开窗时一次性记下宿主 / 封装格式 / 尺寸 / 缩放 / 声道协商结果 / 全局缩放：Pro Tools 下
@@ -386,8 +388,8 @@ void SynchainBridgeWebEditor::retryWebView()
     mFallback.reset();
     // 回到 WebView：恢复按 uiScale 的窗口尺寸（切兜底时可能已把窗口放大到基准尺寸）。
     {
-        const float s = mProcessor.getUiScale();
-        setSize(juce::roundToInt(kDesignW * s), juce::roundToInt(kDesignH * s));
+        const auto size = editorSizeForUiScale();
+        setSize(size.x, size.y);
     }
     beginLoadAttempt(); // 重探运行时 + 重置看门狗与遮挡闸；若又是 missing 会就地再切兜底
     resized();
@@ -589,6 +591,88 @@ void SynchainBridgeWebEditor::paint(juce::Graphics& g)
     juce::ignoreUnused(g);
 #if JUCE_WINDOWS
     paintPlaceholderGradient(g, getWidth(), getHeight());
+#endif
+}
+
+// [AAX-08] peer 第一次可用时（宿主把包装组件 addToDesktop，JUCE 沿子树递归回调到这里；只在 message 线程）：
+// ① 一次性记下 JUCE 这一侧的物理/逻辑比 —— 宿主窗口应有的物理尺寸 = logical × platformScale × desktopScale
+//    （所有格式都写）；② Windows AAX 下做 WebView2 DPI 补偿（applyDpiCompensation）。
+void SynchainBridgeWebEditor::parentHierarchyChanged()
+{
+    juce::AudioProcessorEditor::parentHierarchyChanged();
+    if (mPeerFirstSeen)
+        return;
+    if (auto* peer = getPeer())
+    {
+        mPeerFirstSeen = true;
+        logDiag("editor peer: platformScale=" + juce::String(peer->getPlatformScaleFactor(), 2) +
+                " desktopScale=" + juce::String(peer->getComponent().getDesktopScaleFactor(), 2) +
+                " logical=" + juce::String(getWidth()) + "x" + juce::String(getHeight()));
+        applyDpiCompensation(*peer);
+    }
+}
+
+juce::Point<int> SynchainBridgeWebEditor::editorSizeForUiScale() const
+{
+    const float s = mProcessor.getUiScale() * mDpiComp;
+    return {juce::roundToInt(kDesignW * s), juce::roundToInt(kDesignH * s)};
+}
+
+// [AAX-08] Windows AAX 的 WebView2 DPI 补偿。
+// 病：Pro Tools 是 System DPI-aware，JUCE peer 在它里面的物理/逻辑比 = 1（编辑器 460 逻辑像素 = 460 物理像素）；
+// 而 JUCE 的 WebView2 后端只 put_Bounds、不碰 RasterizationScale，WebView2 按所在显示器的缩放光栅化（175% → 1.75），
+// CSS 视口只剩 460 / 1.75 ≈ 263 px。网页按固定设计盒 DESIGN × zoom(uiScale) 排版、刻意不读视口
+// （docs/webview-ui-pattern.md §10），于是只露出左上约 57%。PMv2 宿主（多数 VST3 宿主）里 peer 的比值本来就等于
+// 显示器缩放（460 逻辑 → 805 物理，视口正好 460 CSS px），所以一直没暴露。
+// 治：编辑器尺寸再乘 comp = monitorScale / peerScale，让 WebView 的 CSS 视口回到 DESIGN × uiScale；JUCE AAX 包装经
+// childBoundsChanged → resizeHostWindow → SetViewSize 让 Pro Tools 把容器跟着调大（peerScale = 1 时报的就是逻辑尺寸）。
+//   - peerScale 与 JUCE WebView2 后端 setControlBounds 同口径：getAreaCoveredBy × peer 的 getPlatformScaleFactor()；
+//     编辑器到 peer 组件之间没有变换（JUCE AAX 包装不调 setScaleFactor），getAreaCoveredBy 只剩 peer 组件的
+//     desktopScale。
+//   - monitorScale = peer HWND 所在显示器的有效 DPI / 96（MonitorDpi.cpp，查询时线程临时切 PMv2）。
+//   - comp 只在运行期用：不进状态，回报网页的 uiScale / w / h 都不含它。遮挡闸挪窗只认 getLocalBounds()，不受影响。
+//   - 已知限制：只在 peer 首次可用时算一次。窗口拖到另一块 DPI 不同的显示器不会重算（System-aware 宿主本来也收不到
+//     per-monitor 的 DPI 变化），重开插件窗口即可。
+void SynchainBridgeWebEditor::applyDpiCompensation(juce::ComponentPeer& peer)
+{
+#if JUCE_WINDOWS
+    if (mProcessor.wrapperType != juce::AudioProcessor::wrapperType_AAX)
+        return;
+
+    const double peerScale =
+        peer.getPlatformScaleFactor() * static_cast<double>(peer.getComponent().getDesktopScaleFactor());
+    const double monitorScale = dpi::effectiveMonitorScale(peer.getNativeHandle());
+    mDpiComp = static_cast<float>(dpi::compensation(monitorScale, peerScale));
+
+    bool refused = false;
+    if (mDpiComp != 1.0f)
+    {
+        const auto want = editorSizeForUiScale();
+        setSize(want.x, want.y);
+        refused = (getWidth() != want.x || getHeight() != want.y);
+    }
+    logDiag("aax dpi compensation: monitorScale=" + juce::String(monitorScale, 2) + " peerScale=" +
+            juce::String(peerScale, 2) + " comp=" + juce::String(mDpiComp, 3) + " logical=" + juce::String(getWidth()) +
+            "x" + juce::String(getHeight()) + (refused ? " -- host refused the resize, retrying once" : ""));
+
+    if (refused)
+    {
+        // 宿主在 SetViewContainer 期间拒了 SetViewSize（JUCE 包装已把编辑器退回原尺寸）：消息循环下一拍再试一次。
+        // 重试仍被拒时 mDpiComp 有意保留：之后每次切档位照样按补偿后的尺寸去要，不退回会被裁的尺寸。
+        juce::Component::SafePointer<SynchainBridgeWebEditor> safe(this);
+        juce::MessageManager::callAsync([safe] {
+            if (safe == nullptr)
+                return;
+            const auto want = safe->editorSizeForUiScale();
+            safe->setSize(want.x, want.y);
+            if (safe->getWidth() != want.x || safe->getHeight() != want.y)
+                safe->logDiag("aax dpi compensation resize not applied by host: requested " + juce::String(want.x) +
+                              "x" + juce::String(want.y) + ", got " + juce::String(safe->getWidth()) + "x" +
+                              juce::String(safe->getHeight()));
+        });
+    }
+#else
+    juce::ignoreUnused(peer);
 #endif
 }
 
@@ -803,11 +887,12 @@ void SynchainBridgeWebEditor::handleSetUiScale(const juce::Array<juce::var>& arg
     const double f = args.size() > 0 ? static_cast<double>(args[0]) : 1.0;
     mProcessor.setUiScale(static_cast<float>(f)); // clamp 到 [MinUiScale, MaxUiScale]
     const float s = mProcessor.getUiScale();
-    // 仅缩放编辑器窗口为 DESIGN×s（实时预览）；web 侧卡片用 (100/s)%+zoom:s 相对窗口自适应铺满（DPI 无关）。
+    // 仅缩放编辑器窗口为 DESIGN×s（实时预览；Windows AAX 再乘 mDpiComp）；web 侧卡片是固定设计盒 + zoom:s。
     // 注意：这里**不**写全局默认——防呆确认「保持」时才经 commitUiScale 落盘，避免未确认的极端档位
     // 在用户 10s 内关窗（revert 定时器随 WebView 销毁而失效）时污染全局、导致新实例仍开大（v1.2.5 修）。
-    const int wantW = juce::roundToInt(kDesignW * s);
-    const int wantH = juce::roundToInt(kDesignH * s);
+    const auto want = editorSizeForUiScale();
+    const int wantW = want.x;
+    const int wantH = want.y;
     setSize(wantW, wantH);
     // [AAX 诊断] 宿主可能拒绝改尺寸（AAX 下 JUCE 会同步把编辑器退回原尺寸），下面照样回 ok:true +
     // 退回后的 w/h；只在不一致时记一行，便于在 Pro Tools 里分清「缩放没生效」是谁拒的。
@@ -818,8 +903,10 @@ void SynchainBridgeWebEditor::handleSetUiScale(const juce::Array<juce::var>& arg
     auto* obj = new juce::DynamicObject();
     obj->setProperty("ok", true);
     obj->setProperty("scale", s);
-    obj->setProperty("w", getWidth());
-    obj->setProperty("h", getHeight());
+    // w/h 按契约口径是 DESIGN×scale（= 网页视口的 CSS px）：DPI 补偿只是原生侧的事，回报前除掉 mDpiComp。
+    // 宿主拒绝了补偿后的尺寸时（见 applyDpiCompensation），这里回的就是网页此刻真实的 CSS 视口，会小于 DESIGN×scale。
+    obj->setProperty("w", juce::roundToInt(static_cast<float>(getWidth()) / mDpiComp));
+    obj->setProperty("h", juce::roundToInt(static_cast<float>(getHeight()) / mDpiComp));
     complete(juce::var(obj));
 }
 
