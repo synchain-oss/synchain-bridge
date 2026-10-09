@@ -140,6 +140,13 @@ AAX SDK（2.8.0）随 JUCE 8.0.8 自带，不需要另外下载；上面的配�
 -- Building Synchain Bridge for Windows: VST3 + AAX (static CRT, WebView2)
 ```
 
+configure 期还会给 AAX 封装打一个上游 JUCE 补丁（提交
+[`20872887e`](https://github.com/juce-framework/JUCE/commit/20872887e7b8e889b192cb3c4a435c99ec4e16e8)，修 Windows 显示缩放
+非 100% 时 Pro Tools 插件窗被裁切）：JUCE 目录不动，改动后的 `juce_audio_plugin_client_AAX.cpp` 生成到
+`<构建目录>/_deps/juce-aax-patched/` 并替代原文件编进 AAX 目标，日志里应有
+`-- AAX: applied upstream JUCE commit 20872887e (Windows HiDPI host bounds) …`；JUCE 源码对不上补丁时 configure 直接 FATAL，
+JUCE ≥ 9（已含该修复）自动跳过。
+
 ### 产物
 
 ```
@@ -250,12 +257,13 @@ pwsh scripts/gates.ps1 -PluginOnly -IncludeAax -BuildDir build-aax
 
 插件在少数事件上经 JUCE `Logger` 写一行诊断，前缀统一为 `SynchainBridge:`，全部在 message 线程、音频线程零日志。
 没有设置 Logger 时落到 `OutputDebugString`，Release 构建同样可见：用 Sysinternals DebugView（Capture → Capture Win32）
-按 `SynchainBridge:` 过滤。日志不止下表几行（例如 WebView 首帧放行的 `webview revealed (…)`），与 Pro Tools 排障最相关的是这四行 ——
-前三行由编辑器写，**只在插件窗口开着时**出现；最后一行由处理器的 30 Hz timer 写，窗口关着也会出现（极短的切换可能漏记）：
+按 `SynchainBridge:` 过滤。日志不止下表几行（例如 WebView 首帧放行的 `webview revealed (…)`），与 Pro Tools 排障最相关的是这五行 ——
+前四行由编辑器写，**只在插件窗口开着时**出现；最后一行由处理器的 30 Hz timer 写，窗口关着也会出现（极短的切换可能漏记）：
 
 | 时机 | 文案（`…` 为实际值） |
 |---|---|
 | 打开编辑器 | `SynchainBridge: editor opened: host=… wrapper=… size=WxH uiScale=… io=<入>/<出> desktopScale=…`（Pro Tools 下 `host=ProTools wrapper=AAX`） |
+| 编辑器第一次挂上原生窗口（每个编辑器实例一次） | `SynchainBridge: editor peer: platformScale=… desktopScale=… logical=WxH`（宿主窗口应有的物理尺寸 = logical × 两个缩放；Windows 175% 下 `platformScale=1.75`） |
 | 缩放档位被宿主拒绝（只在实际尺寸 ≠ 请求尺寸时） | `SynchainBridge: ui scale resize not applied by host: requested WxH, got wxh` |
 | 插件窗口开着时，采样率 / 声道变化（只在变化时） | `SynchainBridge: audio: sampleRate=… channels=… latencyMs=…` |
 | 宿主 non-realtime（离线渲染）状态切换 | `SynchainBridge: host non-realtime on (wrapper=AAX)` / `… off (wrapper=AAX)` |

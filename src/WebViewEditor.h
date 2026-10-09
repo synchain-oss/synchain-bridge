@@ -64,6 +64,7 @@ public:
 
     void resized() override;
     void paint(juce::Graphics&) override;
+    void parentHierarchyChanged() override; // 只用于 peer 首次可用时的一次性缩放诊断行
 
 private:
     void timerCallback() override;
@@ -138,6 +139,7 @@ private:
     // [SL-386] 开窗遮挡闸：「WebView 子窗口此刻该不该待在可视区之外」的唯一判定处。
     webview::RevealGate mRevealGate;
     bool mRevealLogged = false; // 本次加载尝试是否已写过放行诊断行（只写第一次）
+    bool mPeerScaleLogged = false; // 本编辑器实例是否已写过 `editor peer:` 缩放诊断行（只写第一次）
 
     // 就绪门控 + 变化节流（只在 message 线程访问，mBridgeReady 跨线程读写用 atomic）
     std::atomic<bool> mBridgeReady{false};

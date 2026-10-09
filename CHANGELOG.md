@@ -6,8 +6,8 @@
 
 ## [未发布]
 
-<!-- AAX 线(feature/aax)的小节骨架:各子分支只往自己负责的小节追加,不新增/重排小节;
-     切版时把仍为空的小节删掉。 -->
+<!-- AAX 线(feature/aax)的小节骨架:各子分支只往自己负责的小节追加,不新增/重排小节
+     (「修复」由 AAX-08 经主控同意补进骨架);切版时把仍为空的小节删掉。 -->
 
 ### 新增
 
@@ -29,6 +29,18 @@
     缩放档位被宿主拒绝;音频设置(采样率 / 声道 / 延迟)变化;宿主 non-realtime 状态切换。音频线程零改动。
 - 插件界面文案不再写死格式与旧版本号:副标题 `VST3 · AUDIO BRIDGE` → `DAW · AUDIO BRIDGE`;
   角标 `Synchain VST · v…` → `Synchain Bridge · v…`,首帧占位不再显示写死的 `v1.3.1`。
+
+### 修复
+
+- **AAX(Windows):系统显示缩放非 100%(实测 175%)时 Pro Tools 插件窗被裁切**,只露出左上约 1/缩放比例的内容,
+  右侧与下方缺失。根因在 JUCE 8.0.8 的 AAX 封装:报给 Pro Tools 的编辑器尺寸只乘了 JUCE 全局缩放、漏乘窗口的平台 DPI 缩放,
+  Pro Tools 按这个尺寸开容器,JUCE 却按物理像素渲染。修复 = 构建期回移上游 JUCE 提交
+  [`20872887e`](https://github.com/juce-framework/JUCE/commit/20872887e7b8e889b192cb3c4a435c99ec4e16e8)(JUCE 9 才带,
+  8.0.x 线没有):`CMakeLists.txt` 只在 Windows + AAX 目标 + JUCE < 9 时读 JUCE 原文件、按上游三处逐块替换(任一处对不上
+  configure 即 FATAL),生成到构建目录 `_deps/juce-aax-patched/` 并替代原文件编进 AAX 目标。不升 JUCE、不改 JUCE 目录;
+  VST3 / AU 与 macOS AAX 产物不受影响。升 JUCE 9 时整段删除。
+  - 诊断:编辑器第一次挂上原生窗口时一次性记一行 `editor peer: platformScale=… desktopScale=… logical=WxH`
+    (message 线程),用于真机核对宿主窗口应有的物理尺寸。
 
 ### 安全
 

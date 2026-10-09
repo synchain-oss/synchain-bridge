@@ -146,6 +146,148 @@ elseif(SYNCHAIN_BRIDGE_AAX AND _bridge_aax_supported)
                       "but SynchainBridgeVST_AAX was not created (JUCE format filtering changed?)")
 endif()
 
+# --- AAX:Windows 非 100% 显示缩放下的宿主窗口尺寸(回移上游 JUCE 提交 20872887e)---
+# 症状：Windows 缩放 175% 时 Pro Tools 插件窗只露出左上约 1/1.75，右侧与下方被裁。根因在 JUCE 8.0.8 的 AAX 包装：
+# convertToHostBounds 只乘 Desktop 全局缩放(=1)，没乘 peer 的平台缩放(1.75)—— Pro Tools(System DPI-aware)按它报的
+# 尺寸开容器，JUCE peer 却按 1.75 倍物理像素渲染。上游修复 = JUCE 提交 20872887e(只改 juce_audio_plugin_client_AAX.cpp，
+# https://github.com/juce-framework/JUCE/commit/20872887e7b8e889b192cb3c4a435c99ec4e16e8)，在 JUCE 9.0.x 里，8.0.x 线没有。
+# 只给 AAX 打这一个补丁、不升 JUCE：configure 期读 JUCE 原文件，按上游三处逐块替换(每处断言旧文本恰好 1 次、替换后新文本
+# 在场，否则 FATAL —— JUCE 内容一变就停下)，生成到构建目录 _deps/ 下(零警告门的 [\\/](JUCE|vcpkg|vcpkg_installed|_deps)[\\/]
+# 过滤照旧把它当 JUCE 代码)，原文件设 HEADER_FILE_ONLY、AAX 目标改编生成件。
+#   - 不直接改 JUCE 目录：本机 JUCE 是多个项目共用的检出，CI 每次按 .juce-version 重新 clone 并断言 tag 身份，改了留不住。
+#   - 版本读 ${JUCE_PATH}/CMakeLists.txt 的 project(JUCE VERSION …)，不读 .juce-version：补丁作用于 JUCE_PATH 这棵树，
+#     判据就读这棵树(.juce-version 是 CI clone 用的钉，手工 configure 可以指向别的 JUCE)。JUCE >= 9 已含此修复，自动跳过；
+#     升 JUCE 9 时整段删除。
+#   - HEADER_FILE_ONLY 是目录级源文件属性：同目录的 VST3 目标也列着原文件，但那里 JucePlugin_Build_AAX=0、整个 TU 在
+#     `#if JucePlugin_Build_AAX` 里是空的，不编它对 VST3 产物零影响。
+#   - macOS 不打：mac 上 AAX 走 juce_audio_plugin_client_AAX.mm 包装(#include 本 .cpp)，peer 平台缩放恒为 1，这是 Windows DPI 问题。
+if(WIN32 AND TARGET SynchainBridgeVST_AAX)
+  file(STRINGS "${JUCE_PATH}/CMakeLists.txt" _bridge_juce_project_line REGEX "^project\\(JUCE VERSION ")
+  if(NOT _bridge_juce_project_line MATCHES "^project\\(JUCE VERSION ([0-9]+\\.[0-9]+\\.[0-9]+)")
+    message(FATAL_ERROR "AAX HiDPI backport: cannot parse 'project(JUCE VERSION x.y.z' from ${JUCE_PATH}/CMakeLists.txt")
+  endif()
+  set(_bridge_juce_version "${CMAKE_MATCH_1}")
+
+  if(_bridge_juce_version VERSION_GREATER_EQUAL 9)
+    message(STATUS "AAX: JUCE ${_bridge_juce_version} already contains upstream commit 20872887e; "
+                   "HiDPI backport skipped -- delete this block from CMakeLists.txt")
+  else()
+    # 原文件路径取 JUCE 登记给 AAX wrapper 的 INTERFACE_SOURCES 原样字符串(源文件属性按这个键查，免得斜杠/大小写对不上)。
+    get_target_property(_bridge_aax_wrapper_srcs juce_audio_plugin_client_AAX INTERFACE_SOURCES)
+    list(FILTER _bridge_aax_wrapper_srcs INCLUDE REGEX "/juce_audio_plugin_client_AAX\\.cpp$")
+    list(LENGTH _bridge_aax_wrapper_srcs _bridge_aax_wrapper_count)
+    if(NOT _bridge_aax_wrapper_count EQUAL 1 OR NOT EXISTS "${_bridge_aax_wrapper_srcs}")
+      message(FATAL_ERROR "AAX HiDPI backport: expected exactly one existing juce_audio_plugin_client_AAX.cpp in "
+                          "juce_audio_plugin_client_AAX INTERFACE_SOURCES, got '${_bridge_aax_wrapper_srcs}'")
+    endif()
+    set(_bridge_aax_src "${_bridge_aax_wrapper_srcs}")
+    set(_bridge_aax_gen "${CMAKE_BINARY_DIR}/_deps/juce-aax-patched/juce_audio_plugin_client_AAX.cpp")
+
+    file(READ "${_bridge_aax_src}" _bridge_aax_text)
+    string(REPLACE "\r\n" "\n" _bridge_aax_text "${_bridge_aax_text}") # CI 的 Windows clone 可能是 CRLF
+
+    function(_bridge_aax_replace_once label old new)
+      string(FIND "${_bridge_aax_text}" "${old}" _first)
+      string(FIND "${_bridge_aax_text}" "${old}" _last REVERSE)
+      if(_first EQUAL -1 OR NOT _first EQUAL _last)
+        message(FATAL_ERROR "AAX HiDPI backport (${label}): the JUCE text to replace must occur exactly once in "
+                            "${_bridge_aax_src} (first=${_first}, last=${_last}); JUCE changed -- re-check 20872887e")
+      endif()
+      string(REPLACE "${old}" "${new}" _out "${_bridge_aax_text}")
+      string(FIND "${_out}" "${new}" _at)
+      if(_at EQUAL -1)
+        message(FATAL_ERROR "AAX HiDPI backport (${label}): replacement text missing after string(REPLACE)")
+      endif()
+      set(_bridge_aax_text "${_out}" PARENT_SCOPE)
+    endfunction()
+
+    # ① GetViewSize 改问 ContentWrapperComponent(它知道自己 peer 的缩放)。
+    _bridge_aax_replace_once("GetViewSize" [==[
+                *viewSize = convertToHostBounds ({ (float) component->getHeight(),
+                                                   (float) component->getWidth() });
+]==] [==[
+                *viewSize = component->convertToHostBounds ({ (float) component->getHeight(),
+                                                              (float) component->getWidth() });
+]==])
+    # ② 删掉 JuceAAX_GUI 里只乘全局缩放的静态 convertToHostBounds(连同它上面那条分隔线，与上游一致)。
+    _bridge_aax_replace_once("drop static convertToHostBounds" [==[
+        //==============================================================================
+        static AAX_Point convertToHostBounds (AAX_Point pluginSize)
+        {
+            auto desktopScale = Desktop::getInstance().getGlobalScaleFactor();
+
+            if (approximatelyEqual (desktopScale, 1.0f))
+                return pluginSize;
+
+            return { pluginSize.vert * desktopScale,
+                     pluginSize.horz * desktopScale };
+        }
+
+        //==============================================================================
+        struct ContentWrapperComponent final : public Component
+]==] [==[
+        //==============================================================================
+        struct ContentWrapperComponent final : public Component
+]==])
+    # ③ ContentWrapperComponent 加成员版(平台缩放 × 桌面缩放)。resizeHostWindow 里的同名调用不改，
+    #   名字查找先落在本类成员上(静态版已删，也没有别的候选 —— 解析错了就是编译错误，不会静默)。
+    #   上游用 std::invoke 包 lambda；这里改成立即调用的普通 lambda，语义相同，不依赖 <functional> 是否已被间接包含。
+    _bridge_aax_replace_once("ContentWrapperComponent::convertToHostBounds" [==[
+            bool resizeHostWindow()
+            {
+                if (pluginEditor != nullptr)
+]==] [==[
+            AAX_Point convertToHostBounds (AAX_Point p)
+            {
+                const auto scale = [&]
+                {
+                    if (auto* peer = getPeer())
+                        return (float) (peer->getPlatformScaleFactor() * peer->getComponent().getDesktopScaleFactor());
+
+                    return 1.0f;
+                }();
+
+                if (approximatelyEqual (scale, 1.0f))
+                    return p;
+
+                return { scale * p.vert,
+                         scale * p.horz };
+            }
+
+            bool resizeHostWindow()
+            {
+                if (pluginEditor != nullptr)
+]==])
+    string(FIND "${_bridge_aax_text}" "static AAX_Point convertToHostBounds" _bridge_aax_static_left)
+    if(NOT _bridge_aax_static_left EQUAL -1)
+      message(FATAL_ERROR "AAX HiDPI backport: a static convertToHostBounds is still present after patching")
+    endif()
+
+    # 改动声明(GPLv3 §5a)放文件头；内容不变就不重写，免得每次 reconfigure 都重编这个 TU。
+    string(PREPEND _bridge_aax_text
+      "// Synchain Bridge build-time copy of JUCE ${_bridge_juce_version} "
+      "modules/juce_audio_plugin_client/juce_audio_plugin_client_AAX.cpp, MODIFIED:\n"
+      "// backport of upstream JUCE commit 20872887e7b8e889b192cb3c4a435c99ec4e16e8 (2026-07-02, \"AAX Client: Fix\n"
+      "// editor size when running on Windows with dpi scaling other than 100%\"). Generated by CMakeLists.txt at\n"
+      "// configure time -- do not edit. Same licence as the original JUCE file (header below).\n\n")
+    set(_bridge_aax_prev "")
+    if(EXISTS "${_bridge_aax_gen}")
+      file(READ "${_bridge_aax_gen}" _bridge_aax_prev)
+      string(REPLACE "\r\n" "\n" _bridge_aax_prev "${_bridge_aax_prev}") # file(WRITE) 在 Windows 按文本模式落 CRLF
+    endif()
+    if(NOT "${_bridge_aax_prev}" STREQUAL "${_bridge_aax_text}")
+      file(WRITE "${_bridge_aax_gen}" "${_bridge_aax_text}")
+    endif()
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_bridge_aax_src}")
+
+    set_source_files_properties("${_bridge_aax_src}" TARGET_DIRECTORY SynchainBridgeVST_AAX
+                                PROPERTIES HEADER_FILE_ONLY TRUE)
+    target_sources(SynchainBridgeVST_AAX PRIVATE "${_bridge_aax_gen}")
+    message(STATUS "AAX: applied upstream JUCE commit 20872887e (Windows HiDPI host bounds) to the AAX wrapper "
+                   "(JUCE ${_bridge_juce_version} -> _deps/juce-aax-patched/juce_audio_plugin_client_AAX.cpp)")
+  endif()
+endif()
+
 # --- Embedded web UI assets (offline, no external deps) ---
 # Compiled into a static lib exposing BinaryData::* (index.html/styles.css/bridge.js/
 # i18n.js/index.js). WebViewEditor's resource provider serves them by original filename.

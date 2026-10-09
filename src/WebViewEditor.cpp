@@ -592,6 +592,24 @@ void SynchainBridgeWebEditor::paint(juce::Graphics& g)
 #endif
 }
 
+// [AAX-08 诊断] peer 第一次可用时一次性记下平台缩放 / 桌面缩放 / 逻辑尺寸：宿主窗口应有的物理尺寸 =
+// logical × platformScale × desktopScale。JUCE 8.0.8 的 AAX 包装漏乘平台缩放，Windows 非 100% 缩放下 Pro Tools
+// 会裁掉插件窗（CMakeLists.txt 回移上游 20872887e）；真机上据此核对。宿主把包装组件 addToDesktop 时 JUCE 沿子树
+// 递归回调到这里，只在 message 线程。
+void SynchainBridgeWebEditor::parentHierarchyChanged()
+{
+    juce::AudioProcessorEditor::parentHierarchyChanged();
+    if (mPeerScaleLogged)
+        return;
+    if (auto* peer = getPeer())
+    {
+        mPeerScaleLogged = true;
+        logDiag("editor peer: platformScale=" + juce::String(peer->getPlatformScaleFactor(), 2) +
+                " desktopScale=" + juce::String(peer->getComponent().getDesktopScaleFactor(), 2) +
+                " logical=" + juce::String(getWidth()) + "x" + juce::String(getHeight()));
+    }
+}
+
 // -----------------------------------------------------------------------------
 // WebView 装配
 // -----------------------------------------------------------------------------
