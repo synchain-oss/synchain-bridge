@@ -45,13 +45,13 @@ workflow 分四个 job：版本门禁独立前置，两个平台并行构建，�
 project(SynchainBridgeVST VERSION 1.4.0)
 ```
 
-> 本节以 `1.4.0` 为例，与下文第 4/5 步的示例版本一致；实际发版时全部换成目标版本。
+> 本节的 `1.4.0` 只是示例，与下文第 4/5 步的示例版本一致；实际发版时全部换成目标版本。下面的 bump 命令写成 `X.Y.Z`：新版本必须大于当前版本，照抄 `1.4.0` 会被拒。
 
 同一版本号另有 5 处镜像：`web-preview/mock-server.mjs` 的 `PLUGIN_VERSION`、`web-preview/package.json` 的 `version`、`web-preview/package-lock.json` 的根 `version` 与 `packages[""].version`（文件里依赖自己也有 `version`，不能全文替换）、`BRIDGE_CONTRACT.md` §三的 VERSION 行。用脚本一次改齐：
 
 ```powershell
-node scripts/bump-version.mjs 1.4.0 --dry-run   # 先看会改哪些文件
-node scripts/bump-version.mjs 1.4.0             # 改 CMake 与 5 处镜像,并把 CHANGELOG 的 [未发布] 切成 [1.4.0] — <今天的 UTC 日期>
+node scripts/bump-version.mjs X.Y.Z --dry-run   # 先看会改哪些文件
+node scripts/bump-version.mjs X.Y.Z             # 改 CMake 与 5 处镜像,并把 CHANGELOG 的 [未发布] 切成 [X.Y.Z] — <今天的 UTC 日期>
 ```
 
 脚本只改工作区，不提交、不打 tag：新版本必须是 `X.Y.Z` 且大于当前版本；当前镜像不一致、JSON 不是 npm 的标准格式、或改动超出版本字段所在的 6 行时整体放弃，一个文件都不写。切出的版本节开头有一行 `bump-version` 注释，提醒补「契约变更」与跳过的版本号，写完删掉。日期用 `--date YYYY-MM-DD` 指定。

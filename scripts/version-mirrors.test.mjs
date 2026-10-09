@@ -113,6 +113,7 @@ test("bump:只改版本字段所在的 6 行,依赖里同号的 version 不动,C
     const dep = Object.keys(j.packages).find((k) =>
       k.startsWith("node_modules/"),
     );
+    assert.ok(dep, "夹具前提:lockfile 里至少有一个 node_modules/ 依赖");
     j.packages[dep].version = old;
     return canonical(j);
   });

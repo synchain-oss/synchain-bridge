@@ -39,7 +39,7 @@ To verify: run `sha256sum -c SynchainBridge-*.zip.sha256` (on macOS: `shasum -a 
 
 **Signing:**
 - The VST3 / AU builds are not code-signed. On Windows, click "More info → Run anyway" if SmartScreen asks. On macOS, run `xattr -dr com.apple.quarantine` on the installed plug-in.
-- The AAX build is PACE-signed, as Pro Tools requires, with a SHA-256 Authenticode signature and an RFC 3161 timestamp. The Authenticode certificate is self-signed, so "Properties → Digital Signatures" shows an untrusted publisher. This is expected and does not affect loading in Pro Tools.
+- On Windows, the AAX build is PACE-signed, as Pro Tools requires, with a SHA-256 Authenticode signature and an RFC 3161 timestamp. The Authenticode certificate is self-signed, so "Properties → Digital Signatures" shows an untrusted publisher. This is expected and does not affect loading in Pro Tools.
 
 Full steps are in `INSTALL.txt` (and `INSTALL-AAX.txt`) inside each zip and on https://www.synchain.ca/download.
 
@@ -93,6 +93,8 @@ Full changelog: [CHANGELOG.md](https://github.com/synchain-oss/synchain-bridge/b
 ### 已知限制（Pro Tools，Beta）
 - <与英文逐条对应>
 ```
+
+「Signing」与「签名」里的 AAX 那一条按 Windows 签名件写（Authenticode、「属性 → 数字签名」都只存在于 Windows）；发 macOS AAX 时另写一条，按 `scripts/sign-aax-macos.sh` 的实际签名方式（codesign 身份、未经 Apple 公证、须去掉隔离属性）写，不要照抄 Windows 那条。
 
 只发一个平台的 AAX 时，在「What's in this release」里写一句另一个平台的情况（v1.6.0：「**macOS AAX** is built but not released yet; it will follow after testing on real hardware.」）。补传 AAX 时（[release.md](release.md) §7.4），在正文里注明补发日期。
 

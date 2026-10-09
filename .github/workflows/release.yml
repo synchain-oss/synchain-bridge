@@ -708,7 +708,9 @@ jobs:
 
       # 两个平台的产物一次性建成同一个 draft Release;generate_release_notes 全流程只在这里跑一次。
       # 带后缀的 tag(vX.Y.Z-<后缀>,含冒烟 tag *-test)建成预发布:prerelease: true、make_latest: false,发布后不会顶掉
-      # 当前的 Latest。判据只看 gate 导出的 version 里有没有 '-'(gate 已按 vX.Y.Z[-prerelease] 校验过形态)。
+      # 当前的 Latest。真正挡住 Latest 的是 prerelease: true —— GitHub 不允许 draft / prerelease 成为 Latest,draft 日后
+      # 在网页上转正式时靠的就是它;make_latest: false 只是额外一层,两行都不要删。
+      # 判据只看 gate 导出的 version 里有没有 '-'(gate 已按 vX.Y.Z[-prerelease] 校验过形态)。
       # 不带后缀的正式 tag 与以前一样:prerelease 为 false;make_latest 给空串,action 视同没传,用 GitHub API 的默认值。
       - name: Create draft GitHub Release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
