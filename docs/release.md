@@ -232,7 +232,7 @@ git tag v1.5.0 $sha && git push origin v1.5.0
 >
 > 已实测（2026-10-08）：自签名证书 + PACE 签名的件，零售版 Pro Tools（Windows 11）照常加载；`gh release upload` 可直传 draft（`v0.0.0-test` 彩排）。
 >
-> 仍标 **TO-VALIDATE** 的：Pro Tools Intro 未单独实测；`-KeyFile` 身份与 customer number 发布者这两条备选路径还没真签过；证书放在 `Cert:\LocalMachine\My`（而不是 `CurrentUser\My`）时能否签；macOS 侧全部（脚本照搬同一套写法，但 mac 上没法实测，相关项全部保留标记）。签名脚本的预检在 flag 不符时会中止并提示；核对完删除脚本与本节里的标记。
+> 仍标 **TO-VALIDATE** 的：Pro Tools Intro 未单独实测；`-KeyFile` 身份与 customer number 发布者这两条备选路径还没真签过；证书放在 `Cert:\LocalMachine\My`（而不是 `CurrentUser\My`）时能否签；macOS 侧全部（脚本照搬同一套写法，但 mac 上没法实测，相关项全部保留标记；`gh release upload` 直传 draft 与平台无关，不在此列）。签名脚本的预检在 flag 不符时会中止并提示；核对完删除脚本与本节里的标记。
 
 ### 7.1 一次性准备（Windows）
 
