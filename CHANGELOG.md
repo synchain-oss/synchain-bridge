@@ -50,6 +50,17 @@
   Pro Tools 175% 的修复),保留是为 per-monitor-aware 宿主。`CMakeLists.txt` 只在 Windows + AAX 目标 + JUCE < 9 时读 JUCE
   原文件、按上游三处逐块替换(任一处对不上 configure 即 FATAL),生成到构建目录 `_deps/juce-aax-patched/` 并替代原文件编进
   AAX 目标。不升 JUCE、不改 JUCE 目录;VST3 / AU 与 macOS AAX 产物不受影响。升 JUCE 9 时整段删除。
+- **插件界面:「界面缩放」下拉展开后的选项列表是浏览器默认样式**,与玻璃拟态界面不一致(在 Pro Tools AAX 里发现,所有宿主、
+  所有格式都有)。原因是 `web/styles.css` 只给收起态的下拉去了原生外观,`option` 和弹出层没有样式,WebView2 用 Chromium 原生弹窗画。
+  修复只改 `web/styles.css`:
+  - 支持 `appearance: base-select` 的引擎(本机实测 Edge / WebView2 运行时 154)走 customizable select:列表在页面内渲染成与面板
+    一致的玻璃面板(半透明浅色底 + 背景模糊,描边、圆角与卡片同系,等宽字体),选中项(✓ + 深一档底色)与悬停 / 键盘焦点项分得清,
+    最多显示约 8 行、其余滚动。弹层在 top layer,不被卡片的 `overflow: hidden` 裁切;又随下拉继承卡片的 `zoom`,任意缩放档位都与
+    界面同比例。收起态外观不变,自带的 `::picker-icon` 已隐藏,只留原来的小箭头。
+  - 不支持的环境(旧版 WebView2,以及尚不支持该特性的 WKWebView)仍用原生弹窗,只给 `option` 设底色与字色,Windows 上的原生列表
+    会随之贴近淡紫配色。
+  - 行为不变:仍是同一个 `<select>`,`change` → 10 秒防呆确认、`aria-label`、桥 #1 契约都没动。唯一差别在键盘:增强路径下收起态
+    按 ↑/↓ 先展开列表(列表内 ↑/↓ 移动、Enter 选定、Esc 关闭),不再像 Windows 原生下拉那样一按就换档并弹防呆确认。
 
 ### 安全
 
