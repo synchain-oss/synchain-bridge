@@ -198,14 +198,14 @@ input::placeholder {
 #vst-root [data-scale]:hover {
   background-color: rgba(255, 255, 255, 0.5);
 }
-/* 展开列表回退（原生弹窗：macOS WKWebView、旧版 WebView2）：样式管不到弹窗本身，只给选项底色/字色，
-   Windows Chromium 会尊重这两项，让原生列表大致贴合淡紫配色。 */
+/* 展开列表回退（不支持 base-select 的引擎走原生弹窗：旧版 WebView2、尚不支持的 WKWebView）：样式管不到
+   弹窗本身，只给选项底色/字色，Windows Chromium 会尊重这两项，让原生列表大致贴合淡紫配色。 */
 #vst-root [data-scale] option {
   background-color: #efe8f1;
   color: #2c2c2e;
 }
 
-/* 展开列表渐进增强（customizable select）：支持 appearance:base-select 的 Chromium / WebView2 把选项弹层
+/* 展开列表渐进增强（customizable select）：支持 appearance:base-select 的引擎（WebView2 等）把选项弹层
    ::picker(select) 画在页面内的 top layer —— 不被卡片 overflow:hidden 裁切，且随 select 继承卡片 zoom:F，
    任意档位都与卡片同比例。弹层做成与面板一致的玻璃拟态；收起态逐项还原成上面原生路径的盒子。
    只改外观，change 事件 / 防呆确认 / 键盘操作走的仍是同一个 <select>。 */
@@ -261,6 +261,11 @@ input::placeholder {
   #vst-root [data-scale] option:focus-visible {
     background-color: rgba(155, 147, 196, 0.2);
     color: #21212a;
+  }
+  /* 键盘焦点另加一圈描边：鼠标悬停一项、键盘焦点在另一项时也分得清 */
+  #vst-root [data-scale] option:focus-visible {
+    outline: 1px solid rgba(108, 99, 150, 0.6);
+    outline-offset: -1px;
   }
   #vst-root [data-scale] option:checked {
     background-color: rgba(155, 147, 196, 0.36);
