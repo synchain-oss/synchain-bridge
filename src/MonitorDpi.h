@@ -4,8 +4,6 @@
 
 #pragma once
 
-#include <cmath>
-
 // =============================================================================
 // Synchain Bridge — 显示器 DPI 查询与 WebView2 DPI 补偿系数（AAX-08）
 // -----------------------------------------------------------------------------
@@ -23,13 +21,14 @@ namespace dpi
 // 系统缺 API / 句柄无效）回 0。只在 message 线程调用。
 double effectiveMonitorScale(void* nativeWindowHandle);
 
-// 补偿系数 comp = monitorScale / peerScale；任一输入不是正数，或 |comp - 1| < 0.01 时回 1（视为不补偿）。
-inline double compensation(double monitorScale, double peerScale) noexcept
+// 补偿系数 comp = monitorScale / peerScale；任一输入不是正数（含 NaN），或 |comp - 1| < 0.01 时回 1（视为不补偿）。
+// constexpr：边界用例由 MonitorDpi.cpp 的 static_assert 在每次编译时钉住。
+constexpr double compensation(double monitorScale, double peerScale) noexcept
 {
     if (!(monitorScale > 0.0) || !(peerScale > 0.0))
         return 1.0;
     const double comp = monitorScale / peerScale;
-    return std::abs(comp - 1.0) < 0.01 ? 1.0 : comp;
+    return (comp - 1.0 < 0.01 && 1.0 - comp < 0.01) ? 1.0 : comp;
 }
 
 } // namespace dpi

@@ -658,6 +658,7 @@ void SynchainBridgeWebEditor::applyDpiCompensation(juce::ComponentPeer& peer)
     if (refused)
     {
         // 宿主在 SetViewContainer 期间拒了 SetViewSize（JUCE 包装已把编辑器退回原尺寸）：消息循环下一拍再试一次。
+        // 重试仍被拒时 mDpiComp 有意保留：之后每次切档位照样按补偿后的尺寸去要，不退回会被裁的尺寸。
         juce::Component::SafePointer<SynchainBridgeWebEditor> safe(this);
         juce::MessageManager::callAsync([safe] {
             if (safe == nullptr)
@@ -903,6 +904,7 @@ void SynchainBridgeWebEditor::handleSetUiScale(const juce::Array<juce::var>& arg
     obj->setProperty("ok", true);
     obj->setProperty("scale", s);
     // w/h 按契约口径是 DESIGN×scale（= 网页视口的 CSS px）：DPI 补偿只是原生侧的事，回报前除掉 mDpiComp。
+    // 宿主拒绝了补偿后的尺寸时（见 applyDpiCompensation），这里回的就是网页此刻真实的 CSS 视口，会小于 DESIGN×scale。
     obj->setProperty("w", juce::roundToInt(static_cast<float>(getWidth()) / mDpiComp));
     obj->setProperty("h", juce::roundToInt(static_cast<float>(getHeight()) / mDpiComp));
     complete(juce::var(obj));

@@ -4,6 +4,8 @@
 
 #include "MonitorDpi.h"
 
+#include <limits>
+
 #if defined(_WIN32)
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -18,6 +20,14 @@ namespace synchain
 {
 namespace dpi
 {
+
+// compensation() 的边界在每次编译（两个平台、本地与 CI）时钉住。纯逻辑，但不另开 selftest：CI 跑哪些 selftest
+// 是写死在 workflow 里的名单。
+static_assert(compensation(1.75, 1.0) == 1.75, "System-aware host at 175%: compensate by 1.75");
+static_assert(compensation(1.75, 1.75) == 1.0, "PMv2 host: peer ratio already equals monitor scale -> no compensation");
+static_assert(compensation(1.005, 1.0) == 1.0 && compensation(0.995, 1.0) == 1.0, "1% dead band around 1");
+static_assert(compensation(0.0, 1.0) == 1.0 && compensation(1.75, 0.0) == 1.0, "unknown scale -> no compensation");
+static_assert(compensation(std::numeric_limits<double>::quiet_NaN(), 1.0) == 1.0, "NaN -> no compensation");
 
 #if defined(_WIN32)
 namespace
