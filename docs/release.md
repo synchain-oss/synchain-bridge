@@ -149,6 +149,7 @@ git push origin v<X.Y.Z>
 
 ```powershell
 git fetch origin --tags
+git merge-base --is-ancestor v1.5.3 origin/dev; $LASTEXITCODE   # 必须为 0(tag 在 dev 的历史里);非 0 就停下排查,否则 dev → prod 会把已发布的内容再带一遍
 git switch -c prod v1.5.3
 git push -u origin prod
 ```
