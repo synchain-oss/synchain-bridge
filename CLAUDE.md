@@ -21,11 +21,12 @@
 
 ## 1. 分支模型与工作流程
 
-- 默认主干 = `dev`;Bridge 主支线 = `feature/extraction`(ADR-013 / J13);AAX 支线 = `feature/aax`(子分支 `feat/AAX-NN-slug`)。
+- 默认主干 = `dev`;Bridge 主支线 = `feature/extraction`(ADR-013 / J13);AAX 支线 = `feature/aax`(子分支 `feat/AAX-NN-slug`);发布分支 = `prod`(不设 stage)。
+- 晋升链:`feat/*` →(子 PR)`feature/*` → `dev` → `prod`。`prod` 只收本仓 `dev` 的 PR(`branch-gate` 强制,对 fork / 机器人 PR 同样适用),用 merge commit 合并;正式 tag `vX.Y.Z` 只打在 `prod` 的合并提交上(§9、`docs/release.md` §5)。
 - same-repo 只收 `feat/*` / `feature/*`(以及 `dependabot/*`)到 `dev`;子 PR(base = `feature/*`)只跑 review bot,不跑完整 CI(D2)。
 - **fork PR 门禁政策(J31/J41,唯一政策)**：
   - fork → **任意分支名**(不要用 `dev`/`stage`/`prod`/`feature/v1`/`feature/extraction`)→ PR 到 `dev`;
-  - `branch-gate` 对 fork **不 exit 1**,只校验 head 分支名不在上述长期分支名集合(防同名伪装晋升),不强制 `feat/*` 命名;
+  - `branch-gate` 对到 `dev` 的 fork PR **不 exit 1**,只校验 head 分支名不在上述长期分支名集合(防同名伪装晋升),不强制 `feat/*` 命名;fork 开到 `prod` 的 PR 一律 exit 1(`prod` 只收本仓 `dev`);
   - fork PR 只跑无 secrets 的构建/测试(`build-and-validate` / `build-and-validate-macos` / `clang-format` / `branch-gate` / `compliance`);三个 review bot 因 `head.repo.full_name == base.repo.full_name` 条件一律不自动跑;
   - `external` label 由**维护者手工添加**(fork PR 的 `GITHUB_TOKEN` 只读,workflow 内加不了标签,不要用 `pull_request_target` 绕);
   - fork PR 唯一的 AI 审查通道 = 维护者评论 `/review` 显式触发(方案 D,`.github/workflows/review-dispatch.yml`)。
@@ -43,8 +44,9 @@
 
 ## 4. 各 Workflow 触发范围一览
 
-- `ci`(job `build-and-validate` = windows-2022;job `build-and-validate-macos` = macos-15,VST3 + AU + AAX,arm64-only;两个 job 都会经 AAX 打包脚本做 bundle 结构 / 架构断言和打包冒烟(含 Signed 模式拒收未签名 bundle 的反向断言),并在 push / workflow_dispatch 时上传未签名的 `aax-unsigned-win64` / `aax-unsigned-macos-arm64` artifact,pull_request 构建的是合并提交、不出件)/ `format`(job `clang-format`)/ `branch-gate`:`pull_request → dev` + `push → dev, 'feature/**'`。
-- `compliance`(gitleaks + reuse lint):同触发面,无 secrets,fork PR 同样跑。
+- `ci`(job `build-and-validate` = windows-2022;job `build-and-validate-macos` = macos-15,VST3 + AU + AAX,arm64-only;两个 job 都会经 AAX 打包脚本做 bundle 结构 / 架构断言和打包冒烟(含 Signed 模式拒收未签名 bundle 的反向断言),并在 push / workflow_dispatch 时上传未签名的 `aax-unsigned-win64` / `aax-unsigned-macos-arm64` artifact,pull_request 构建的是合并提交、不出件)/ `format`(job `clang-format`):`pull_request → dev` + `push → dev, 'feature/**'`。
+- `branch-gate`:`pull_request → dev, prod`(没有 push 触发)。base = `prod` 时只放行本仓的 `dev`,DCO 与冻结契约守卫照常跑;`dev` → `prod` 的 PR 上不跑 `ci` / `format` / `compliance`(这批提交合入 `dev` 时已验过,tag 触发的 `release` 会再完整构建一次)。
+- `compliance`(gitleaks + reuse lint):与 `ci` / `format` 同触发面,无 secrets,fork PR 同样跑。
 - `claude-review`:所有 base 分支、仅 same-repo(J31);`deepseek-review` / `pr-agent` 默认 disable。
 - `release`:push tags `v*` 触发草稿 Release,四段式 `gate`(版本一致性门禁,ubuntu-latest)→ `release`(windows-2022)∥ `release-macos`(macos-15)→ `publish`(ubuntu-latest,复验 sha256 后建 draft)。workflow 级 `contents: read`,`contents: write` 只授给 `publish` 一个 job。release 的 AAX 件只出未签名的 `aax-unsigned-*` artifact(保留 30 天),**不进 `publish`**(签名与上传由维护者手工做,见 `docs/release.md` §7)。**任一平台失败(含 AAX 构建 / 打包)= 整个 tag 无产物**(fail-hard,不用 `continue-on-error`;处理办法见 `docs/release.md` §6.1)。
 - `review-dispatch`:维护者评论 `/review` 显式触发(fork PR 唯一 AI 审查通道)。
@@ -95,6 +97,6 @@ Bridge 特有:PCM 发送由后台发送线程经 SPSC ring 转投(移出音频�
 
 - 抽取为公开仓库后 **GitHub Releases 才是真正公开可下载的渠道**(private 仓的 Release 附件匿名下载走不通)。
 - 版本号真源 = 顶层 `CMakeLists.txt` 的 `project(... VERSION)`;网页侧(闭源仓库)存在一份下游版本镜像,发版后必须同步。
-- tag 格式 `vX.Y.Z`(去掉 `vst-` 前缀);首个公开 tag = `v1.4.0`(U6,历史事实——实际打 tag 以 CMake 当前 VERSION 为准,gate 强制相等)。`*-test` 结尾的冒烟 tag 跳过严格版本相等、产物恒为 draft,改过发版链路后先用它端到端实跑(`docs/release.md` §5.1)。
-- Release 资产两个平台各一个,均附同名 `.sha256`:`SynchainBridge-VST3-v<版本>-win64.zip`(VST3)与 `SynchainBridge-VST3-AU-v<版本>-macos-arm64.zip`(VST3 + AU,arm64-only,不签名不公证)。另有两个 AAX 资产 `SynchainBridge-AAX-v<版本>-win64.zip` 与 `SynchainBridge-AAX-v<版本>-macos-arm64.zip`,由维护者签名后**手工上传**到 draft Release。打包与签名的唯一真源 = `scripts/package.ps1` / `scripts/package-macos.sh` / `scripts/package-aax.ps1` / `scripts/package-aax-macos.sh` / `scripts/sign-aax.ps1` / `scripts/sign-aax-macos.sh`,绝不在 workflow 里内联打包命令。
+- tag 格式 `vX.Y.Z`(去掉 `vst-` 前缀);首个公开 tag = `v1.4.0`(U6,历史事实——实际打 tag 以 CMake 当前 VERSION 为准,gate 强制相等)。**正式 tag 只打在 `prod` 上**:`feature/*` → `dev`(PR)→ `prod`(PR,只收 `dev`)→ 在 `prod` 的合并提交上打 tag(`docs/release.md` §5)。`*-test` 结尾的冒烟 tag 跳过严格版本相等、产物恒为 draft,可以打在任何分支上,改过发版链路后先用它端到端实跑(`docs/release.md` §5.1)。
+- Release 资产两个平台各一个,均附同名 `.sha256`:`SynchainBridge-VST3-v<版本>-win64.zip`(VST3)与 `SynchainBridge-VST3-AU-v<版本>-macos-arm64.zip`(VST3 + AU,arm64-only,不签名不公证)。另有两个 AAX 资产 `SynchainBridge-AAX-v<版本>-win64.zip` 与 `SynchainBridge-AAX-v<版本>-macos-arm64.zip`,由维护者签名后**手工上传**到 draft Release(v1.6.0 只发 Windows x64;macOS AAX 由 CI 构建,借 Mac 实测之后再发布)。打包与签名的唯一真源 = `scripts/package.ps1` / `scripts/package-macos.sh` / `scripts/package-aax.ps1` / `scripts/package-aax-macos.sh` / `scripts/sign-aax.ps1` / `scripts/sign-aax-macos.sh`,绝不在 workflow 里内联打包命令。
 - R2 固定 key 覆盖上传是否保留由 08 文档决策;本仓不默认启用。

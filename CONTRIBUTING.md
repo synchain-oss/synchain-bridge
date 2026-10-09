@@ -29,9 +29,10 @@ git rebase --signoff      # a range of commits
 
 ## 3. Branch model
 
-- The default branch is `dev`; the Bridge feature trunk is `feature/extraction` (ADR-013 / J13). AAX (Pro Tools) work lives on the `feature/aax` trunk, with sub-branches named `feat/AAX-NN-slug`.
+- The default branch is `dev`; the Bridge feature trunk is `feature/extraction` (ADR-013 / J13). AAX (Pro Tools) work lives on the `feature/aax` trunk, with sub-branches named `feat/AAX-NN-slug`. The release branch is `prod` (there is no `stage`).
+- Promotion: `feat/*` → (sub-PR) `feature/*` → `dev` → `prod`. `prod` accepts PRs only from this repository's `dev` (enforced by `branch-gate`, for fork and bot PRs too), and release tags `vX.Y.Z` are cut only on `prod`.
 - **Internal contributors** work on `feat/<TASKID>-<slug>` branches based on the relevant trunk (`feature/extraction` or `feature/aax`), then open a PR to that trunk. Same-repo PRs to `dev` are only accepted from `feat/*` / `feature/*` (plus `dependabot/*`).
-- **External contributors** (J31/J41): fork the repo, use **any branch name** (do not use `dev`, `stage`, `prod`, `feature/v1`, or `feature/extraction`), and open a PR to `dev`. `branch-gate` does not reject fork PRs; it only asserts the head branch is not one of those long-lived names. Fork PRs run the secret-free build/tests (after a maintainer approves the run); the AI review bots do not run automatically. A maintainer manually adds the `external` label.
+- **External contributors** (J31/J41): fork the repo, use **any branch name** (do not use `dev`, `stage`, `prod`, `feature/v1`, or `feature/extraction`), and open a PR to `dev`. `branch-gate` does not reject fork PRs to `dev`; it only asserts the head branch is not one of those long-lived names. Fork PRs run the secret-free build/tests (after a maintainer approves the run); the AI review bots do not run automatically. A maintainer manually adds the `external` label.
 
 ## 4. Commit convention
 
@@ -63,4 +64,4 @@ Run the same command list documented in `CLAUDE.md` §2 (single source of truth)
 
 ## 9. Release process (maintainers only)
 
-Releases are cut by tagging `vX.Y.Z` (the version truth is `project(... VERSION)` in `CMakeLists.txt`). The `release.yml` workflow builds, runs pluginval, verifies the tag matches the CMake version, and produces the zip + sha256 draft release. See [`docs/release.md`](docs/release.md) for the full runbook. VST3 / AU are not signed. AAX files are signed by hand by the maintainer on a local machine with `scripts/sign-aax.ps1` / `scripts/sign-aax-macos.sh` (CI holds no signing credentials and only produces `-UNSIGNED` artifacts) and uploaded to the draft release afterwards — see [§7 of `docs/release.md`](docs/release.md#7-aaxpro-tools本机签名--手工上传).
+Releases go `feature/*` → `dev` (PR) → `prod` (PR, from `dev` only), and are cut by tagging `vX.Y.Z` on the `prod` merge commit (the version truth is `project(... VERSION)` in `CMakeLists.txt`). The `release.yml` workflow builds, runs pluginval, verifies the tag matches the CMake version, and produces the zip + sha256 draft release. See [`docs/release.md`](docs/release.md) for the full runbook. VST3 / AU are not signed. AAX files are signed by hand by the maintainer on a local machine with `scripts/sign-aax.ps1` / `scripts/sign-aax-macos.sh` (CI holds no signing credentials and only produces `-UNSIGNED` artifacts) and uploaded to the draft release afterwards — see [§7 of `docs/release.md`](docs/release.md#7-aaxpro-tools本机签名--手工上传).

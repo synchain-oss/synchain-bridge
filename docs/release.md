@@ -1,6 +1,8 @@
 # 发布流程
 
-> 发布由 `push: tags: ['v*']` 触发 [.github/workflows/release.yml](../.github/workflows/release.yml)，全自动完成「版本一致性门禁 → 两平台构建 → pluginval / auval → 打包 zip/sha256 → 草稿 Release」。发版者在本地只需两步：**改版本号 + 打 tag**。
+> 发布由 `push: tags: ['v*']` 触发 [.github/workflows/release.yml](../.github/workflows/release.yml)，全自动完成「版本一致性门禁 → 两平台构建 → pluginval / auval → 打包 zip/sha256 → 草稿 Release」。发版者要做的只有：**改版本号 → 晋升 `prod` → 在 `prod` 上打 tag**。
+>
+> 发版分支流程：`feature/aax`（或其他 `feature/*`）→ `dev`（PR）→ `prod`（PR，只允许来自 `dev`，由 `branch-gate` 强制）→ 在 `prod` 的合并提交上打 `vX.Y.Z`。**正式 tag 只打在 `prod` 上**，见 [§5](#5-晋升-prod在-prod-上打-tag-触发-releaseyml)；冒烟 tag（§5.1）不受此限。
 >
 > AAX（Pro Tools）是唯一例外：CI 只产出**未签名**件（artifact `aax-unsigned-*`，不进 Release），PACE 签名、打发行包、上传到 draft 由维护者在本机手工完成，见 [§7](#7-aaxpro-tools本机签名--手工上传)。
 >
@@ -48,6 +50,8 @@ project(SynchainBridgeVST VERSION 1.4.0)
 同一版本号在 `web-preview/`（`mock-server.mjs` 的 `PLUGIN_VERSION`、`package.json` / `package-lock.json` 的 `version`）有一份镜像，改完由 `pwsh scripts/gates.ps1` 的版本一致性 gate 断言，不一致会直接 FAIL。
 
 版本经 `JucePlugin_VersionString` 自动流入插件 UI 与 `status` 帧上报，无需再改任何手写常量（见 `BRIDGE_CONTRACT.md` §三）。
+
+改版本号和其他改动一样，在 `feat/*` 分支上提交、经 PR 合入功能支线，再随支线进 `dev`；不要直接改 `dev` / `prod`。
 
 ## 2. 构建（本地验证）
 
@@ -120,19 +124,43 @@ bash scripts/package-aax-macos.sh --mode unsigned --version 1.4.0 --build-dir bu
 
 `-Mode` / `--mode` 必填、无默认值；版本规则（显式传空串直接失败）与 `.sha256` / `package-summary.md` 格式同上。Unsigned 产出 `SynchainBridge-AAX-v<版本>-<平台>-UNSIGNED.zip`；不带后缀的发行名只在 Signed 模式、且 bundle 确实带签名时才产出 —— Signed 由 §7 的签名脚本在签完之后调用，不要手工对未签名 bundle 跑 Signed（会被拒收）。
 
-## 5. 打 tag 触发 release.yml
+## 5. 晋升 `prod`，在 `prod` 上打 tag 触发 release.yml
+
+发版分支流程：`feature/aax`（或其他 `feature/*`）→ `dev`（PR）→ `prod`（PR，只允许来自 `dev`）→ 在 `prod` 的合并提交上打 `vX.Y.Z`。正式 tag 只打在 `prod` 上，不打在 `dev` / `feature/*` 上。
+
+1. 版本号改动（§1）随功能支线经 PR 合入 `dev`。
+2. 开 `dev` → `prod` 的 PR。`branch-gate` 在 base = `prod` 时只放行本仓的 `dev`：其他分支、fork、机器人开到 `prod` 的 PR 一律红。DCO 与冻结契约守卫照常跑：
+   - DCO 跳过 merge commit，其余提交逐个检查 sign-off。commit 列表有 250 条上限，超过直接红；每次发版都晋升一次 `prod` 就不会触顶。
+   - `dev` 相对 `prod` 的 diff 碰到七个契约文件之一时，`contract-guard` 与 `branch-gate` 都会读 PR body 里的 `contract-impact`。按这批改动里最严的级别写；只动了 `BRIDGE_CONTRACT.md` §三的登记快照（例如改版本号）时写 `contract-impact: none`。
+   - 这个 PR 上不跑 `ci` / `format` / `compliance`（它们的 PR 触发面只有 `dev`）：同一批提交合入 `dev` 时已经验过，打 tag 后 `release.yml` 还会完整构建一次。
+3. 合并方式用 merge commit（`gh pr merge <N> --merge`），不要 squash / rebase：否则 `prod` 与 `dev` 的历史分叉，下一次 `dev` → `prod` 会把已经发布的提交再带一遍。
+4. 在 `prod` 的合并提交上打 tag：
 
 ```powershell
 # <X.Y.Z> = CMakeLists.txt 当前 project(... VERSION)——两者不相等 gate 必红
+git switch prod
+git pull --ff-only
+git log -1 --format='%H %s'   # 应为刚合并的 dev → prod 合并提交
 git tag v<X.Y.Z>
 git push origin v<X.Y.Z>
 ```
+
+**首次建立 `prod`**（1.6.0 之前本仓没有 `prod`，只做一次）：从**上一个已发布 tag** 的提交切出 `prod`，推上去后按第 2 步开 `dev` → `prod` 的 PR。上一个已发布的版本以 GitHub Releases 页面为准（1.6.0 时为 `v1.5.3`）：
+
+```powershell
+git fetch origin --tags
+git merge-base --is-ancestor v1.5.3 origin/dev; $LASTEXITCODE   # 必须为 0(tag 在 dev 的历史里);非 0 就停下排查,否则 dev → prod 会把已发布的内容再带一遍
+git switch -c prod v1.5.3
+git push -u origin prod
+```
+
+建好后给 `prod` 配分支保护：必须经 PR 合并、禁止 force push 与删除，required check **只设 `branch-gate`**。不要照搬 `dev` 的 required check 列表：`compliance` / `clang-format` / `build-and-validate` / `build-and-validate-macos` 不在 `prod` 的 PR 上跑，设成 required 会让 PR 一直 pending。
 
 触发后：`gate` 校验版本 → `release` / `release-macos` 并行构建、验证、打包 → `publish` 复验哈希并建 **draft** Release。到 GitHub Releases 页面把草稿转正式即可；本版要发 AAX 时，转正式之前先按 §7.3 签名并把 AAX 传上 draft。
 
 ### 5.1 冒烟 tag（`v0.0.0-test`）：首次改动发版链路后必须实跑
 
-`gate` 对 `*-test` 结尾的 tag 跳过严格版本相等，产物恒为 draft。改过 `release.yml` / 打包脚本 / `CMakeLists.txt` 的平台相关部分之后，先打一个冒烟 tag 端到端验证四段链路（`gate` → `release` ∥ `release-macos` → `publish`），确认 **draft Release 真被建出来、两个平台的 zip 与 `.sha256` 都挂上了**，再打真实版本 tag。
+`gate` 对 `*-test` 结尾的 tag 跳过严格版本相等，产物恒为 draft。冒烟 tag 可以打在任何分支上（不要求在 `prod` 上），通常打在要验证的那条分支的最新提交上。改过 `release.yml` / 打包脚本 / `CMakeLists.txt` 的平台相关部分之后，先打一个冒烟 tag 端到端验证四段链路（`gate` → `release` ∥ `release-macos` → `publish`），确认 **draft Release 真被建出来、两个平台的 zip 与 `.sha256` 都挂上了**，再打真实版本 tag。
 
 AAX 另确认两点：这次 run 里有 `aax-unsigned-win64` 与 `aax-unsigned-macos-arm64` 两个 artifact（各含一个 `-UNSIGNED.zip` + `.sha256`）；draft 上**仍然只有那四个** VST3 / AU 资产 —— 未签名 AAX 不会自动上 Release。手边有 PACE 工具时，可以顺手对这个测试 draft 彩排一遍 §7.3 的第 2–5 步（版本即 `0.0.0-test`）。
 
@@ -164,13 +192,23 @@ git tag -d v0.0.0-test
 3. `continue-on-error` 会把红灯变成「带注释的绿灯」，违背全仓 fail-closed 的纪律，而 artifact 缺失要到签名那天才会被发现；
 4. 拆成独立 job 要多付一次两平台的完整构建。
 
-处理：修掉失败原因后，**删掉 draft Release（如果有）与该 tag，再重新打同名 tag**：
+处理：修掉失败原因后，**删掉 draft Release（如果有）与该 tag，再重新打同名 tag**。删 tag 之前先记下它指向的提交。之后分两种情况：
+
+- **要改代码**：修复同样走 `feature/*` → `dev` → `prod`（§5），新 tag 打在新的 `prod` 合并提交上。
+- **只是 runner 抖动、代码不用改**：在记下的原提交上重打。不要直接用 `prod` 的 HEAD：`prod` 在这期间可能已经前进过。
 
 ```powershell
+$sha = git rev-list -n 1 v1.5.0   # 删之前先记下原提交
 git push origin :refs/tags/v1.5.0
 git tag -d v1.5.0
-# 修复后重新打
+
+# 情况一:修复合入 prod 后,在新的合并提交上重打
+git switch prod
+git pull --ff-only
 git tag v1.5.0 && git push origin v1.5.0
+
+# 情况二:runner 抖动,在原提交上重打
+git tag v1.5.0 $sha && git push origin v1.5.0
 ```
 
 两个构建 job 的 `timeout-minutes` 都是 60（对称；两边都要编译多个 format wrapper —— Windows 为 VST3 + AAX，mac 为 VST3 + AU + AAX，mac 侧还多一次 ixwebsocket 的编译；JUCE / ixwebsocket 源码 / vcpkg 二进制有 `actions/cache`，但 miss 时也得够用）。若将来希望「mac 挂了 Windows 仍能发」，改法是把 `publish` 换成 `if: always() && needs.release.result == 'success'` 并按存在的 artifact 动态挂载 —— 属于**需要用户拍板**的行为变更，未擅自实施。
@@ -255,10 +293,11 @@ git tag v1.5.0 && git push origin v1.5.0
 
    artifact 里是 `SynchainBridge-AAX-v<X.Y.Z>-<平台>-UNSIGNED.zip` 与同名 `.sha256`，两者要留在同一目录（签名脚本先校验哈希）。**记下这里的 `<run-id>`**：第 4 步要原样传给签名脚本做来源核对。
 
-3. **准备与 tag 一致的检出**。签名脚本要求 HEAD 正好是 `v<X.Y.Z>`，且 `LICENSE` / `THIRD-PARTY-NOTICES.md` / `LICENSES` / `scripts` 没有本地改动 —— 发行 zip 里的合规文件与打包脚本必须是这个版本的：
+3. **从 `prod` 上的 tag 检出**。正式 tag 只打在 `prod` 上（§5）。签名脚本要求 HEAD 正好是 `v<X.Y.Z>`，且 `LICENSE` / `THIRD-PARTY-NOTICES.md` / `LICENSES` / `scripts` 没有本地改动 —— 发行 zip 里的合规文件与打包脚本必须是这个版本的：
 
    ```powershell
    git fetch origin --tags
+   git merge-base --is-ancestor v<X.Y.Z> origin/prod; $LASTEXITCODE   # 0 = tag 在 prod 上;非 0 就停下,先查 tag 打在了哪里
    git worktree add ..\bridge-v<X.Y.Z> v<X.Y.Z>
    ```
 

@@ -6,15 +6,21 @@
 
 ## [未发布]
 
-<!-- AAX 线(feature/aax)的小节骨架:各子分支只往自己负责的小节追加,不新增/重排小节
-     (「修复」由 AAX-08 经主控同意补进骨架);切版时把仍为空的小节删掉。 -->
+## [1.6.0] — 2026-10-08
+
+> 版本号由 1.5.3 升至 **1.6.0**(minor:新增 AAX 格式;唯一真源 `CMakeLists.txt` 的 `project(... VERSION)`,四镜像同步:
+> web-preview 的 mock-server.mjs / package.json / package-lock.json 与 `BRIDGE_CONTRACT.md` §三,§三「产物」行同时登记 AAX)。
+> 本版新增 **AAX(Avid Pro Tools)格式,Beta**:两个平台都构建 AAX,但本版只发布 Windows x64 的签名件;macOS AAX 由 CI
+> 构建、暂不发布,借 Mac 实测之后再上(见「发布 / 分发」)。另含 Pro Tools 实测中发现的修复,以及新的发版分支流程
+> (`feature/*` → `dev` → `prod`,正式 tag 只打在 `prod` 上)。**不涉及契约变更**(wire 协议零改动,
+> `BRIDGE_CONTRACT_VERSION` 仍为 `2.0`;`BRIDGE_CONTRACT.md` 只改 §三的登记快照)。
 
 ### 新增
 
 - **AAX(Avid Pro Tools)格式,Beta**:Windows x64 与 macOS arm64 都构建 AAX 目标(CMake 选项
   `SYNCHAIN_BRIDGE_AAX`,两平台默认 ON,`-DSYNCHAIN_BRIDGE_AAX=OFF` 可整体关掉)。SDK 用 JUCE 8.0.8
-  自带的 AAX SDK 2.8.0(GPLv3 选项),不引外部 SDK、构建零 secret。产物**未签名**:PACE 签名之前只有
-  Pro Tools Developer 能加载。JUCE 不支持 AAX 的平台照常静默跳过;若开关打开、平台也支持、目标却没建出来
+  自带的 AAX SDK 2.8.0(GPLv3 选项),不引外部 SDK、构建零 secret。构建产物**未签名**:PACE 签名之前只有
+  Pro Tools Developer 能加载(本版发布的 Windows x64 AAX 由维护者本机签名,见「发布 / 分发」)。JUCE 不支持 AAX 的平台照常静默跳过;若开关打开、平台也支持、目标却没建出来
   (例如升 JUCE 后过滤逻辑变了),configure 直接 FATAL,不会静默丢格式。
   - 身份:`AAX_IDENTIFIER com.synchain.bridge`,厂商/产品码沿用 `Snch` / `Snb1`;类别
     `AAX_ePlugInCategory_None`(SDK 没有 Analyzer/Utility 类,Pro Tools 按类别组织菜单时归入 "Other");
@@ -193,9 +199,22 @@
     VST3/AU 四个资产;AAX 由维护者本机 PACE 签名后手工上传(`docs/release.md` 新增 §7「AAX(Pro Tools):本机签名 + 手工上传」)。
   - **失败语义 fail-hard**:任一平台的 AAX 打包 / 上传失败 = 整个 tag 无产物,不用 `continue-on-error`(理由见
     `docs/release.md` §6.1;同一脚本在 `ci.yml` 的每次 PR / push 上都冒烟过,回归在打 tag 前就会红)。
+- **`branch-gate` 启用 `dev` → `prod` 规则**(所有者批准的 workflow 改动;不加 secret、不加新 action、不用
+  `pull_request_target`):`on.pull_request.branches` 由 `[dev]` 改为 `[dev, prod]`;新增规则 ⓪ —— base 为 `prod` 时
+  只放行本仓的 `dev`,否则 exit 1。它排在机器人与 fork 的放行之前,fork / dependabot 开到 `prod` 的 PR 同样红(fork 的
+  head 即使叫 `dev` 也不算,连仓名一起比)。不设 `stage`,原先注释掉的 prod / stage 两行删除。base 为 `dev` 时的规则
+  逐字不变;DCO(merge commit 本就豁免)与冻结契约守卫在 base 为 `prod` 时照常跑。`ci` / `format` / `compliance` 的
+  触发面不变,`dev` → `prod` 的 PR 上不跑它们。
 
 ### 发布 / 分发(对下游可见)
 
+- **本版 AAX 只发 Windows x64 签名件** `SynchainBridge-AAX-v1.6.0-win64.zip`(附 `.sha256`):维护者在本机用 PACE wraptool
+  签名,Authenticode 证书为自签名,文件摘要 SHA256,带 RFC 3161 时间戳(`scripts/sign-aax.ps1` 的默认方式),签名后手工
+  上传到 draft Release。**macOS AAX 暂不发布**:CI 照常构建并产出 `aax-unsigned-macos-arm64`,借 Mac 实测之后再发。draft
+  上因此是 6 个资产(VST3 / AU 两个 zip 加 Windows AAX zip,各带 `.sha256`)。
+- **发版分支流程改为 `feature/*` → `dev`(PR)→ `prod`(PR,只收 `dev`)→ 在 `prod` 的合并提交上打 `vX.Y.Z`**。本仓此前
+  没有 `prod`,首次从上一个已发布 tag(`v1.5.3`)的提交切出;`dev` → `prod` 用 merge commit 合并。冒烟 tag 规则不变,
+  可以打在任何分支上(`docs/release.md` §5 / §5.1)。
 - **新增 AAX 打包脚本 `scripts/package-aax.ps1`(Windows x64)与 `scripts/package-aax-macos.sh`(macOS arm64)**,是 AAX
   打包的唯一真源(本机签名流程与 CI 共用);现有 `package.ps1` / `package-macos.sh` 一行未改,VST3 / AU 发版链路零风险。
   - `-Mode Unsigned|Signed`(mac:`--mode unsigned|signed`)**必填、无默认值**。**`-UNSIGNED` 约定**:未签名件一律叫
@@ -223,7 +242,8 @@
 ### 兼容性
 
 - **无契约变更**:桥 #1 / 桥 #2 的 wire 协议、Init 键与 `BRIDGE_CONTRACT_VERSION` 均零改动,握手里不带
-  格式字段;七个契约文件未触碰。
+  格式字段。七个契约文件中只有 `BRIDGE_CONTRACT.md` 被改动,且只改 §三的登记快照(VERSION 行随发版改为 `1.6.0`、
+  「产物」行登记 AAX),`contract-impact: none`。
 - **VST3 / AU 行为与 1.5.3 一致**:声道布局判定对 VST3 / AU 仍恒为接受(与 JUCE 默认逐字等价,已存工程的
   声道协商结果不变);离线早退只对 AAX 生效;`Snch` / `Snb1` / `BUNDLE_ID` 未变,已有 DAW 工程无需重建。
 - AAX 是**新增格式**,不存在旧实例迁移问题。
@@ -236,7 +256,7 @@
 
 - **AAX(Pro Tools)文档按已合入的脚本 / workflow / 代码定稿**:
   - README(中英,标题骨架对等)新增「Pro Tools (AAX) 安装」「Pro Tools (AAX) 已知限制」「AAX (Pro Tools) 源码构建」三节,
-    同步徽章、简介(标 Beta)、安装表(两个 AAX 资产从首个带 AAX 的版本起提供,签名后手工上传)、`-UNSIGNED` 件与
+    同步徽章、简介(标 Beta)、安装表(AAX 资产签名后手工上传;1.6.0 只发 Windows x64,见本节最后一条)、`-UNSIGNED` 件与
     `aax-unsigned-*` artifact 的定位、AAX 身份(`Snch` / `Snb1` + `com.synchain.bridge`)不可改;Windows 安装命令与
     `INSTALL-AAX.txt` 同口径(`$env:CommonProgramW6432`);已知限制按代码实际行为写(只有 mono→mono / stereo→stereo、
     无 AudioSuite / multi-mono、AAX 离线渲染不推流、DPP、1024 块口径、自签名 / 未公证、诊断日志前缀 `SynchainBridge:`)。
@@ -256,6 +276,18 @@
   JUCE 部分照旧 AGPLv3)、PACE wraptool 与 iLok 只在维护者本机使用、Avid 测试工具不入库,以及 Avid / Pro Tools / AAX、
   PACE / iLok、VST 商标行与「与 Avid 无隶属、赞助或背书关系」。不新增 `LICENSES/GPL-3.0-only.txt`(无入库文件声明该
   标识,`reuse lint` 会报未使用)。
+- **发版文档按新分支流程改写**:`docs/release.md` 开头写明分支流程;§5 改为晋升 `prod` 后在 `prod` 上打 tag(先
+  `git switch prod` + `git pull --ff-only`),写明 `dev` → `prod` 的 PR 上哪些检查会跑、用 merge commit 合并、首次建立
+  `prod` 的做法,以及 `prod` 的分支保护只设 `branch-gate` 一个 required check(其余检查不在 `prod` 的 PR 上跑,设成
+  required 会一直 pending);§5.1 注明冒烟 tag 可以打在任何分支上;§6.1 重打 tag 同样在 `prod` 上;§7.3 第 3 步从
+  `prod` 上的 tag 检出,并先核对 tag 在 `prod` 上。`CLAUDE.md`(§0 一字未动)同步 §1 分支模型、§4 `branch-gate` 触发面
+  (`dev, prod`,没有 push 触发;原文把它与 `ci` / `format` 并列写成有 push 触发,一并改正)与 §9 tag 只打在 `prod` 上;
+  `CONTRIBUTING.md` 同步分支模型与发版流程。
+- **README(中英)与 `docs/DAW_TEST_GUIDE.md`**:AAX 状态改为「自 v1.6.0 起提供 Windows x64 Beta,macOS AAX 稍后」,
+  安装表写实际资产名 `SynchainBridge-AAX-v1.6.0-win64.zip`(签名后手工上传到 Release),macOS AAX 一行标为暂未发布。
+  Pro Tools 已知限制(DAW_TEST_GUIDE 为「已知口径」)新增一条:Pro Tools 使用电脑自带声卡时会独占该设备,同一台电脑上的
+  浏览器可能无法播放声音;这不影响向房间推流,其他参与者照常能听到;需要在本机浏览器监听时,建议改用独立声卡,或把
+  浏览器的输出设成另一个设备。
 
 ## [1.5.3] — 2026-09-30
 
