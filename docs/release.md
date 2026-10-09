@@ -349,7 +349,7 @@ git tag v1.5.0 $sha && git push origin v1.5.0
    gh release upload v<X.Y.Z> dist/aax-signed/SynchainBridge-AAX-v<X.Y.Z>-win64.zip dist/aax-signed/SynchainBridge-AAX-v<X.Y.Z>-win64.zip.sha256 --repo synchain-oss/synchain-bridge
    ```
 
-   macOS 件同理（文件名换成 `-macos-arm64`）。`gh` 找不到 draft 时（TO-VALIDATE），在网页上打开 draft → Edit，把两个文件拖进附件区。
+   macOS 件同理（文件名换成 `-macos-arm64`）。万一 `gh` 找不到 draft（例如 tag 名写错），在网页上打开 draft → Edit，把两个文件拖进附件区。
 
 6. **验收**：两个平台都签了时 draft 上应有 8 个资产（VST3 / AU 两个 zip + AAX 两个 zip，各带 `.sha256`）；本版只发 Windows AAX 时为 6 个，并在 Release notes 里注明 macOS AAX 稍后提供。把 AAX 资产下载到一个新目录跑 `sha256sum -c *.sha256`，再用签名件按 [DAW_TEST_GUIDE.md 的 Pro Tools 一节](DAW_TEST_GUIDE.md#pro-toolsaax实测windows--macos)跑完 T01–T13。
 7. 可选：Release 标题追加「· AAX」。
