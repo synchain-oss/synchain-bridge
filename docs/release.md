@@ -192,15 +192,23 @@ git tag -d v0.0.0-test
 3. `continue-on-error` 会把红灯变成「带注释的绿灯」，违背全仓 fail-closed 的纪律，而 artifact 缺失要到签名那天才会被发现；
 4. 拆成独立 job 要多付一次两平台的完整构建。
 
-处理：修掉失败原因后，**删掉 draft Release（如果有）与该 tag，再重新打同名 tag**。修复同样走 `feature/*` → `dev` → `prod`（§5），新 tag 仍打在 `prod` 的合并提交上；只是 runner 抖动、代码不用改时，直接在原提交上重打：
+处理：修掉失败原因后，**删掉 draft Release（如果有）与该 tag，再重新打同名 tag**。删 tag 之前先记下它指向的提交。之后分两种情况：
+
+- **要改代码**：修复同样走 `feature/*` → `dev` → `prod`（§5），新 tag 打在新的 `prod` 合并提交上。
+- **只是 runner 抖动、代码不用改**：在记下的原提交上重打。不要直接用 `prod` 的 HEAD：`prod` 在这期间可能已经前进过。
 
 ```powershell
+$sha = git rev-list -n 1 v1.5.0   # 删之前先记下原提交
 git push origin :refs/tags/v1.5.0
 git tag -d v1.5.0
-# 修复合入 prod 后重新打
+
+# 情况一:修复合入 prod 后,在新的合并提交上重打
 git switch prod
 git pull --ff-only
 git tag v1.5.0 && git push origin v1.5.0
+
+# 情况二:runner 抖动,在原提交上重打
+git tag v1.5.0 $sha && git push origin v1.5.0
 ```
 
 两个构建 job 的 `timeout-minutes` 都是 60（对称；两边都要编译多个 format wrapper —— Windows 为 VST3 + AAX，mac 为 VST3 + AU + AAX，mac 侧还多一次 ixwebsocket 的编译；JUCE / ixwebsocket 源码 / vcpkg 二进制有 `actions/cache`，但 miss 时也得够用）。若将来希望「mac 挂了 Windows 仍能发」，改法是把 `publish` 换成 `if: always() && needs.release.result == 'success'` 并按存在的 artifact 动态挂载 —— 属于**需要用户拍板**的行为变更，未擅自实施。
