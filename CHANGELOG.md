@@ -6,6 +6,33 @@
 
 ## [未发布]
 
+### 持续集成
+
+- **`compliance` 新增版本镜像一致性检查**(步骤 `Plugin version mirrors`,只用 node 内建模块,不 npm install):
+  `scripts/check-version-mirrors.mjs` 断言 `CMakeLists.txt` 的 `project(... VERSION)` 与 5 处镜像一致 ——
+  `web-preview/mock-server.mjs` 的 `PLUGIN_VERSION`、`web-preview/package.json` 的 `version`、`web-preview/package-lock.json`
+  的根 `version` 与 `packages[""].version`、`BRIDGE_CONTRACT.md` §三的 VERSION 行。此前只有本地 gate 3e 守(CI 的版本门禁只在
+  打 tag 时比 tag 与 CMake)。另加一步 `node --test scripts/version-mirrors.test.mjs`(夹具测试)。`compliance` 是 `dev` 的
+  必需检查、无路径过滤。
+- **`release.yml` 的 `publish`:带后缀的 tag 建成预发布**。`vX.Y.Z-<后缀>`(含冒烟 tag `*-test`)的 draft 设 `prerelease: true`、
+  `make_latest: false`,发布后不会成为 Latest;正式 tag 的行为不变。不加新 action、不改 action 版本、不动 `gate`。
+
+### 内部工程(无契约变更)
+
+- **新增 `scripts/bump-version.mjs X.Y.Z`**:一次改齐 CMake 真源与 5 处镜像(定点改写,lockfile 里依赖自己的 `version` 不动;
+  改动超出版本字段所在的 6 行、JSON 不是 npm 的标准格式、或当前镜像本就不一致时整体放弃),并把 CHANGELOG 的 `[未发布]`
+  切成 `[X.Y.Z] — <UTC 日期>`;只改工作区,不提交、不打 tag。定位与读写规则只有一份(`scripts/version-mirrors.mjs`),
+  检查脚本与 bump 共用。
+- **gate 3e 改为调用 `scripts/check-version-mirrors.mjs`**:本地与 CI 同一份实现,原来 PowerShell 内联的读取规则随之移走,
+  判据不变(定点读取、CMake 先剔行注释再要求真源恰好一处、每个文件的取值个数必须等于期望);mock-server 的 `PLUGIN_VERSION`
+  由「取第一处」收紧为「恰好一处」。
+
+### 文档 / 合规
+
+- 新增 `docs/release-notes-template.md`:GitHub Release 双语正文模板(照 v1.5.3 / v1.6.0 的结构)与填写规则(SHA-256 从
+  `.sha256` 复制、链接钉 tag、compare 从上一个已发布版本算起、对官网的承诺要成立、发 AAX 时另加的两节)。
+  `docs/release.md` §1 改为用 bump 脚本,§5 / §6 / §7.3 链接模板;`CLAUDE.md` §4 / §9 同步。
+
 ## [1.6.0] — 2026-10-08
 
 > 版本号由 1.5.3 升至 **1.6.0**(minor:新增 AAX 格式;唯一真源 `CMakeLists.txt` 的 `project(... VERSION)`,四镜像同步:

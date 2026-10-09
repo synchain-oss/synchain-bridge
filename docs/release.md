@@ -1,6 +1,6 @@
 # 发布流程
 
-> 发布由 `push: tags: ['v*']` 触发 [.github/workflows/release.yml](../.github/workflows/release.yml)，全自动完成「版本一致性门禁 → 两平台构建 → pluginval / auval → 打包 zip/sha256 → 草稿 Release」。发版者要做的只有：**改版本号 → 晋升 `prod` → 在 `prod` 上打 tag**。
+> 发布由 `push: tags: ['v*']` 触发 [.github/workflows/release.yml](../.github/workflows/release.yml)，全自动完成「版本一致性门禁 → 两平台构建 → pluginval / auval → 打包 zip/sha256 → 草稿 Release」。发版者要做的只有：**改版本号（`node scripts/bump-version.mjs X.Y.Z`）→ 晋升 `prod` → 在 `prod` 上打 tag → 按 [release-notes-template.md](release-notes-template.md) 写正文并发布**。
 >
 > 发版分支流程：`feature/aax`（或其他 `feature/*`）→ `dev`（PR）→ `prod`（PR，只允许来自 `dev`，由 `branch-gate` 强制）→ 在 `prod` 的合并提交上打 `vX.Y.Z`。**正式 tag 只打在 `prod` 上**，见 [§5](#5-晋升-prod在-prod-上打-tag-触发-releaseyml)；冒烟 tag（§5.1）不受此限。
 >
@@ -17,7 +17,7 @@ workflow 分四个 job：版本门禁独立前置，两个平台并行构建，�
 | `gate` | ubuntu-latest | 校验 tag 与 `CMakeLists.txt` 的 VERSION 一致，把版本号导出给下游两个构建 job | 是（冒烟 tag `*-test` 除外，恒产 draft） |
 | `release` | windows-2022 | clone JUCE（`actions/cache` 命中即跳过）→ WebView2 → CMake（vcpkg 按 `vcpkg.json` 装 ixwebsocket，二进制缓存走 `actions/cache`，随后断言版本 == manifest）→ 构建（/W4 零警告；同一次构建产出 VST3 与 AAX）→ pluginval → `scripts/package.ps1` → 上传 `dist-win64` → `scripts/package-aax.ps1 -Mode Unsigned` → 上传 `aax-unsigned-win64`（不进 publish） | 是（含 AAX 打包，见 §6.1） |
 | `release-macos` | macos-15 | clone JUCE + 预取钉死的 ixwebsocket 源码（均 `actions/cache`，与 `ci.yml` 同 key）→ Ninja → 构建（clang 零警告；同一次构建产出 VST3 / AU / AAX）→ pluginval 验 VST3 + auval 验 AU → `scripts/package-macos.sh` → 上传 `dist-macos-arm64` → `scripts/package-aax-macos.sh --mode unsigned` → 上传 `aax-unsigned-macos-arm64`（不进 publish） | 是（含 AAX 打包，见 §6.1） |
-| `publish` | ubuntu-latest | 下载全部 artifact → 只从 `dist-win64` / `dist-macos-arm64` 取件 → `sha256sum -c` 跨 job 复验 → 四资产精确名白名单 → 创建 **draft** GitHub Release（挂两平台 VST3 / AU 的 zip + `.sha256`；`aax-unsigned-*` 虽被一并下载，但不在取件目录与白名单内，绝不上 Release） | 是 |
+| `publish` | ubuntu-latest | 下载全部 artifact → 只从 `dist-win64` / `dist-macos-arm64` 取件 → `sha256sum -c` 跨 job 复验 → 四资产精确名白名单 → 创建 **draft** GitHub Release（挂两平台 VST3 / AU 的 zip + `.sha256`；`aax-unsigned-*` 虽被一并下载，但不在取件目录与白名单内，绝不上 Release）。tag 带 `-<后缀>`（含冒烟 tag）时 draft 标为 prerelease、`make_latest: false` | 是 |
 
 两条与安全/成本有关的结构性约定：
 
@@ -39,15 +39,24 @@ workflow 分四个 job：版本门禁独立前置，两个平台并行构建，�
 
 ## 1. 改版本号
 
-把 `CMakeLists.txt` 顶层 `project()` 调用里的 VERSION 改成目标版本（**按构造名定位，不按行号**：加平台支持会让这行整体移位）：
+版本号真源是 `CMakeLists.txt` 顶层 `project()` 调用里的 VERSION：
 
 ```
 project(SynchainBridgeVST VERSION 1.4.0)
 ```
 
-> 本节以 `1.4.0` 为例，与下文第 4/5 步的示例版本一致；实际发版时全部换成目标版本。
+> 本节的 `1.4.0` 只是示例，与下文第 4/5 步的示例版本一致；实际发版时全部换成目标版本。下面的 bump 命令写成 `X.Y.Z`：新版本必须大于当前版本，照抄 `1.4.0` 会被拒。
 
-同一版本号在 `web-preview/`（`mock-server.mjs` 的 `PLUGIN_VERSION`、`package.json` / `package-lock.json` 的 `version`）有一份镜像，改完由 `pwsh scripts/gates.ps1` 的版本一致性 gate 断言，不一致会直接 FAIL。
+同一版本号另有 5 处镜像：`web-preview/mock-server.mjs` 的 `PLUGIN_VERSION`、`web-preview/package.json` 的 `version`、`web-preview/package-lock.json` 的根 `version` 与 `packages[""].version`（文件里依赖自己也有 `version`，不能全文替换）、`BRIDGE_CONTRACT.md` §三的 VERSION 行。用脚本一次改齐：
+
+```powershell
+node scripts/bump-version.mjs X.Y.Z --dry-run   # 先看会改哪些文件
+node scripts/bump-version.mjs X.Y.Z             # 改 CMake 与 5 处镜像,并把 CHANGELOG 的 [未发布] 切成 [X.Y.Z] — <今天的 UTC 日期>
+```
+
+脚本只改工作区，不提交、不打 tag：新版本必须是 `X.Y.Z` 且大于当前版本；当前镜像不一致、JSON 不是 npm 的标准格式、或改动超出版本字段所在的 6 行时整体放弃，一个文件都不写。切出的版本节开头有一行 `bump-version` 注释，提醒补「契约变更」与跳过的版本号，写完删掉。日期用 `--date YYYY-MM-DD` 指定。
+
+一致性由 `scripts/check-version-mirrors.mjs` 断言：`compliance`（`dev` 的必需检查）与 `pwsh scripts/gates.ps1` 的 gate 3e 跑的都是它，不一致直接 FAIL。这批改动碰了 `BRIDGE_CONTRACT.md`（§三的登记快照），PR 正文要写 `contract-impact: none`（见 §5 第 2 步）。
 
 版本经 `JucePlugin_VersionString` 自动流入插件 UI 与 `status` 帧上报，无需再改任何手写常量（见 `BRIDGE_CONTRACT.md` §三）。
 
@@ -156,11 +165,11 @@ git push -u origin prod
 
 建好后给 `prod` 配分支保护：必须经 PR 合并、禁止 force push 与删除，required check **只设 `branch-gate`**。不要照搬 `dev` 的 required check 列表：`compliance` / `clang-format` / `build-and-validate` / `build-and-validate-macos` 不在 `prod` 的 PR 上跑，设成 required 会让 PR 一直 pending。
 
-触发后：`gate` 校验版本 → `release` / `release-macos` 并行构建、验证、打包 → `publish` 复验哈希并建 **draft** Release。到 GitHub Releases 页面把草稿转正式即可；本版要发 AAX 时，转正式之前先按 §7.3 签名并把 AAX 传上 draft。
+触发后：`gate` 校验版本 → `release` / `release-macos` 并行构建、验证、打包 → `publish` 复验哈希并建 **draft** Release。draft 的正文是自动生成的 PR 列表，按 [release-notes-template.md](release-notes-template.md) 换成双语正文后再把草稿转正式；本版要发 AAX 时，转正式之前先按 §7.3 签名并把 AAX 传上 draft。tag 带 `-<后缀>` 时 draft 已标为 prerelease、不会成为 Latest。
 
 ### 5.1 冒烟 tag（`v0.0.0-test`）：首次改动发版链路后必须实跑
 
-`gate` 对 `*-test` 结尾的 tag 跳过严格版本相等，产物恒为 draft。冒烟 tag 可以打在任何分支上（不要求在 `prod` 上），通常打在要验证的那条分支的最新提交上。改过 `release.yml` / 打包脚本 / `CMakeLists.txt` 的平台相关部分之后，先打一个冒烟 tag 端到端验证四段链路（`gate` → `release` ∥ `release-macos` → `publish`），确认 **draft Release 真被建出来、两个平台的 zip 与 `.sha256` 都挂上了**，再打真实版本 tag。
+`gate` 对 `*-test` 结尾的 tag 跳过严格版本相等，产物恒为 draft，并因为带后缀被标为 prerelease。冒烟 tag 可以打在任何分支上（不要求在 `prod` 上），通常打在要验证的那条分支的最新提交上。改过 `release.yml` / 打包脚本 / `CMakeLists.txt` 的平台相关部分之后，先打一个冒烟 tag 端到端验证四段链路（`gate` → `release` ∥ `release-macos` → `publish`），确认 **draft Release 真被建出来、两个平台的 zip 与 `.sha256` 都挂上了**，再打真实版本 tag。
 
 AAX 另确认两点：这次 run 里有 `aax-unsigned-win64` 与 `aax-unsigned-macos-arm64` 两个 artifact（各含一个 `-UNSIGNED.zip` + `.sha256`）；draft 上**仍然只有那四个** VST3 / AU 资产 —— 未签名 AAX 不会自动上 Release。手边有 PACE 工具时，可以顺手对这个测试 draft 彩排一遍 §7.3 的第 2–5 步（版本即 `0.0.0-test`）。
 
@@ -176,7 +185,7 @@ git tag -d v0.0.0-test
 
 ## 6. 发布后
 
-- 把 draft Release 转正式（public 仓库的 Release 附件才可匿名下载）。要发 AAX 的版本先完成 §7.3；也可以先发 VST3 / AU，事后补传 AAX（§7.4）。
+- 正文按 [release-notes-template.md](release-notes-template.md) 写好、逐条核对后，把 draft Release 转正式（public 仓库的 Release 附件才可匿名下载）。要发 AAX 的版本先完成 §7.3；也可以先发 VST3 / AU，事后补传 AAX（§7.4）。
 - 同步下游版本镜像：网页侧（闭源仓库）存在一份下游版本镜像，发版后必须同步（见 [web-client.md](web-client.md)）。
 - VST3 / AU **不签名**（U13）：Windows 的 INSTALL.txt 写明 SmartScreen 提示与「更多信息 → 仍要运行」的引导；macOS 的 INSTALL.txt 写明 `xattr -dr com.apple.quarantine` 两条命令（全局路径要 `sudo`，家目录不要）、AU 缓存重扫，以及 arm64-only / Rosetta 的注意事项。
 - AAX 是唯一例外：由维护者本机用 PACE wraptool 签名（§7）。`INSTALL-AAX.txt` 写明签名说明、Pro Tools 插件目录的安装命令（先删旧版，需要管理员 / `sudo`），macOS 版另写明 arm64-only、未经 Apple 公证、必须去掉隔离属性。
@@ -352,7 +361,7 @@ git tag v1.5.0 $sha && git push origin v1.5.0
    macOS 件同理（文件名换成 `-macos-arm64`）。万一 `gh` 找不到 draft（例如 tag 名写错），在网页上打开 draft → Edit，把两个文件拖进附件区。
 
 6. **验收**：两个平台都签了时 draft 上应有 8 个资产（VST3 / AU 两个 zip + AAX 两个 zip，各带 `.sha256`）；本版只发 Windows AAX 时为 6 个，并在 Release notes 里注明 macOS AAX 稍后提供。把 AAX 资产下载到一个新目录跑 `sha256sum -c *.sha256`，再用签名件按 [DAW_TEST_GUIDE.md 的 Pro Tools 一节](DAW_TEST_GUIDE.md#pro-toolsaax实测windows--macos)跑完 T01–T13。
-7. 可选：Release 标题追加「· AAX」。
+7. 可选：Release 标题追加「· AAX」；正文加「安装 AAX」「已知限制」两节（[release-notes-template.md](release-notes-template.md)「发 AAX 的版本另加两节」）。
 8. 转为正式发布（§6）。
 
 ### 7.4 失败处理

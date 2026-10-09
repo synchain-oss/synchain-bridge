@@ -46,9 +46,9 @@
 
 - `ci`(job `build-and-validate` = windows-2022;job `build-and-validate-macos` = macos-15,VST3 + AU + AAX,arm64-only;两个 job 都会经 AAX 打包脚本做 bundle 结构 / 架构断言和打包冒烟(含 Signed 模式拒收未签名 bundle 的反向断言),并在 push / workflow_dispatch 时上传未签名的 `aax-unsigned-win64` / `aax-unsigned-macos-arm64` artifact,pull_request 构建的是合并提交、不出件)/ `format`(job `clang-format`):`pull_request → dev` + `push → dev, 'feature/**'`。
 - `branch-gate`:`pull_request → dev, prod`(没有 push 触发)。base = `prod` 时只放行本仓的 `dev`,DCO 与冻结契约守卫照常跑;`dev` → `prod` 的 PR 上不跑 `ci` / `format` / `compliance`(这批提交合入 `dev` 时已验过,tag 触发的 `release` 会再完整构建一次)。
-- `compliance`(gitleaks + reuse lint):与 `ci` / `format` 同触发面,无 secrets,fork PR 同样跑。
+- `compliance`(gitleaks + reuse lint + 纯逻辑自测 + 版本镜像一致性 `scripts/check-version-mirrors.mjs` 等):与 `ci` / `format` 同触发面,无 secrets,fork PR 同样跑。
 - `claude-review`:所有 base 分支、仅 same-repo(J31);`deepseek-review` / `pr-agent` 默认 disable。
-- `release`:push tags `v*` 触发草稿 Release,四段式 `gate`(版本一致性门禁,ubuntu-latest)→ `release`(windows-2022)∥ `release-macos`(macos-15)→ `publish`(ubuntu-latest,复验 sha256 后建 draft)。workflow 级 `contents: read`,`contents: write` 只授给 `publish` 一个 job。release 的 AAX 件只出未签名的 `aax-unsigned-*` artifact(保留 30 天),**不进 `publish`**(签名与上传由维护者手工做,见 `docs/release.md` §7)。**任一平台失败(含 AAX 构建 / 打包)= 整个 tag 无产物**(fail-hard,不用 `continue-on-error`;处理办法见 `docs/release.md` §6.1)。
+- `release`:push tags `v*` 触发草稿 Release,四段式 `gate`(版本一致性门禁,ubuntu-latest)→ `release`(windows-2022)∥ `release-macos`(macos-15)→ `publish`(ubuntu-latest,复验 sha256 后建 draft;tag 带 `-<后缀>` 时 draft 标 prerelease、`make_latest: false`)。workflow 级 `contents: read`,`contents: write` 只授给 `publish` 一个 job。release 的 AAX 件只出未签名的 `aax-unsigned-*` artifact(保留 30 天),**不进 `publish`**(签名与上传由维护者手工做,见 `docs/release.md` §7)。**任一平台失败(含 AAX 构建 / 打包)= 整个 tag 无产物**(fail-hard,不用 `continue-on-error`;处理办法见 `docs/release.md` §6.1)。
 - `review-dispatch`:维护者评论 `/review` 显式触发(fork PR 唯一 AI 审查通道)。
 - 成本纪律:runner 就低不就高(V-4 确认前一律 `ubuntu-latest`)、按量计费 bot 克制使用。**例外(待用户拍板)**:`build-and-validate-macos` 必须跑 GitHub 托管 macOS runner,且当前继承整个 `ci` 工作流的触发面、全开;AAX 目标让 macOS job 的编译与打包时间有所增加;若要收敛,给 job 加 label/事件闸门是最小改动。
 
@@ -96,7 +96,7 @@ Bridge 特有:PCM 发送由后台发送线程经 SPSC ring 转投(移出音频�
 ## 9. 分发链路
 
 - 抽取为公开仓库后 **GitHub Releases 才是真正公开可下载的渠道**(private 仓的 Release 附件匿名下载走不通)。
-- 版本号真源 = 顶层 `CMakeLists.txt` 的 `project(... VERSION)`;网页侧(闭源仓库)存在一份下游版本镜像,发版后必须同步。
+- 版本号真源 = 顶层 `CMakeLists.txt` 的 `project(... VERSION)`;仓内 5 处镜像(web-preview 三个文件、`BRIDGE_CONTRACT.md` §三)用 `node scripts/bump-version.mjs X.Y.Z` 一次改齐,由 `scripts/check-version-mirrors.mjs` 守(`compliance` 与本地 gate 3e);网页侧(闭源仓库)存在一份下游版本镜像,发版后必须同步。Release 正文模板 = `docs/release-notes-template.md`。
 - tag 格式 `vX.Y.Z`(去掉 `vst-` 前缀);首个公开 tag = `v1.4.0`(U6,历史事实——实际打 tag 以 CMake 当前 VERSION 为准,gate 强制相等)。**正式 tag 只打在 `prod` 上**:`feature/*` → `dev`(PR)→ `prod`(PR,只收 `dev`)→ 在 `prod` 的合并提交上打 tag(`docs/release.md` §5)。`*-test` 结尾的冒烟 tag 跳过严格版本相等、产物恒为 draft,可以打在任何分支上,改过发版链路后先用它端到端实跑(`docs/release.md` §5.1)。
 - Release 资产两个平台各一个,均附同名 `.sha256`:`SynchainBridge-VST3-v<版本>-win64.zip`(VST3)与 `SynchainBridge-VST3-AU-v<版本>-macos-arm64.zip`(VST3 + AU,arm64-only,不签名不公证)。另有两个 AAX 资产 `SynchainBridge-AAX-v<版本>-win64.zip` 与 `SynchainBridge-AAX-v<版本>-macos-arm64.zip`,由维护者签名后**手工上传**到 draft Release(v1.6.0 只发 Windows x64;macOS AAX 由 CI 构建,借 Mac 实测之后再发布)。打包与签名的唯一真源 = `scripts/package.ps1` / `scripts/package-macos.sh` / `scripts/package-aax.ps1` / `scripts/package-aax-macos.sh` / `scripts/sign-aax.ps1` / `scripts/sign-aax-macos.sh`,绝不在 workflow 里内联打包命令。
 - R2 固定 key 覆盖上传是否保留由 08 文档决策;本仓不默认启用。
