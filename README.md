@@ -9,7 +9,7 @@
 
 ## What it does
 
-Synchain Bridge is an **audio plugin** — VST3 on Windows and macOS, Audio Unit (AU) on macOS, and AAX for Avid Pro Tools on both (Beta) — that captures a stereo bus from your DAW and streams it, losslessly as PCM, to remote collaborators over a local WebSocket:
+Synchain Bridge is an **audio plugin** — VST3 on Windows and macOS, Audio Unit (AU) on macOS, and AAX for Avid Pro Tools (Beta: Windows x64 since v1.6.0, macOS later) — that captures a stereo bus from your DAW and streams it, losslessly as PCM, to remote collaborators over a local WebSocket:
 
 ```
 DAW → Synchain Bridge (PCM float32) → WebSocket (127.0.0.1) → browser → AudioWorklet → LiveKit Opus → server
@@ -73,12 +73,12 @@ Prebuilt builds for both platforms are on [GitHub Releases](https://github.com/s
 |---|---|---|
 | Windows x64 | `SynchainBridge-VST3-vX.Y.Z-win64.zip` | `Synchain Bridge.vst3` |
 | macOS arm64 | `SynchainBridge-VST3-AU-vX.Y.Z-macos-arm64.zip` | `Synchain Bridge.vst3` + `Synchain Bridge.component` |
-| Windows x64 (Pro Tools) | `SynchainBridge-AAX-vX.Y.Z-win64.zip` | `Synchain Bridge.aaxplugin` |
-| macOS arm64 (Pro Tools) | `SynchainBridge-AAX-vX.Y.Z-macos-arm64.zip` | `Synchain Bridge.aaxplugin` |
+| Windows x64 (Pro Tools) | `SynchainBridge-AAX-v1.6.0-win64.zip` | `Synchain Bridge.aaxplugin` (PACE-signed; uploaded to the Release by hand) |
+| macOS arm64 (Pro Tools) | not released yet — macOS AAX comes later | `Synchain Bridge.aaxplugin` |
 
 Every asset ships a matching `.sha256`. The macOS build is **Apple Silicon only and is neither signed nor notarized** — see [Known limitations on macOS](#known-limitations-on-macos) and the quarantine step below.
 
-The two AAX zips (Beta) are attached starting with the first release that ships AAX. They are PACE-signed by the maintainer on a local machine and added by hand to the release that CI drafts, so they can appear later than the VST3/AU zips of the same release. A file named `*-UNSIGNED.zip` (CI artifacts `aax-unsigned-win64` / `aax-unsigned-macos-arm64`) is the unsigned input to that signing step, **not a release** — retail Pro Tools will not load it.
+The Windows x64 AAX zip (Beta) is attached starting with v1.6.0; later releases use the same name with their own version (`SynchainBridge-AAX-vX.Y.Z-win64.zip`). It is PACE-signed by the maintainer on a local machine and added by hand to the release that CI drafts, so it can appear later than the VST3/AU zips of the same release. The macOS AAX is built in CI but not released yet; it will be published once it has been tested on a Mac. A file named `*-UNSIGNED.zip` (CI artifacts `aax-unsigned-win64` / `aax-unsigned-macos-arm64`) is the unsigned input to that signing step, **not a release** — retail Pro Tools will not load it.
 
 The plugin uses dedicated manufacturer/plugin codes (`Snch` / `Snb1`), so DAWs see it as an independent plugin. Changing these codes would generate a new VST3 unique ID (and a new AU component identity) and orphan existing projects — **never alter them, on either platform**. AAX uses the same two codes as its manufacturer / product IDs, plus the AAX identifier `com.synchain.bridge` (the same string as the bundle ID), so the same rule applies to AAX.
 
@@ -145,6 +145,7 @@ Restart Pro Tools and look the plug-in up by name (**Synchain Bridge**) in an in
 - **Offline rendering does not stream.** While Pro Tools renders faster than real time (offline bounce, Track Commit, Freeze) the audio passes through untouched and nothing is metered or pushed to the browser; live streaming resumes once the render ends. This applies to the AAX build only — VST3 / AU behave as before.
 - **Dynamic Plug-in Processing may pause the stream.** When no audio reaches the plug-in (for example a muted or silent track), Pro Tools can stop calling it, so streaming can pause until audio flows again.
 - **Latency readout.** JUCE's AAX wrapper always prepares the plug-in with the AAX maximum block size of 1024 samples, so the panel's buffer / latency reading reflects 1024 samples (about 21.3 ms at 48 kHz), not your hardware buffer size.
+- **Built-in sound card: the browser on the same computer may be silent.** When Pro Tools uses the computer's built-in audio device, Pro Tools takes exclusive use of that device, and a browser on the same computer may be unable to play sound. This does not affect streaming to the room — the other participants still hear you. If you need to monitor in a browser on this computer, use a separate audio interface, or set the browser's output to a different device.
 - **Signing.** Release AAX files carry the maintainer's PACE signature, which retail Pro Tools requires. On Windows the code-signing certificate is self-signed, so Properties → Digital Signatures shows an untrusted signer; this is expected. On macOS the bundle is **not notarized**, so the `sudo xattr` step above is required.
 - **Apple Silicon only, native Pro Tools.** The macOS AAX has an arm64 slice only; Pro Tools must run natively, not under Rosetta.
 - **Unsigned builds** (anything you build yourself, or a `*-UNSIGNED.zip`) can only be loaded by Pro Tools Developer.
@@ -221,7 +222,7 @@ CI builds the AAX target on both platforms; the packaging scripts check the bund
 - [`CHANGELOG.md`](CHANGELOG.md) — release history.
 - [`docs/build-windows.md`](docs/build-windows.md) — Windows build from source (deps, configure, pitfalls, AAX).
 - [`docs/build-macos.md`](docs/build-macos.md) — macOS build from source (arm64, VST3 + AU + AAX, install, `auval` / pluginval).
-- [`docs/release.md`](docs/release.md) — release runbook (version bump → tag → `release.yml`; AAX signing and manual upload in §7).
+- [`docs/release.md`](docs/release.md) — release runbook (version bump → `dev` → `prod` → tag on `prod` → `release.yml`; AAX signing and manual upload in §7).
 - [`docs/web-client.md`](docs/web-client.md) — where the browser-side client lives and its coupling points.
 - [`docs/webview-ui-pattern.md`](docs/webview-ui-pattern.md) — how to replicate this WebView UI (copy checklist + pitfalls).
 
@@ -251,4 +252,4 @@ Complete corresponding source for every released binary is available in this rep
 
 ## Status
 
-Windows x64 (VST3) shipped first. macOS on Apple Silicon (VST3 + AU) has been published since v1.5.0 as a prebuilt Release asset alongside the Windows zip — unsigned and arm64 only; signing/notarization comes in a later release. AAX (Pro Tools) support for both platforms (Beta) is in development on the `feature/aax` branch; the AAX files are signed by the maintainer and uploaded by hand. See [`CHANGELOG.md`](CHANGELOG.md) for the version history.
+Windows x64 (VST3) shipped first. macOS on Apple Silicon (VST3 + AU) has been published since v1.5.0 as a prebuilt Release asset alongside the Windows zip — unsigned and arm64 only; signing/notarization comes in a later release. AAX (Pro Tools, Beta) is available for Windows x64 since v1.6.0 — PACE-signed by the maintainer and uploaded by hand; macOS AAX comes later. See [`CHANGELOG.md`](CHANGELOG.md) for the version history.
