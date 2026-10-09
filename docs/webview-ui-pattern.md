@@ -129,8 +129,14 @@
 - **坑**：状态灯反映**真实连接**（`clients==0` 时为 waiting 琥珀，让用户察觉链路已断），非仅服务启停。SCVB 组胶囊可复用「状态派生 + 数据来源标注」。
 
 ### 17. 缩放档位下拉 + 防呆确认 UI
-- **复制来源**：`web/index.html` 的 `data-scale` 下拉与 `data-confirm` 弹层（含 `data-confirm-countdown` / `data-confirm-keep` / `data-confirm-cancel`）
+- **复制来源**：`web/index.html` 的 `data-scale` 下拉与 `data-confirm` 弹层（含 `data-confirm-countdown` / `data-confirm-keep` / `data-confirm-cancel`）；`web/styles.css` 的 `[data-scale]` 段（收起态 + 展开列表）
 - **坑**：改档位 → 立即应用 + 弹防呆确认（倒计时 + 保持/取消）；确认弹层是 `#vst-root` 的直接子元素（与卡片同级、不受卡片 `zoom` 影响），任意档位都居中可读。
+- **展开列表 = base-select 渐进增强**：`@supports (appearance: base-select)` 里给 select 与 `::picker(select)` 同时设 `appearance: base-select`，选项列表改在页面内渲染，才能做成玻璃拟态（原生弹窗样式管不到）。
+  - 弹层在 top layer，不被卡片 `overflow: hidden` 裁切；它又是 select 的伪元素、继承卡片的 `zoom`，所以随档位同比例缩放，`max-block-size` 按设计盒 px 写即可。
+  - base-select 会改收起态的 UA 默认（flex、24px 最小宽高、自带 `::picker-icon` 箭头）：要逐项还原（`align-items: center`、`min-*-size: auto`、隐藏 `::picker-icon`），否则收起态变高、出现两个箭头。还原后宽度仍可能比原生窄约 1 px（原生按整像素取宽），肉眼不可辨。
+  - 回退：不支持的引擎（旧版 WebView2，以及尚不支持该特性的 WKWebView）仍走原生弹窗，只给 `option` 设 `background-color` / `color`（Windows Chromium 的原生列表会尊重，macOS 原生菜单忽略）。是否增强只看 `@supports`，不按平台分支。
+  - 键盘：base-select 下收起态按 ↑/↓ 是展开列表，不再像 Windows 原生下拉那样直接换档；列表内 ↑/↓ 移动、Enter 选定并触发 `change`、Esc 关闭。回退路径保持各平台原生行为。
+  - 层级：选定即关闭弹层，之后才弹防呆确认，两者不会同时出现。确认期间鼠标被 `data-confirm` 遮罩挡住，点不到下拉；只有键盘能重新展开，这时弹层（top layer）盖在遮罩之上，与原生弹窗（系统窗口）一致。
 
 ---
 
