@@ -40,7 +40,7 @@
     日志、transcript 与 shell 历史(脚本不开 `Start-Transcript`、bash 侧显式 `set +x`)。但 wraptool 只收命令行参数,签名那几秒
     口令会以 `--keypassword`(`-KeyFile` 方式)或 `--pswd-no-save`(交互读入的账号口令)出现在 wraptool 的进程命令行里(本机进程
     列表短暂可见,wraptool 本身的限制),只在可信的单用户机器上签名、签名期间不要让他人登录本机;回显的命令里口令、PACE 账号与 wcguid 一律打码为 `****`,
-    wraptool 自身的输出也逐行把这些值字面替换成 `****` 再显示(`--verbose` 是否回显参数未知,TO-VALIDATE);透传参数拒收
+    wraptool 自身的输出也逐行把这些值字面替换成 `****` 再显示(实测 `--verbose` 不回显口令,但回显 wcguid 与默认账号名);透传参数拒收
     含 `password` 的项和脚本自管的 flag(两平台都不区分大小写);Windows 的 pfx 必须在仓库目录之外(路径前缀 + git 公共目录
     两道判定,本仓库的其他 worktree 同样算仓库内)。
   - 预检(任一失败即退出 1):`.sha256` 逐字节格式 + 哈希(**只验完整性**:与 zip 同一份下载,防不了替换);从文件名解析版本;
@@ -50,14 +50,15 @@
     `head_sha` 等于当前检出,再用 `gh run download` 取回它的 `aax-unsigned-*` artifact,同名 zip 必须与输入字节相同;
     wraptool 存在且 `help` 列出所需 flag;输入件确实未签名(Windows DLL 为 `NotSigned`;macOS arm64-only、无签名 Authority),且 `wraptool verify`
     必须失败(已签过的件重签会报错)。macOS 另要求钥匙串里与 `--signid` 同名的代码签名身份恰好 1 个。
-  - 后检:`wraptool verify`;Windows 的 Authenticode 签名者指纹必须等于 `-CertThumbprint` / pfx 指纹、默认要求带时间戳(`-AllowNoTimestamp`
+  - 后检:`wraptool verify`;Windows 的 Authenticode 签名者指纹必须等于 `-CertThumbprint` / pfx 指纹、文件摘要默认必须是 SHA256 且时间戳为
+    RFC 3161(`-LegacySha1Digest` 时为 SHA1)、默认要求带时间戳(`-AllowNoTimestamp`
     显式放行;拿不到也不事后用 signtool 补 —— 签名必须是最后一次修改);macOS `codesign --verify --deep --strict` 通过、
     `Authority=` 等于 `--signid` 且非 ad-hoc。打包后再解压回读复验,最后只**打印** `gh release upload` 命令,不自动上传;
     `-ci.<sha>` 件不给上传命令。成功删临时工作目录,失败保留供排查(里面只有 bundle,没有秘密)。
   - `-DryRun` / `--dry-run`:跑全部预检并汇总 PASS / WARN / FAIL,打印打码后的签名计划与打包脚本自己的 dry-run 输出;
     不读口令、不调用 `wraptool sign`、不产出文件。
-  - Windows 侧已按 wraptool 6.0.1 实测对齐(见下面 AAX-17 一条);待首次真签名的项与 macOS 侧照搬的写法仍标 `TO-VALIDATE`,
-    所有者核对后再删标记。
+  - Windows 侧已按 wraptool 6.0.1 实测对齐并完成首次真签名(见下面 AAX-17 / AAX-18 两条);仍未验证的项与 macOS 侧照搬的写法
+    仍标 `TO-VALIDATE`,所有者核对后再删标记。
 - **自签名代码签名证书助手 `scripts/new-selfsigned-codesign-cert.ps1`**(Windows 签名用的 Authenticode 证书):RSA 3072 /
   SHA256 / 默认 10 年,pfx 默认导出到 `$env:USERPROFILE\.synchain-signing\`,必须在仓库外(判定同签名脚本);脚本新建该目录时
   断开继承、只给当前用户完全控制;口令两次输入一致且至少 12 位;
@@ -84,7 +85,26 @@
   `PACE_FUSION_HOME` 与 v6 默认路径候选;mac 上没法实测,仍标 TO-VALIDATE);`new-selfsigned-codesign-cert.ps1` 醒目打印
   Thumbprint、推荐 `-CertThumbprint`,加 `-RemoveFromStore` 时提醒之后只能用 `-KeyFile`。已实测的项去掉 TO-VALIDATE、注明实测
   日期;真签名能否成功、自签名证书签的件零售版 Pro Tools 是否接受、`--verbose` 是否回显参数、已签名件 verify 的退出码仍标
-  TO-VALIDATE(待首次真签名)。上面各条已按此改写。
+  TO-VALIDATE(待首次真签名;除零售版 Pro Tools 一项外已在 AAX-18 实测,见下一条)。上面各条已按此改写。
+- **签名脚本显式指定 signtool、默认 SHA256 文件摘要(AAX-18,2026-10-08 首次真签名实测)**:
+  - signtool:不给 `--signtool` 时,wraptool 6.0.1 在它自己的「默认位置」找不到 Windows SDK 10.0.19041 的 signtool,报的却是
+    "Can't sign with the certificate identified by the thumbprint ..."(证书本身没问题)。`sign-aax.ps1` 新增 `-SignToolPath`,不给时按
+    `%ProgramFiles(x86)%\Windows Kits\10\bin\<版本号最高的>\x64\signtool.exe` → PATH 的顺序自动找,都没有就 FAIL(提示装
+    Windows SDK 的 Signing Tools 组件)。新增预检 5d,打印 signtool 的路径与版本;签名时始终传 `--signtool`。
+  - 摘要算法:wraptool 默认让 signtool 用 SHA1 文件摘要 + 旧式 `/t` 时间戳(Sectigo)。现在默认经 `--explicitsigningoptions`
+    改为 SHA256 文件摘要 + RFC 3161 时间戳(`/fd sha256 /tr http://timestamp.sectigo.com /td sha256`)。实测这个值会**整体替换**
+    wraptool 默认的 signtool 参数(`sign /sha1 <指纹>` 要自己写,文件路径仍由 wraptool 追加),`wraptool verify` 照样退出 0。
+    `-LegacySha1Digest` 回退到 wraptool 的默认命令。`-KeyFile` 方式必须带这个开关:要 SHA256 就得把 pfx 路径和口令写进
+    `--explicitsigningoptions`,脚本不这么做。
+  - 后检新增摘要核对:从 DLL 的 PE 证书表解出 PKCS#7,文件摘要与签名者摘要必须是 SHA256(回退时为 SHA1),时间戳必须是
+    RFC 3161、摘要 SHA256,且与签名对得上;回读复验同样核对。`-ExtraWraptoolArgs` 另拦 `--signtool` / `--explicitsigningoptions` /
+    `--extrasigningoptions`(`-J`)。
+  - 已实测、去掉 TO-VALIDATE 的项:`--signid` + `--wcguid` + `--signtool` 真签名成功;对内层 DLL 原地签名;已签名件 verify
+    退出码 0;`--verbose` 不回显口令;签名件确实带时间戳(V3)。iLok 上缺签名证书时的报错文案也写进了预检 6。仍标 TO-VALIDATE:
+    零售版 Pro Tools / Intro 是否接受自签名的件;`-KeyFile` 与 customer number 两条备选路径;证书在 `Cert:\LocalMachine\My`
+    时能否签(默认方式按 signtool 文档加 `/sm`);`--explicitsigningoptions` 下 `--timestampretry` 是否生效;macOS 侧全部。
+  - 文档:`docs/release.md` §7 的命令改为在 pwsh 会话里用 `&` 调用(经 `pwsh -File` 传数组参数会错位,报出假的互斥错误),并新增
+    排障表;`docs/build-windows.md` 同步;`new-selfsigned-codesign-cert.ps1` 打印的 `-KeyFile` 用法带上 `-LegacySha1Digest`。
 
 ### 构建
 
