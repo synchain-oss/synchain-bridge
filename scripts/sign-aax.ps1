@@ -84,10 +84,12 @@
   verify 照样是 0;--verbose 不回显口令(含 -PromptAccountPassword 的 --pswd-no-save 方式),但会回显 wcguid、默认账号名与它
   调 signtool 的整条命令行 —— 前两者本脚本打码,指纹是公开属性;不给账号口令时用 ILM 默认账号连得上服务器。自签名证书的链
   在 signtool verify /pa 下"terminated in a root ... not trusted"、Get-AuthenticodeSignature 为 UnknownError,均属预期。
-  TO-VALIDATE:自签名证书签的件零售版 Pro Tools / Pro Tools Intro 是否接受;-KeyFile 身份与 --customernumber 发布者两条
+  已实测(2026-10-08):自签名证书 + PACE 签名的件,零售版 Pro Tools(Windows 11)照常加载;gh release upload 可直传 draft
+  Release(v0.0.0-test 彩排)。
+  TO-VALIDATE:Pro Tools Intro 未单独实测;-KeyFile 身份与 --customernumber 发布者两条
   备选路径未真签过(-KeyFile 下 wraptool 回显的 signtool 命令行可能含 pfx 口令,按字面打码;能否读 AES256 加密的 pfx,V8);
   --explicitsigningoptions 方式下 --timestampretry 是否仍生效;证书在 Cert:\LocalMachine\My 时能否签(默认方式加 /sm,
-  -LegacySha1Digest 方式看 wraptool 自己怎么找;实测只覆盖 CurrentUser\My);V11:gh release upload 能否直传 draft Release。
+  -LegacySha1Digest 方式看 wraptool 自己怎么找;实测只覆盖 CurrentUser\My)。
 
   禁止 Start-Transcript:本脚本不开 transcript,也不要在开着 transcript 的会话里运行(wraptool 的输出与本脚本的
   日志都不该进任何落盘记录)。口令交互读取,不进本脚本的参数、日志与 shell 历史。-CertThumbprint 方式下 wraptool 的命令行上
@@ -1072,7 +1074,7 @@ try {
         if ($isCiBuild) {
             Write-Host "版本 $ver 是 CI 预发布件,没有对应的 Release tag:只用于本机 / Pro Tools 实测,不要上传。"
         } else {
-            # TO-VALIDATE(V11):gh release upload 能否直接传到 draft Release
+            # 已实测(2026-10-08,v0.0.0-test 彩排):gh release upload 可直接传到 draft Release
             Write-Host '确认无误后手动上传到 draft Release(本脚本不自动执行):'
             Write-Host ("  gh release upload v{0} `"{1}`" `"{1}.sha256`" --repo {2}" -f $ver, $signedZip, $UploadRepo)
         }

@@ -57,7 +57,8 @@
 # TO-VALIDATE(mac 上都还没实测):wraptool 的 v6 默认安装路径与 PACE_FUSION_HOME、`help` 的 flag、--account / --pswd-no-save /
 # --customernumber 的用法(Windows 6.0.1 已实测,mac 版照搬);verify / sign 给 bundle 目录还是内层可执行文件、--out 能否指向
 # 新路径;待首次真签名:真签名能否成功、已签名件 verify 的退出码、--verbose 是否回显参数;V5 --extrasigningoptions
-# "--timestamp" 对自签名 / Apple Development 身份是否可用(默认不加)、V6 find-identity 不加 -v 的行为、V11 上传到 draft。
+# "--timestamp" 对自签名 / Apple Development 身份是否可用(默认不加)、V6 find-identity 不加 -v 的行为。(V11 gh release upload 直传 draft 与平台无关,已在 Windows 侧
+# v0.0.0-test 彩排实测。)
 # 核对完删掉对应标记。
 #
 # 绝不 set -x:xtrace 会把账号与口令(若用 --prompt-account-password)逐行回显进终端 / 日志。
@@ -738,7 +739,7 @@ echo "          $SIGNED_ZIP.sha256"
 if [ "$IS_CI" -eq 1 ]; then
     echo "版本 $VER 是 CI 预发布件,没有对应的 Release tag:只用于本机 / Pro Tools 实测,不要上传。"
 else
-    # TO-VALIDATE(V11):gh release upload 能否直接传到 draft Release
+    # 已实测(2026-10-08,Windows 侧 v0.0.0-test 彩排):gh release upload 可直接传到 draft Release
     echo "确认无误后手动上传到 draft Release(本脚本不自动执行):"
     echo "  gh release upload v$VER \"$SIGNED_ZIP\" \"$SIGNED_ZIP.sha256\" --repo $UPLOAD_REPO"
 fi

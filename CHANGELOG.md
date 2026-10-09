@@ -123,7 +123,7 @@
   `PACE_FUSION_HOME` 与 v6 默认路径候选;mac 上没法实测,仍标 TO-VALIDATE);`new-selfsigned-codesign-cert.ps1` 醒目打印
   Thumbprint、推荐 `-CertThumbprint`,加 `-RemoveFromStore` 时提醒之后只能用 `-KeyFile`。已实测的项去掉 TO-VALIDATE、注明实测
   日期;真签名能否成功、自签名证书签的件零售版 Pro Tools 是否接受、`--verbose` 是否回显参数、已签名件 verify 的退出码仍标
-  TO-VALIDATE(待首次真签名;除零售版 Pro Tools 一项外已在 AAX-18 实测,见下一条)。上面各条已按此改写。
+  TO-VALIDATE(后均已实测:真签名、`--verbose`、verify 退出码三项见下一条 AAX-18;零售版 Pro Tools 接受自签名件于 2026-10-08 由所有者实测)。上面各条已按此改写。
 - **签名脚本显式指定 signtool、默认 SHA256 文件摘要(AAX-18,2026-10-08 首次真签名实测)**:
   - signtool:不给 `--signtool` 时,wraptool 6.0.1 在它自己的「默认位置」找不到 Windows SDK 10.0.19041 的 signtool,报的却是
     "Can't sign with the certificate identified by the thumbprint ..."(证书本身没问题)。`sign-aax.ps1` 新增 `-SignToolPath`,不给时按
@@ -139,7 +139,7 @@
     `--extrasigningoptions`(`-J`)。
   - 已实测、去掉 TO-VALIDATE 的项:`--signid` + `--wcguid` + `--signtool` 真签名成功;对内层 DLL 原地签名;已签名件 verify
     退出码 0;`--verbose` 不回显口令;签名件确实带时间戳(V3)。iLok 上缺签名证书时的报错文案也写进了预检 6。仍标 TO-VALIDATE:
-    零售版 Pro Tools / Intro 是否接受自签名的件;`-KeyFile` 与 customer number 两条备选路径;证书在 `Cert:\LocalMachine\My`
+    Pro Tools Intro 是否接受自签名的件(零售版 Pro Tools 一项后已实测,2026-10-08);`-KeyFile` 与 customer number 两条备选路径;证书在 `Cert:\LocalMachine\My`
     时能否签(默认方式按 signtool 文档加 `/sm`);`--explicitsigningoptions` 下 `--timestampretry` 是否生效;macOS 侧全部。
   - 文档:`docs/release.md` §7 的命令改为在 pwsh 会话里用 `&` 调用(经 `pwsh -File` 传数组参数会错位,报出假的互斥错误),并新增
     排障表;`docs/build-windows.md` 同步;`new-selfsigned-codesign-cert.ps1` 打印的 `-KeyFile` 用法带上 `-LegacySha1Digest`。
