@@ -64,10 +64,14 @@ public:
 
     void resized() override;
     void paint(juce::Graphics&) override;
-    void parentHierarchyChanged() override; // 只用于 peer 首次可用时的一次性缩放诊断行
+    void parentHierarchyChanged() override; // peer 首次可用时：一次性缩放诊断行 + Windows AAX 的 DPI 补偿
 
 private:
     void timerCallback() override;
+
+    // --- 编辑器尺寸（[AAX-08] Windows AAX 的 WebView2 DPI 补偿，机理见 .cpp applyDpiCompensation）---
+    juce::Point<int> editorSizeForUiScale() const; // DESIGN × uiScale × mDpiComp；所有按档位定尺寸的 setSize 共用
+    void applyDpiCompensation(juce::ComponentPeer& peer); // peer 首次可用时调一次
 
     // --- WebView 装配 ---
     juce::WebBrowserComponent::Options makeOptions();
@@ -139,7 +143,9 @@ private:
     // [SL-386] 开窗遮挡闸：「WebView 子窗口此刻该不该待在可视区之外」的唯一判定处。
     webview::RevealGate mRevealGate;
     bool mRevealLogged = false; // 本次加载尝试是否已写过放行诊断行（只写第一次）
-    bool mPeerScaleLogged = false; // 本编辑器实例是否已写过 `editor peer:` 缩放诊断行（只写第一次）
+    bool mPeerFirstSeen = false; // peer 首次可用时的诊断 + DPI 补偿是否已做过（每个编辑器实例只做一次）
+    // [AAX-08] 运行期 DPI 补偿系数，只在 Windows AAX 下可能 ≠ 1；不持久化，回报网页的 uiScale / w / h 都不含它。
+    float mDpiComp = 1.0f;
 
     // 就绪门控 + 变化节流（只在 message 线程访问，mBridgeReady 跨线程读写用 atomic）
     std::atomic<bool> mBridgeReady{false};

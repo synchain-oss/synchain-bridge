@@ -147,10 +147,13 @@ elseif(SYNCHAIN_BRIDGE_AAX AND _bridge_aax_supported)
 endif()
 
 # --- AAX:Windows 非 100% 显示缩放下的宿主窗口尺寸(回移上游 JUCE 提交 20872887e)---
-# 症状：Windows 缩放 175% 时 Pro Tools 插件窗只露出左上约 1/1.75，右侧与下方被裁。根因在 JUCE 8.0.8 的 AAX 包装：
-# convertToHostBounds 只乘 Desktop 全局缩放(=1)，没乘 peer 的平台缩放(1.75)—— Pro Tools(System DPI-aware)按它报的
-# 尺寸开容器，JUCE peer 却按 1.75 倍物理像素渲染。上游修复 = JUCE 提交 20872887e(只改 juce_audio_plugin_client_AAX.cpp，
+# JUCE 8.0.8 的 AAX 包装里 convertToHostBounds 只乘 Desktop 全局缩放、没乘 peer 的平台缩放：在 per-monitor DPI-aware
+# 的宿主里(peer 平台缩放 = 显示器缩放)，报给宿主的容器尺寸比 JUCE peer 实际渲染的物理尺寸小，插件窗被裁。上游修复 =
+# JUCE 提交 20872887e(只改 juce_audio_plugin_client_AAX.cpp，
 # https://github.com/juce-framework/JUCE/commit/20872887e7b8e889b192cb3c4a435c99ec4e16e8)，在 JUCE 9.0.x 里，8.0.x 线没有。
+# ⚠ 当前 Pro Tools 是 System DPI-aware，peer 平台缩放实测 = 1，这个补丁在它里面是空操作；Pro Tools 175% 下插件窗被裁的
+# 真实根因是 WebView2 的光栅化缩放与 JUCE peer 缩放不一致，修在 src/WebViewEditor.cpp 的 applyDpiCompensation。
+# 补丁仍保留：它管的是 per-monitor-aware 宿主那一种错位(两处修复互不重叠：那种宿主里 DPI 补偿系数恒为 1)。
 # 只给 AAX 打这一个补丁、不升 JUCE：configure 期读 JUCE 原文件，按上游三处逐块替换(每处断言旧文本恰好 1 次、替换后新文本
 # 在场，否则 FATAL —— JUCE 内容一变就停下)，生成到构建目录 _deps/ 下(零警告门的 [\\/](JUCE|vcpkg|vcpkg_installed|_deps)[\\/]
 # 过滤照旧把它当 JUCE 代码)，原文件设 HEADER_FILE_ONLY、AAX 目标改编生成件。
@@ -357,6 +360,8 @@ target_sources(SynchainBridgeVST PRIVATE
   src/PluginProcessor.cpp
   src/WebViewEditor.h
   src/WebViewEditor.cpp
+  src/MonitorDpi.h
+  src/MonitorDpi.cpp
   src/BridgeApi.h
   src/VstBridgeServer.h
   src/VstBridgeServer.cpp
