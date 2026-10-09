@@ -24,6 +24,12 @@ __pycache__/
 CMakeUserPresets.json
 *.vst3/
 *.component/
+# AAX bundle(构建 / 签名产物,只经 scripts/package-aax*.ps1/sh 打包分发)与代码签名材料:
+# pfx / p12 / pvk 一律放仓库外(签名凭据绝不入库,CLAUDE.md §0 铁律 1)
+*.aaxplugin/
+*.pfx
+*.p12
+*.pvk
 *.dll
 *.so
 *.dylib
