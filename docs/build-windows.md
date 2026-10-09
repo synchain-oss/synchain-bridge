@@ -263,7 +263,7 @@ pwsh scripts/gates.ps1 -PluginOnly -IncludeAax -BuildDir build-aax
 | 时机 | 文案（`…` 为实际值） |
 |---|---|
 | 打开编辑器 | `SynchainBridge: editor opened: host=… wrapper=… size=WxH uiScale=… io=<入>/<出> desktopScale=…`（Pro Tools 下 `host=ProTools wrapper=AAX`） |
-| 编辑器第一次挂上原生窗口（每个编辑器实例一次） | `SynchainBridge: editor peer: platformScale=… desktopScale=… logical=WxH`（宿主窗口应有的物理尺寸 = logical × 两个缩放；Windows 175% 下 `platformScale=1.75`） |
+| 编辑器第一次挂上原生窗口（每个编辑器实例一次；VST3 / AAX 都会写） | `SynchainBridge: editor peer: platformScale=… desktopScale=… logical=WxH`（宿主窗口应有的物理尺寸 = logical × 两个缩放；Windows 175% 下 `platformScale=1.75`） |
 | 缩放档位被宿主拒绝（只在实际尺寸 ≠ 请求尺寸时） | `SynchainBridge: ui scale resize not applied by host: requested WxH, got wxh` |
 | 插件窗口开着时，采样率 / 声道变化（只在变化时） | `SynchainBridge: audio: sampleRate=… channels=… latencyMs=…` |
 | 宿主 non-realtime（离线渲染）状态切换 | `SynchainBridge: host non-realtime on (wrapper=AAX)` / `… off (wrapper=AAX)` |

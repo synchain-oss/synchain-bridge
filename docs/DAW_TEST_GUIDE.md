@@ -136,7 +136,7 @@ zip 里的 `INSTALL-AAX.txt` 是同一组命令。
 | T02 | mono 轨和 stereo 轨各插一个 | 电平条数分别为 1 / 2；网页 DAW 卡的声道显示为单声道 / 立体声 | 打开编辑器时 `editor opened: host=ProTools wrapper=AAX … io=1/1`（stereo 轨为 `io=2/2`） |
 | T03 | 可用形态 | AudioSuite 里找不到；插入菜单里没有 multi-mono 形态 | — |
 | T04 | 编辑器开关 ×10 | 无白闪、无崩溃，内存基本稳定 | 每次打开一行 `editor opened: …` |
-| T05 | 系统显示缩放 100 / 150 / 200%（macOS 用 Retina 屏和外接屏各试），再在插件里切几档缩放；Windows 还要测 175% 这类非整数倍缩放（JUCE 8.0.8 的 AAX 封装在非 100% 缩放下会让 Pro Tools 裁掉插件窗右侧与下方，构建期已打上游补丁） | 无滚动条、无白边、窗口不被裁切（右下角内容完整）；缩放档位正常生效 | 开窗时 `editor peer: platformScale=… desktopScale=… logical=WxH`（Windows 175% 下 `platformScale=1.75`）；不应出现 `ui scale resize not applied by host: …` |
+| T05 | 系统显示缩放 100 / 150 / 200%（macOS 用 Retina 屏和外接屏各试），再在插件里切几档缩放；Windows 还要测 175% 这类非整数倍缩放（JUCE 8.0.8 的 AAX 封装在非 100% 缩放下会让 Pro Tools 裁掉插件窗右侧与下方，构建期已打上游补丁），**第一次开窗**与**关掉再开**都要看 | 无滚动条、无白边、窗口不被裁切（右下角内容完整）；缩放档位正常生效 | 开窗时 `editor peer: platformScale=… desktopScale=… logical=WxH`（Windows 175% 下 `platformScale=1.75`）；不应出现 `ui scale resize not applied by host: …` |
 | T06 | 端口框输入 | 数字、空格、回车不会被 Pro Tools 的快捷键吞掉；回车后端口生效 | — |
 | T07 | 推流 | 按步骤 4–6 操作，房间里出现音轨，协作者能听到 | — |
 | T08 | 同时开两个实例 | 第二个实例显示 9421（避让范围 9420–9429） | — |

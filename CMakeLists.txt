@@ -210,6 +210,7 @@ if(WIN32 AND TARGET SynchainBridgeVST_AAX)
                                                               (float) component->getWidth() });
 ]==])
     # ② 删掉 JuceAAX_GUI 里只乘全局缩放的静态 convertToHostBounds(连同它上面那条分隔线，与上游一致)。
+    #   这一处函数内的「替换后新文本在场」恒为真(锚点文本替换前就在)，真正兜底的是三处替换之后的「已无静态版」断言。
     _bridge_aax_replace_once("drop static convertToHostBounds" [==[
         //==============================================================================
         static AAX_Point convertToHostBounds (AAX_Point pluginSize)
@@ -263,7 +264,7 @@ if(WIN32 AND TARGET SynchainBridgeVST_AAX)
       message(FATAL_ERROR "AAX HiDPI backport: a static convertToHostBounds is still present after patching")
     endif()
 
-    # 改动声明(GPLv3 §5a)放文件头；内容不变就不重写，免得每次 reconfigure 都重编这个 TU。
+    # 改动声明(AGPLv3 §5(a)，JUCE 部分的许可)放文件头；内容不变就不重写，免得每次 reconfigure 都重编这个 TU。
     string(PREPEND _bridge_aax_text
       "// Synchain Bridge build-time copy of JUCE ${_bridge_juce_version} "
       "modules/juce_audio_plugin_client/juce_audio_plugin_client_AAX.cpp, MODIFIED:\n"
