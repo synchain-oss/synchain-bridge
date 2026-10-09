@@ -198,6 +198,89 @@ input::placeholder {
 #vst-root [data-scale]:hover {
   background-color: rgba(255, 255, 255, 0.5);
 }
+/* 展开列表回退（不支持 base-select 的引擎走原生弹窗：旧版 WebView2、尚不支持的 WKWebView）：样式管不到
+   弹窗本身，只给选项底色/字色，Windows Chromium 会尊重这两项，让原生列表大致贴合淡紫配色。 */
+#vst-root [data-scale] option {
+  background-color: #efe8f1;
+  color: #2c2c2e;
+}
+
+/* 展开列表渐进增强（customizable select）：支持 appearance:base-select 的引擎（WebView2 等）把选项弹层
+   ::picker(select) 画在页面内的 top layer —— 不被卡片 overflow:hidden 裁切，且随 select 继承卡片 zoom:F，
+   任意档位都与卡片同比例。弹层做成与面板一致的玻璃拟态；收起态逐项还原成上面原生路径的盒子。
+   只改外观，change 事件 / 防呆确认 / 键盘操作走的仍是同一个 <select>。 */
+@supports (appearance: base-select) {
+  #vst-root [data-scale],
+  #vst-root [data-scale]::picker(select) {
+    appearance: base-select;
+  }
+  /* base-select 的 UA 默认是 flex + 24px 最小宽高 + 自带 ::picker-icon 箭头：还原尺寸与对齐，
+     隐藏自带箭头，仍用上面 background-image 的小箭头（只留一个）。 */
+  #vst-root [data-scale] {
+    align-items: center;
+    min-block-size: auto;
+    min-inline-size: auto;
+  }
+  #vst-root [data-scale]::picker-icon {
+    display: none;
+  }
+  #vst-root [data-scale]:open {
+    background-color: rgba(255, 255, 255, 0.5);
+  }
+  #vst-root [data-scale]::picker(select) {
+    margin-block: 4px;
+    padding: 4px;
+    max-block-size: 190px;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(124, 114, 160, 0.45) transparent;
+    border: 1px solid rgba(255, 255, 255, 0.62);
+    border-radius: 10px;
+    background: rgba(246, 240, 248, 0.72);
+    backdrop-filter: blur(14px) saturate(135%);
+    -webkit-backdrop-filter: blur(14px) saturate(135%);
+    box-shadow:
+      0 14px 34px rgba(36, 28, 52, 0.3),
+      inset 0 1px 0 rgba(255, 255, 255, 0.7);
+  }
+  #vst-root [data-scale] option {
+    gap: 6px;
+    min-block-size: auto;
+    padding: 5px 12px 5px 7px;
+    border-radius: 6px;
+    font-size: 10px;
+    line-height: 12px;
+    letter-spacing: 0.04em;
+    color: #3a3a44;
+    background-color: transparent;
+    cursor: pointer;
+    outline: none;
+  }
+  #vst-root [data-scale] option:hover,
+  #vst-root [data-scale] option:focus-visible {
+    background-color: rgba(155, 147, 196, 0.2);
+    color: #21212a;
+  }
+  /* 键盘焦点另加一圈描边：鼠标悬停一项、键盘焦点在另一项时也分得清 */
+  #vst-root [data-scale] option:focus-visible {
+    outline: 1px solid rgba(108, 99, 150, 0.6);
+    outline-offset: -1px;
+  }
+  #vst-root [data-scale] option:checked {
+    background-color: rgba(155, 147, 196, 0.36);
+    color: #21212a;
+    font-weight: 500;
+  }
+  #vst-root [data-scale] option:checked:hover,
+  #vst-root [data-scale] option:checked:focus-visible {
+    background-color: rgba(155, 147, 196, 0.48);
+  }
+  #vst-root [data-scale] option::checkmark {
+    color: #6c6396;
+    font-size: 9px;
+  }
+}
 
 /* 状态灯按连接态（data-conn）上色：online=绿（有浏览器在桥，脉冲）/ waiting=琥珀（已启动但无客户端，
    静态提醒链路未通）/ offline=灰（默认内联样式）。CTA/发光仍按 running（data-run，服务已启动即绿）。 */

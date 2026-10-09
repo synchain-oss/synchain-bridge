@@ -18,7 +18,7 @@ if(NOT DEFINED CMAKE_OSX_DEPLOYMENT_TARGET)
   set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0" CACHE STRING "Minimum macOS version")
 endif()
 
-project(SynchainBridgeVST VERSION 1.5.3)
+project(SynchainBridgeVST VERSION 1.6.0)
 
 # Export compile_commands.json for clangd / clang-tidy (08 §3.2)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
@@ -68,6 +68,30 @@ if(WIN32)
   set(JUCE_WEBVIEW2_PACKAGE_LOCATION "${WEBVIEW2_PKG_DIR}" CACHE PATH "" FORCE)
 endif()
 
+# --- AAX（Avid Pro Tools）---
+# JUCE 8.0.8 仅在「非 GCC 且 (Darwin 或 Windows x86_64)」生成 AAX 目标(JUCEModuleSupport.cmake
+# _juce_get_platform_plugin_kinds)，其余平台静默滤掉。这里按同一条件现算，只为让 configure 日志
+# 说真话 + 「该建却没建」时 fail-closed(升 JUCE 版本时的 tripwire)。SDK = JUCE 自带 AAX SDK 2.8.0
+# (GPLv3 选项)，不引外部 SDK、CI 零 secret；不调 juce_set_aax_sdk_path(JUCE 已自动挂载自带 SDK，
+# 再调一次直接 FATAL)。两平台默认 ON(macOS 仍 arm64-only)；-DSYNCHAIN_BRIDGE_AAX=OFF 可整体关掉。
+# JUCE_TARGET_ARCHITECTURE 是 CACHE INTERNAL，上面 add_subdirectory(JUCE) 之后才读得到 —— 本段不能上移。
+option(SYNCHAIN_BRIDGE_AAX "Build the AAX (Pro Tools) format where JUCE supports it" ON)
+
+set(_bridge_aax_supported FALSE)
+if(NOT CMAKE_CXX_COMPILER_ID STREQUAL "GNU"
+   AND (CMAKE_SYSTEM_NAME STREQUAL "Darwin"
+        OR (CMAKE_SYSTEM_NAME STREQUAL "Windows" AND JUCE_TARGET_ARCHITECTURE STREQUAL "x86_64")))
+  set(_bridge_aax_supported TRUE)
+endif()
+
+set(SYNCHAIN_BRIDGE_FORMATS VST3 AU)   # AU 在非 Apple 被 JUCE 滤掉(见下方 juce_add_plugin 注释)
+if(SYNCHAIN_BRIDGE_AAX AND _bridge_aax_supported)
+  list(APPEND SYNCHAIN_BRIDGE_FORMATS AAX)
+elseif(SYNCHAIN_BRIDGE_AAX)
+  message(STATUS "AAX requested but unsupported by JUCE on "
+                 "${CMAKE_SYSTEM_NAME}/${CMAKE_CXX_COMPILER_ID}/${JUCE_TARGET_ARCHITECTURE}; skipped")
+endif()
+
 # --- Plugin Target ---
 juce_add_plugin(SynchainBridgeVST
   COMPANY_NAME        "Synchain"
@@ -76,7 +100,8 @@ juce_add_plugin(SynchainBridgeVST
   # AU 在非 Apple 平台被 JUCE 静默过滤掉（机制上是 no-op），故无需按平台分支。
   # 该静默过滤行为按 JUCE 8.0.8（`.juce-version` 当前钉的版本）实证，并非 JUCE 的书面约定；
   # 升 JUCE 版本时需在 Windows 侧重验一次「带 AU 也不影响 VST3 产物」（见 PR #19 审查）。
-  FORMATS             VST3 AU
+  # AAX 在 JUCE 不支持的平台同样被静默过滤；由上方 AAX 段按同一条件现算，加下方 FATAL tripwire 兜底。
+  FORMATS             ${SYNCHAIN_BRIDGE_FORMATS}
   PRODUCT_NAME        "Synchain Bridge"
 
   # "Fx" is added automatically by JUCE for VST3 audio effects.
@@ -94,9 +119,178 @@ juce_add_plugin(SynchainBridgeVST
   # Bundle identifier
   BUNDLE_ID           "com.synchain.bridge"
 
+  # --- AAX 专属（FORMATS 不含 AAX 时只是几个不被读的 JucePlugin_AAX* 宏）---
+  # 会话身份 = ManufacturerID(Snch) + ProductID(Snb1) + 每个 stem 组合的 PlugIn ID(JUCE
+  # AAXClientExtensions 按主总线 in/out 现算：mono→mono 'jcbb'、stereo→stereo 'jccc')；后者由
+  # PluginProcessor::isBusesLayoutSupported 决定 —— 发版后只许加、不许删。
+  AAX_IDENTIFIER         com.synchain.bridge
+  # 推流旁路不改音频：SDK 无 Analyzer/Utility 类；None = PT 按类别组织菜单时进 "Other"。
+  # 类别不进会话身份，日后可改(PT 重扫缓存即可)。
+  AAX_CATEGORY           AAX_ePlugInCategory_None
+  # 禁 multi-mono：否则 PT 会在立体声/环绕轨按声道各开一个 mono 实例 → 各起一个 WS 服务。
+  DISABLE_AAX_MULTI_MONO TRUE
+  # 不设 COPY_PLUGIN_AFTER_BUILD(会往系统 Avid 插件目录写)；DISABLE_AAX_BYPASS 保持默认 FALSE
+  # (宿主旁路走 processBlockBypassed：音频直通、推流暂停，与 VST3 一致)。
+
   # Windows: link the WebView2 loader (macOS/Linux ignore this). See NuGet block above.
   NEEDS_WEBVIEW2      TRUE
 )
+
+if(TARGET SynchainBridgeVST_AAX)
+  # 关 AudioSuite(离线处理)注册：本插件不改音频，离线跑一遍无意义。JUCEUtils 无对应关键字，宏只在
+  # juce_audio_plugin_client_AAX.cpp `#if ! JucePlugin_AAXDisableAudioSuite` 处被读(未定义 = 注册)；
+  # wrapper TU 是 INTERFACE 源、编在本目标里，PRIVATE 即达且不污染共享代码编译参数。
+  target_compile_definitions(SynchainBridgeVST_AAX PRIVATE JucePlugin_AAXDisableAudioSuite=1)
+elseif(SYNCHAIN_BRIDGE_AAX AND _bridge_aax_supported)
+  message(FATAL_ERROR "SYNCHAIN_BRIDGE_AAX=ON and JUCE should support AAX here, "
+                      "but SynchainBridgeVST_AAX was not created (JUCE format filtering changed?)")
+endif()
+
+# --- AAX:Windows 非 100% 显示缩放下的宿主窗口尺寸(回移上游 JUCE 提交 20872887e)---
+# JUCE 8.0.8 的 AAX 包装里 convertToHostBounds 只乘 Desktop 全局缩放、没乘 peer 的平台缩放：在 per-monitor DPI-aware
+# 的宿主里(peer 平台缩放 = 显示器缩放)，报给宿主的容器尺寸比 JUCE peer 实际渲染的物理尺寸小，插件窗被裁。上游修复 =
+# JUCE 提交 20872887e(只改 juce_audio_plugin_client_AAX.cpp，
+# https://github.com/juce-framework/JUCE/commit/20872887e7b8e889b192cb3c4a435c99ec4e16e8)，在 JUCE 9.0.x 里，8.0.x 线没有。
+# ⚠ 当前 Pro Tools 是 System DPI-aware，peer 平台缩放实测 = 1，这个补丁在它里面是空操作；Pro Tools 175% 下插件窗被裁的
+# 真实根因是 WebView2 的光栅化缩放与 JUCE peer 缩放不一致，修在 src/WebViewEditor.cpp 的 applyDpiCompensation。
+# 补丁仍保留：它管的是 per-monitor-aware 宿主那一种错位(两处修复互不重叠：那种宿主里 DPI 补偿系数恒为 1)。
+# 只给 AAX 打这一个补丁、不升 JUCE：configure 期读 JUCE 原文件，按上游三处逐块替换(每处断言旧文本恰好 1 次、替换后新文本
+# 在场，否则 FATAL —— JUCE 内容一变就停下)，生成到构建目录 _deps/ 下(零警告门的 [\\/](JUCE|vcpkg|vcpkg_installed|_deps)[\\/]
+# 过滤照旧把它当 JUCE 代码)，原文件设 HEADER_FILE_ONLY、AAX 目标改编生成件。
+#   - 不直接改 JUCE 目录：本机 JUCE 是多个项目共用的检出，CI 每次按 .juce-version 重新 clone 并断言 tag 身份，改了留不住。
+#   - 版本读 ${JUCE_PATH}/CMakeLists.txt 的 project(JUCE VERSION …)，不读 .juce-version：补丁作用于 JUCE_PATH 这棵树，
+#     判据就读这棵树(.juce-version 是 CI clone 用的钉，手工 configure 可以指向别的 JUCE)。JUCE >= 9 已含此修复，自动跳过；
+#     升 JUCE 9 时整段删除。
+#   - HEADER_FILE_ONLY 是目录级源文件属性：同目录的 VST3 目标也列着原文件，但那里 JucePlugin_Build_AAX=0、整个 TU 在
+#     `#if JucePlugin_Build_AAX` 里是空的，不编它对 VST3 产物零影响。
+#   - macOS 不打：mac 上 AAX 走 juce_audio_plugin_client_AAX.mm 包装(#include 本 .cpp)，peer 平台缩放恒为 1，这是 Windows DPI 问题。
+if(WIN32 AND TARGET SynchainBridgeVST_AAX)
+  file(STRINGS "${JUCE_PATH}/CMakeLists.txt" _bridge_juce_project_line REGEX "^project\\(JUCE VERSION ")
+  if(NOT _bridge_juce_project_line MATCHES "^project\\(JUCE VERSION ([0-9]+\\.[0-9]+\\.[0-9]+)")
+    message(FATAL_ERROR "AAX HiDPI backport: cannot parse 'project(JUCE VERSION x.y.z' from ${JUCE_PATH}/CMakeLists.txt")
+  endif()
+  set(_bridge_juce_version "${CMAKE_MATCH_1}")
+
+  if(_bridge_juce_version VERSION_GREATER_EQUAL 9)
+    message(STATUS "AAX: JUCE ${_bridge_juce_version} already contains upstream commit 20872887e; "
+                   "HiDPI backport skipped -- delete this block from CMakeLists.txt")
+  else()
+    # 原文件路径取 JUCE 登记给 AAX wrapper 的 INTERFACE_SOURCES 原样字符串(源文件属性按这个键查，免得斜杠/大小写对不上)。
+    get_target_property(_bridge_aax_wrapper_srcs juce_audio_plugin_client_AAX INTERFACE_SOURCES)
+    list(FILTER _bridge_aax_wrapper_srcs INCLUDE REGEX "/juce_audio_plugin_client_AAX\\.cpp$")
+    list(LENGTH _bridge_aax_wrapper_srcs _bridge_aax_wrapper_count)
+    if(NOT _bridge_aax_wrapper_count EQUAL 1 OR NOT EXISTS "${_bridge_aax_wrapper_srcs}")
+      message(FATAL_ERROR "AAX HiDPI backport: expected exactly one existing juce_audio_plugin_client_AAX.cpp in "
+                          "juce_audio_plugin_client_AAX INTERFACE_SOURCES, got '${_bridge_aax_wrapper_srcs}'")
+    endif()
+    set(_bridge_aax_src "${_bridge_aax_wrapper_srcs}")
+    set(_bridge_aax_gen "${CMAKE_BINARY_DIR}/_deps/juce-aax-patched/juce_audio_plugin_client_AAX.cpp")
+
+    file(READ "${_bridge_aax_src}" _bridge_aax_text)
+    string(REPLACE "\r\n" "\n" _bridge_aax_text "${_bridge_aax_text}") # CI 的 Windows clone 可能是 CRLF
+
+    function(_bridge_aax_replace_once label old new)
+      string(FIND "${_bridge_aax_text}" "${old}" _first)
+      string(FIND "${_bridge_aax_text}" "${old}" _last REVERSE)
+      if(_first EQUAL -1 OR NOT _first EQUAL _last)
+        message(FATAL_ERROR "AAX HiDPI backport (${label}): the JUCE text to replace must occur exactly once in "
+                            "${_bridge_aax_src} (first=${_first}, last=${_last}); JUCE changed -- re-check 20872887e")
+      endif()
+      string(REPLACE "${old}" "${new}" _out "${_bridge_aax_text}")
+      string(FIND "${_out}" "${new}" _at)
+      if(_at EQUAL -1)
+        message(FATAL_ERROR "AAX HiDPI backport (${label}): replacement text missing after string(REPLACE)")
+      endif()
+      set(_bridge_aax_text "${_out}" PARENT_SCOPE)
+    endfunction()
+
+    # ① GetViewSize 改问 ContentWrapperComponent(它知道自己 peer 的缩放)。
+    _bridge_aax_replace_once("GetViewSize" [==[
+                *viewSize = convertToHostBounds ({ (float) component->getHeight(),
+                                                   (float) component->getWidth() });
+]==] [==[
+                *viewSize = component->convertToHostBounds ({ (float) component->getHeight(),
+                                                              (float) component->getWidth() });
+]==])
+    # ② 删掉 JuceAAX_GUI 里只乘全局缩放的静态 convertToHostBounds(连同它上面那条分隔线，与上游一致)。
+    #   这一处函数内的「替换后新文本在场」恒为真(锚点文本替换前就在)，真正兜底的是三处替换之后的「已无静态版」断言。
+    _bridge_aax_replace_once("drop static convertToHostBounds" [==[
+        //==============================================================================
+        static AAX_Point convertToHostBounds (AAX_Point pluginSize)
+        {
+            auto desktopScale = Desktop::getInstance().getGlobalScaleFactor();
+
+            if (approximatelyEqual (desktopScale, 1.0f))
+                return pluginSize;
+
+            return { pluginSize.vert * desktopScale,
+                     pluginSize.horz * desktopScale };
+        }
+
+        //==============================================================================
+        struct ContentWrapperComponent final : public Component
+]==] [==[
+        //==============================================================================
+        struct ContentWrapperComponent final : public Component
+]==])
+    # ③ ContentWrapperComponent 加成员版(平台缩放 × 桌面缩放)。resizeHostWindow 里的同名调用不改，
+    #   名字查找先落在本类成员上(静态版已删，也没有别的候选 —— 解析错了就是编译错误，不会静默)。
+    #   上游用 std::invoke 包 lambda；这里改成立即调用的普通 lambda，语义相同，不依赖 <functional> 是否已被间接包含。
+    _bridge_aax_replace_once("ContentWrapperComponent::convertToHostBounds" [==[
+            bool resizeHostWindow()
+            {
+                if (pluginEditor != nullptr)
+]==] [==[
+            AAX_Point convertToHostBounds (AAX_Point p)
+            {
+                const auto scale = [&]
+                {
+                    if (auto* peer = getPeer())
+                        return (float) (peer->getPlatformScaleFactor() * peer->getComponent().getDesktopScaleFactor());
+
+                    return 1.0f;
+                }();
+
+                if (approximatelyEqual (scale, 1.0f))
+                    return p;
+
+                return { scale * p.vert,
+                         scale * p.horz };
+            }
+
+            bool resizeHostWindow()
+            {
+                if (pluginEditor != nullptr)
+]==])
+    string(FIND "${_bridge_aax_text}" "static AAX_Point convertToHostBounds" _bridge_aax_static_left)
+    if(NOT _bridge_aax_static_left EQUAL -1)
+      message(FATAL_ERROR "AAX HiDPI backport: a static convertToHostBounds is still present after patching")
+    endif()
+
+    # 改动声明(AGPLv3 §5(a)，JUCE 部分的许可)放文件头；内容不变就不重写，免得每次 reconfigure 都重编这个 TU。
+    string(PREPEND _bridge_aax_text
+      "// Synchain Bridge build-time copy of JUCE ${_bridge_juce_version} "
+      "modules/juce_audio_plugin_client/juce_audio_plugin_client_AAX.cpp, MODIFIED:\n"
+      "// backport of upstream JUCE commit 20872887e7b8e889b192cb3c4a435c99ec4e16e8 (2026-07-02, \"AAX Client: Fix\n"
+      "// editor size when running on Windows with dpi scaling other than 100%\"). Generated by CMakeLists.txt at\n"
+      "// configure time -- do not edit. Same licence as the original JUCE file (header below).\n\n")
+    set(_bridge_aax_prev "")
+    if(EXISTS "${_bridge_aax_gen}")
+      file(READ "${_bridge_aax_gen}" _bridge_aax_prev)
+      string(REPLACE "\r\n" "\n" _bridge_aax_prev "${_bridge_aax_prev}") # file(WRITE) 在 Windows 按文本模式落 CRLF
+    endif()
+    if(NOT "${_bridge_aax_prev}" STREQUAL "${_bridge_aax_text}")
+      file(WRITE "${_bridge_aax_gen}" "${_bridge_aax_text}")
+    endif()
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_bridge_aax_src}")
+
+    set_source_files_properties("${_bridge_aax_src}" TARGET_DIRECTORY SynchainBridgeVST_AAX
+                                PROPERTIES HEADER_FILE_ONLY TRUE)
+    target_sources(SynchainBridgeVST_AAX PRIVATE "${_bridge_aax_gen}")
+    message(STATUS "AAX: applied upstream JUCE commit 20872887e (Windows HiDPI host bounds) to the AAX wrapper "
+                   "(JUCE ${_bridge_juce_version} -> _deps/juce-aax-patched/juce_audio_plugin_client_AAX.cpp)")
+  endif()
+endif()
 
 # --- Embedded web UI assets (offline, no external deps) ---
 # Compiled into a static lib exposing BinaryData::* (index.html/styles.css/bridge.js/
@@ -166,6 +360,8 @@ target_sources(SynchainBridgeVST PRIVATE
   src/PluginProcessor.cpp
   src/WebViewEditor.h
   src/WebViewEditor.cpp
+  src/MonitorDpi.h
+  src/MonitorDpi.cpp
   src/BridgeApi.h
   src/VstBridgeServer.h
   src/VstBridgeServer.cpp
@@ -295,9 +491,18 @@ if(BRIDGE_BUILD_SELFTESTS)
 endif()
 
 # --- Platform-Specific ---
+# 状态行按「实际建出的目标」拼格式表，不按开关推断。macOS 行在 AAX 关闭时与旧文案逐字相同
+# (docs/build-macos.md 引用了这行输出)。
+set(_bridge_fmt_win "VST3")
+set(_bridge_fmt_mac "VST3 + AU")
+if(TARGET SynchainBridgeVST_AAX)
+  string(APPEND _bridge_fmt_win " + AAX")
+  string(APPEND _bridge_fmt_mac " + AAX")
+  message(STATUS "AAX: JUCE-bundled SDK (GPLv3 option), unsigned -> loads in Pro Tools Developer only until PACE-signed")
+endif()
 if(WIN32)
-  message(STATUS "Building Synchain VST3 for Windows (static, WebView2)")
+  message(STATUS "Building Synchain Bridge for Windows: ${_bridge_fmt_win} (static CRT, WebView2)")
 elseif(APPLE)
-  message(STATUS "Building Synchain Bridge for macOS: VST3 + AU, "
+  message(STATUS "Building Synchain Bridge for macOS: ${_bridge_fmt_mac}, "
                  "arch=${CMAKE_OSX_ARCHITECTURES}, min=${CMAKE_OSX_DEPLOYMENT_TARGET}, WKWebView")
 endif()

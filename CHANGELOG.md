@@ -6,6 +6,289 @@
 
 ## [未发布]
 
+## [1.6.0] — 2026-10-08
+
+> 版本号由 1.5.3 升至 **1.6.0**(minor:新增 AAX 格式;唯一真源 `CMakeLists.txt` 的 `project(... VERSION)`,四镜像同步:
+> web-preview 的 mock-server.mjs / package.json / package-lock.json 与 `BRIDGE_CONTRACT.md` §三,§三「产物」行同时登记 AAX)。
+> 本版新增 **AAX(Avid Pro Tools)格式,Beta**:两个平台都构建 AAX,但本版只发布 Windows x64 的签名件;macOS AAX 由 CI
+> 构建、暂不发布,借 Mac 实测之后再上(见「发布 / 分发」)。另含 Pro Tools 实测中发现的修复,以及新的发版分支流程
+> (`feature/*` → `dev` → `prod`,正式 tag 只打在 `prod` 上)。**不涉及契约变更**(wire 协议零改动,
+> `BRIDGE_CONTRACT_VERSION` 仍为 `2.0`;`BRIDGE_CONTRACT.md` 只改 §三的登记快照)。
+
+### 新增
+
+- **AAX(Avid Pro Tools)格式,Beta**:Windows x64 与 macOS arm64 都构建 AAX 目标(CMake 选项
+  `SYNCHAIN_BRIDGE_AAX`,两平台默认 ON,`-DSYNCHAIN_BRIDGE_AAX=OFF` 可整体关掉)。SDK 用 JUCE 8.0.8
+  自带的 AAX SDK 2.8.0(GPLv3 选项),不引外部 SDK、构建零 secret。构建产物**未签名**:PACE 签名之前只有
+  Pro Tools Developer 能加载(本版发布的 Windows x64 AAX 由维护者本机签名,见「发布 / 分发」)。JUCE 不支持 AAX 的平台照常静默跳过;若开关打开、平台也支持、目标却没建出来
+  (例如升 JUCE 后过滤逻辑变了),configure 直接 FATAL,不会静默丢格式。
+  - 身份:`AAX_IDENTIFIER com.synchain.bridge`,厂商/产品码沿用 `Snch` / `Snb1`;类别
+    `AAX_ePlugInCategory_None`(SDK 没有 Analyzer/Utility 类,Pro Tools 按类别组织菜单时归入 "Other");
+    禁用 multi-mono(否则立体声/环绕轨会按声道各开一个实例、各起一个 WebSocket 服务);不注册 AudioSuite
+    (`JucePlugin_AAXDisableAudioSuite=1`,只加在 AAX wrapper 目标上)。
+  - 声道:AAX 下只接受 mono→mono 与 stereo→stereo,即只登记 PlugIn ID `jcbb` / `jccc` 两个 stem 组合。
+    PlugIn ID 会写进 Pro Tools 会话,**发布后只能加、不能删**。
+  - 离线渲染:AAX 下宿主进入 non-realtime(offline bounce / Track Commit / Freeze)期间,音频原样直通,
+    不计量、不推流,避免快于实时的数据灌进推流队列把接收端冲乱。
+  - 诊断:新增 4 条按事件触发、只在 message 线程写的日志(前缀 `SynchainBridge:`,Windows 下经
+    `OutputDebugString`,DebugView 可见)—— 开窗时的宿主 / 封装格式 / 尺寸 / 缩放 / 声道 / 全局缩放;
+    缩放档位被宿主拒绝;音频设置(采样率 / 声道 / 延迟)变化;宿主 non-realtime 状态切换。音频线程零改动。
+- 插件界面文案不再写死格式与旧版本号:副标题 `VST3 · AUDIO BRIDGE` → `DAW · AUDIO BRIDGE`;
+  角标 `Synchain VST · v…` → `Synchain Bridge · v…`,首帧占位不再显示写死的 `v1.3.1`。
+
+### 修复
+
+- **AAX(Windows):系统显示缩放非 100%(实测 175%)时 Pro Tools 插件窗只显示网页左上约 57%**,右侧与下方被裁。
+  根因是 WebView2 的光栅化缩放与 JUCE peer 缩放不一致:Pro Tools 是 System DPI-aware,JUCE peer 在它里面的物理/逻辑比为 1
+  (编辑器 460 逻辑像素 = 460 物理像素);JUCE 的 WebView2 后端只设 bounds、不设 RasterizationScale,WebView2 按显示器缩放
+  (1.75)光栅化,CSS 视口只剩约 263 px;网页按固定设计盒 460×560 × zoom(uiScale) 排版、不读视口,于是被裁。per-monitor
+  DPI-aware 宿主(多数 VST3 宿主)里两者一致,所以一直没暴露。修复只在原生侧、只对 Windows AAX 生效:编辑器第一次挂上原生
+  窗口时算补偿系数 comp = 显示器有效 DPI 缩放 / JUCE peer 缩放,编辑器尺寸改为 设计尺寸 × uiScale × comp(175% 下
+  805×980),JUCE AAX 封装随之让 Pro Tools 把容器调大,WebView 视口回到 460×560 CSS px。comp 只在运行期用、不持久化;
+  回报网页的 `uiScale` 与 `setUiScale` 回执的 `w` / `h` 都不含它,`web/` 与桥 #1 契约不变。
+  - 诊断:开窗时各写一次 `editor peer: platformScale=… desktopScale=… logical=WxH`(所有格式)与
+    `aax dpi compensation: monitorScale=… peerScale=… comp=… logical=WxH`(仅 Windows AAX),都在 message 线程。
+  - 已知限制:插件窗拖到另一块 DPI 不同的显示器时不会重算(System-aware 宿主本来也收不到 per-monitor 的 DPI 变化),关掉重开即可。
+- **AAX(Windows):构建期回移上游 JUCE 提交
+  [`20872887e`](https://github.com/juce-framework/JUCE/commit/20872887e7b8e889b192cb3c4a435c99ec4e16e8)**(JUCE 9 才带,
+  8.0.x 线没有):JUCE 8.0.8 的 AAX 封装报给宿主的编辑器尺寸只乘了 JUCE 全局缩放、漏乘窗口的平台 DPI 缩放,per-monitor
+  DPI-aware 的宿主里插件窗会被裁。当前 Pro Tools 是 System DPI-aware、peer 平台缩放为 1,这个补丁在它里面不起作用(上一条才是
+  Pro Tools 175% 的修复),保留是为 per-monitor-aware 宿主。`CMakeLists.txt` 只在 Windows + AAX 目标 + JUCE < 9 时读 JUCE
+  原文件、按上游三处逐块替换(任一处对不上 configure 即 FATAL),生成到构建目录 `_deps/juce-aax-patched/` 并替代原文件编进
+  AAX 目标。不升 JUCE、不改 JUCE 目录;VST3 / AU 与 macOS AAX 产物不受影响。升 JUCE 9 时整段删除。
+- **插件界面:「界面缩放」下拉展开后的选项列表是浏览器默认样式**,与玻璃拟态界面不一致(在 Pro Tools AAX 里发现,所有宿主、
+  所有格式都有)。原因是 `web/styles.css` 只给收起态的下拉去了原生外观,`option` 和弹出层没有样式,WebView2 用 Chromium 原生弹窗画。
+  修复只改 `web/styles.css`:
+  - 支持 `appearance: base-select` 的引擎(本机实测 Edge / WebView2 运行时 154)走 customizable select:列表在页面内渲染成与面板
+    一致的玻璃面板(半透明浅色底 + 背景模糊,描边、圆角与卡片同系,等宽字体),选中项(✓ + 深一档底色)与悬停 / 键盘焦点项分得清,
+    最多显示约 8 行、其余滚动。弹层在 top layer,不被卡片的 `overflow: hidden` 裁切;又随下拉继承卡片的 `zoom`,任意缩放档位都与
+    界面同比例。收起态外观不变,自带的 `::picker-icon` 已隐藏,只留原来的小箭头。
+  - 不支持的环境(旧版 WebView2,以及尚不支持该特性的 WKWebView)仍用原生弹窗,只给 `option` 设底色与字色,Windows 上的原生列表
+    会随之贴近淡紫配色。
+  - 行为不变:仍是同一个 `<select>`,`change` → 10 秒防呆确认、`aria-label`、桥 #1 契约都没动。唯一差别在键盘:增强路径下收起态
+    按 ↑/↓ 先展开列表(列表内 ↑/↓ 移动、Enter 选定、Esc 关闭),不再像 Windows 原生下拉那样一按就换档并弹防呆确认。
+
+### 安全
+
+- **AAX 本机签名脚本 `scripts/sign-aax.ps1`(Windows x64)与 `scripts/sign-aax-macos.sh`(macOS arm64)**:把 CI 产出的
+  `-UNSIGNED.zip` 经 PACE wraptool 签名,再交给 `package-aax.ps1 -Mode Signed` / `package-aax-macos.sh --mode signed` 出发行包。
+  **U13 例外**:AAX 是本项目唯一签名的格式(零售版 Pro Tools 只加载 PACE 签名件),VST3 / AU 仍不签名不公证;签名只由维护者
+  在本机手工执行,CI 不调用、流水线零 secret。
+  - 凭据纪律:pfx 口令(及可选的 PACE 账号口令)只经 `Read-Host -AsSecureString` / `read -s` 交互读入,不进签名脚本的参数、
+    日志、transcript 与 shell 历史(脚本不开 `Start-Transcript`、bash 侧显式 `set +x`)。但 wraptool 只收命令行参数,签名那几秒
+    口令会以 `--keypassword`(`-KeyFile` 方式)或 `--pswd-no-save`(交互读入的账号口令)出现在 wraptool 的进程命令行里(本机进程
+    列表短暂可见,wraptool 本身的限制),只在可信的单用户机器上签名、签名期间不要让他人登录本机;回显的命令里口令、PACE 账号与 wcguid 一律打码为 `****`,
+    wraptool 自身的输出也逐行把这些值字面替换成 `****` 再显示(实测 `--verbose` 不回显口令,但回显 wcguid 与默认账号名);透传参数拒收
+    含 `password` 的项和脚本自管的 flag(两平台都不区分大小写);Windows 的 pfx 必须在仓库目录之外(路径前缀 + git 公共目录
+    两道判定,本仓库的其他 worktree 同样算仓库内)。
+  - 预检(任一失败即退出 1):`.sha256` 逐字节格式 + 哈希(**只验完整性**:与 zip 同一份下载,防不了替换);从文件名解析版本;
+    检出必须对应该版本(`-ci.<sha>` 件要求 HEAD 以该 sha 开头,其余版本要求 HEAD 上有 `v<版本>` tag),合规文件与 `scripts/`
+    无未提交改动;**来源核对**(`-SourceRunId` / `--source-run-id`,可选,不给记 WARN):该 run 属于本仓库(非 fork)、是
+    `ci.yml` / `release.yml`、结论 success、事件为 push / workflow_dispatch(pull_request 构建的是合并提交,不认)、
+    `head_sha` 等于当前检出,再用 `gh run download` 取回它的 `aax-unsigned-*` artifact,同名 zip 必须与输入字节相同;
+    wraptool 存在且 `help` 列出所需 flag;输入件确实未签名(Windows DLL 为 `NotSigned`;macOS arm64-only、无签名 Authority),且 `wraptool verify`
+    必须失败(已签过的件重签会报错)。macOS 另要求钥匙串里与 `--signid` 同名的代码签名身份恰好 1 个。
+  - 后检:`wraptool verify`;Windows 的 Authenticode 签名者指纹必须等于 `-CertThumbprint` / pfx 指纹、文件摘要默认必须是 SHA256 且时间戳为
+    RFC 3161(`-LegacySha1Digest` 时为 SHA1)、默认要求带时间戳(`-AllowNoTimestamp`
+    显式放行;拿不到也不事后用 signtool 补 —— 签名必须是最后一次修改);macOS `codesign --verify --deep --strict` 通过、
+    `Authority=` 等于 `--signid` 且非 ad-hoc。打包后再解压回读复验,最后只**打印** `gh release upload` 命令,不自动上传;
+    `-ci.<sha>` 件不给上传命令。成功删临时工作目录,失败保留供排查(里面只有 bundle,没有秘密)。
+  - `-DryRun` / `--dry-run`:跑全部预检并汇总 PASS / WARN / FAIL,打印打码后的签名计划与打包脚本自己的 dry-run 输出;
+    不读口令、不调用 `wraptool sign`、不产出文件。
+  - Windows 侧已按 wraptool 6.0.1 实测对齐并完成首次真签名(见下面 AAX-17 / AAX-18 两条);仍未验证的项与 macOS 侧照搬的写法
+    仍标 `TO-VALIDATE`,所有者核对后再删标记。
+- **自签名代码签名证书助手 `scripts/new-selfsigned-codesign-cert.ps1`**(Windows 签名用的 Authenticode 证书):RSA 3072 /
+  SHA256 / 默认 10 年,pfx 默认导出到 `$env:USERPROFILE\.synchain-signing\`,必须在仓库外(判定同签名脚本);脚本新建该目录时
+  断开继承、只给当前用户完全控制;口令两次输入一致且至少 12 位;
+  默认 AES256_SHA256 加密(wraptool 读不了时 `-PfxEncryption TripleDES_SHA1`);导出后用同一口令回读核对指纹;
+  `-RemoveFromStore` 导出后把证书连同私钥从 `Cert:\CurrentUser\My` 删除。`SupportsShouldProcess` + `ConfirmImpact=High`:
+  `-WhatIf` 只预演,不读口令、不写证书库、不生成文件。语法兼容 Windows PowerShell 5.1(文件带 UTF-8 BOM)。
+  (`*.pfx` / `*.p12` / `*.pvk` 的 `.gitignore` 条目已随 AAX 打包脚本加入,见「发布 / 分发」。)
+- **AAX 线终审修复(AAX-16)**:签名脚本在打包之后的步骤(回读复验等)失败时删掉本次产出的发行名 zip 与 `.sha256`;
+  `sign-aax.ps1` 要求 pwsh 7.3+ 并对 wraptool 显式用 Standard 传参(含双引号 / 空格的口令不再被拆错),wraptool 输出里口令的
+  转义形态与片段同样打码,git / gh 输出按 UTF-8 解码、来源核对只取 ASCII 字段(中文 Windows 下不再误报);gate 3h 中文文件名
+  不再漏报、目录名不再误报;gate 5c 按当前 `-Config` 计数,AAX 开关为 OFF 时 `build.ps1 -InstallAax` 与 5c 报错而不用旧
+  bundle(判据共用新增的 `scripts/aax-build-state.ps1`);`ci.yml` 的 pull_request 不再出 `aax-unsigned-*` 测试件;
+  `docs/release.md` 补全借用 Mac 的清理清单、如实写明口令会出现在 wraptool 进程命令行里。上面各条已按修复后的行为改写。
+- **签名脚本对齐 PACE wraptool 6.0.1 实测(AAX-17)**:`sign-aax.ps1` 的签名身份二选一 —— 新增 `-CertThumbprint <SHA1>`
+  (推荐,经 `--signid` 用「个人」证书库里的证书,预检要求带私钥、未过期、用途含代码签名;不读证书口令,wraptool 命令行上不再有
+  `--keypassword`),保留 `-KeyFile`;发布者二选一 —— `-WcGuid`,或 `-CustomerNumber` + `-CustomerName`(`-ProductName` 默认
+  `Synchain Bridge`);`-Account` 改为可选(不给则用 iLok License Manager 的默认账号,wraptool 打印的默认账号名同样打码);
+  `-PromptAccountPassword` 改经 `--pswd-no-save` 传,口令不写进 wraptool 的钥匙串(另一种用法:手动 `sync --password` 存一次)。
+  wraptool 定位改为 `-WraptoolPath` → `PACE_FUSION_HOME\bin` → PATH → `%ProgramFiles%` 下版本号最高的 `Versions\<N>\bin`,
+  进程里缺 `PACE_FUSION_HOME` 时从 Machine 级补上(两处都没有就 FAIL,提示新开终端);flag 检查改用 `wraptool help`(v6 里
+  `help sign` 不合法)。Windows 上 verify / sign 对 bundle 里的内层 DLL 执行(wraptool 只收文件):整个 bundle 先复制到工作目录、
+  对 DLL 原地签名,后检要求除 DLL 外逐字节不变、没有多出文件;未签名件的 verify 除了非零退出,还要求输出 NOT signed。透传参数
+  另拦短写法与 `pswd`。`sign-aax-macos.sh` 同步(`help`、`--account` 可选、`--customer-number` 发布者方式、`--pswd-no-save`、
+  `PACE_FUSION_HOME` 与 v6 默认路径候选;mac 上没法实测,仍标 TO-VALIDATE);`new-selfsigned-codesign-cert.ps1` 醒目打印
+  Thumbprint、推荐 `-CertThumbprint`,加 `-RemoveFromStore` 时提醒之后只能用 `-KeyFile`。已实测的项去掉 TO-VALIDATE、注明实测
+  日期;真签名能否成功、自签名证书签的件零售版 Pro Tools 是否接受、`--verbose` 是否回显参数、已签名件 verify 的退出码仍标
+  TO-VALIDATE(后均已实测:真签名、`--verbose`、verify 退出码三项见下一条 AAX-18;零售版 Pro Tools 接受自签名件于 2026-10-08 由所有者实测)。上面各条已按此改写。
+- **签名脚本显式指定 signtool、默认 SHA256 文件摘要(AAX-18,2026-10-08 首次真签名实测)**:
+  - signtool:不给 `--signtool` 时,wraptool 6.0.1 在它自己的「默认位置」找不到 Windows SDK 10.0.19041 的 signtool,报的却是
+    "Can't sign with the certificate identified by the thumbprint ..."(证书本身没问题)。`sign-aax.ps1` 新增 `-SignToolPath`,不给时按
+    `%ProgramFiles(x86)%\Windows Kits\10\bin\<版本号最高的>\x64\signtool.exe` → PATH 的顺序自动找,都没有就 FAIL(提示装
+    Windows SDK 的 Signing Tools 组件)。新增预检 5d,打印 signtool 的路径与版本;签名时始终传 `--signtool`。
+  - 摘要算法:wraptool 默认让 signtool 用 SHA1 文件摘要 + 旧式 `/t` 时间戳(Sectigo)。现在默认经 `--explicitsigningoptions`
+    改为 SHA256 文件摘要 + RFC 3161 时间戳(`/fd sha256 /tr http://timestamp.sectigo.com /td sha256`)。实测这个值会**整体替换**
+    wraptool 默认的 signtool 参数(`sign /sha1 <指纹>` 要自己写,文件路径仍由 wraptool 追加),`wraptool verify` 照样退出 0。
+    `-LegacySha1Digest` 回退到 wraptool 的默认命令。`-KeyFile` 方式必须带这个开关:要 SHA256 就得把 pfx 路径和口令写进
+    `--explicitsigningoptions`,脚本不这么做。
+  - 后检新增摘要核对:从 DLL 的 PE 证书表解出 PKCS#7,文件摘要与签名者摘要必须是 SHA256(回退时为 SHA1),时间戳必须是
+    RFC 3161、摘要 SHA256,且与签名对得上;回读复验同样核对。`-ExtraWraptoolArgs` 另拦 `--signtool` / `--explicitsigningoptions` /
+    `--extrasigningoptions`(`-J`)。
+  - 已实测、去掉 TO-VALIDATE 的项:`--signid` + `--wcguid` + `--signtool` 真签名成功;对内层 DLL 原地签名;已签名件 verify
+    退出码 0;`--verbose` 不回显口令;签名件确实带时间戳(V3)。iLok 上缺签名证书时的报错文案也写进了预检 6。仍标 TO-VALIDATE:
+    Pro Tools Intro 是否接受自签名的件(零售版 Pro Tools 一项后已实测,2026-10-08);`-KeyFile` 与 customer number 两条备选路径;证书在 `Cert:\LocalMachine\My`
+    时能否签(默认方式按 signtool 文档加 `/sm`);`--explicitsigningoptions` 下 `--timestampretry` 是否生效;macOS 侧全部。
+  - 文档:`docs/release.md` §7 的命令改为在 pwsh 会话里用 `&` 调用(经 `pwsh -File` 传数组参数会错位,报出假的互斥错误),并新增
+    排障表;`docs/build-windows.md` 同步;`new-selfsigned-codesign-cert.ps1` 打印的 `-KeyFile` 用法带上 `-LegacySha1Digest`。
+
+### 构建
+
+- **本地门禁 `scripts/gates.ps1` 加 AAX 支持**(既有 gate 与写死路径一行未动;新参数追加在参数表末尾,不改变既有的按位置调用):
+  - **gate 3h「签名材料 / Avid 评估工具不入库」,默认恒跑**(只读、秒级,不挂开关;默认结果表因此只多这一行):
+    `git ls-files` 列出已跟踪、未跟踪**以及被 `.gitignore` 忽略**的文件,命中 `*.pfx` / `*.p12` / `*.pvk`、`dsh.exe`、
+    DigiShell / AAX Validator 的可执行文件或安装包、测试计划 PDF 即 FAIL。只按扩展名 + 文件名匹配:证书扩展名落在任意路径
+    都算,DigiShell / AAX Validator / 测试计划的关键词必须落在文件名里(目录名不算),文档文件名里出现 validator 不会误报;
+    文件名按 UTF-8 解码,中文名的证书文件在 CP936 控制台下同样命中。被忽略的文件也查:`.gitignore` 已忽略证书扩展名,只查「会被提交的」就看不见仓库里躺着的证书,
+    而签名材料本就必须放仓库外(签名脚本与证书助手同样拒绝仓库内路径)。
+  - **`-IncludeAax`(默认关)**:在 selftest 之后、pluginval 之前加跑三道 gate;只读 gate 失败、配置 / 构建失败时
+    这三道各记一行 SKIP,开头的 Mode 段多打印一行 `AAX : 开/关`。
+    - **5c AAX bundle 结构**:CMake 缓存里 `SYNCHAIN_BRIDGE_AAX` 为 ON 且生成的工程里有 AAX 目标(否则构建目录里的 bundle 是
+      开关打开时留下的旧产物,直接 FAIL)、`Contents\x64\Synchain Bridge.aaxplugin` 的 PE 头 Machine = 0x8664、根目录有
+      `desktop.ini` / `Plugin.ico`、当前 `-Config` 产物目录下已构建(含 `Contents\`)的 `.aaxplugin` 恰好 1 个(VS 多配置生成器
+      给每个配置建的空壳目录不计;同一构建目录里其他配置的产物只写进明细)。
+    - **5d AAX 打包冒烟**:以 `-BundlePath` 调 `scripts/package-aax.ps1`,输出到 `dist\gates-aax-<构建目录名>`(并行
+      worktree 互不干扰、已被忽略)。Unsigned 跑一次,`.sha256` 与 `ci.yml` 的 AAX 冒烟同一套字节断言;Signed 反向断言 ——
+      同一个未签名 bundle 必须因签名检查被拒,且不留发行名 zip。
+    - **5e AAX Validator(可选)**:`-AaxValidatorPath <仓库外的 Validator 可执行文件>`(给了即隐含 `-IncludeAax`)。
+      没给 → SKIP;给了空串、路径在仓库内或不存在 → FAIL。调用参数与通过 / 失败标记是文件头三个 `TODO-AAXVAL` 常量,
+      未实测填写前恒 SKIP「调用方式未实测」,**绝不假绿**;填好后输出 Tee 到 `<构建目录>\gates-aaxval.log`,以输出标记
+      判定、退出码只作参考(与 auval 同口径)。
+- `scripts/build.ps1` 新增 `-InstallAax`:构建后把 `.aaxplugin` 复制到 64 位 Common Files 下的 `Avid\Audio\Plug-Ins`。
+  必须管理员权限(Pro Tools 只扫描这一个目录,没有用户级目录可回退;非管理员在构建前就直接退出),装前检测主体 DLL
+  是否被 Pro Tools 占用、先删旧版再整体复制,并提示本地构建的未签名件只有 Pro Tools Developer 能加载。
+
+### 持续集成
+
+- **`ci.yml` 两个 build job 各加三步 AAX 打包**(触发面一字不改,不加 secret,不加新 action,上传沿用已 pin 的
+  `upload-artifact` v4.6.2 SHA):
+  - **AAX 打包冒烟**(Windows 6c / macOS 8c,产物丢弃,与 VST3/AU 的 6b / 8b 同构):`-UNSIGNED` 模式按
+    `0.0.0-ci → 0.0.0-ci2 → 0.0.0-ci` 三连跑,`.sha256` 字节形态与 summary 按段去重的断言逐字照搬 6b / 8b;另做一道
+    独立于脚本自检的绊线 —— zip 层级、(mac)可执行位、`INSTALL-AAX.txt` 必须带 `(UNSIGNED)` 横幅。
+    **反向断言**:同一个未签名 bundle 用 Signed 模式打包必须失败、失败原因必须是签名检查(匹配拒收消息,前置检查
+    先挂掉不算数),且输出目录里不得出现发行名 zip ——
+    「未签名件不可能长得像发行资产」由机器保证,而不是靠人记得。
+  - **Package AAX (unsigned)**(6d / 8d,只在 push / `workflow_dispatch` 下运行):版本 = CMake `VERSION` + `-ci.<短 sha>`,
+    `INSTALL-AAX.txt` 的源码链接钉本次构建的完整 commit sha(经 env 间接读入);随后断言产物名逐字等于预期(mac 侧顺带在
+    BSD sed 上验证脚本从 `CMakeLists.txt` 回落读版本)。pull_request 构建的是合并提交 `refs/pull/N/merge`,源码链接与版本号
+    都对不上字节,所以 PR 上只跑 6c / 8c 冒烟、不出测试件(与签名脚本来源核对拒收 pull_request run 同口径)。
+  - **Upload**(6e / 8e,事件条件同 6d / 8d):artifact `aax-unsigned-win64` / `aax-unsigned-macos-arm64`(内含 `-UNSIGNED.zip` +
+    `.sha256`),保留 30 天。名字刻意不叫 `dist-*`:`release.yml` 的 `publish` 只从 `dist-*` 取件,未签名件进不了 Release。
+    `workflow_dispatch` 同样产出 —— 在子分支上 dispatch 一次即可取到 Pro Tools Developer 测试件。
+- **`release.yml` 的 `release` / `release-macos` 各追加三步未签名 AAX**(触发面一字不改,不加 secret,不加新 action,
+  上传沿用已 pin 的 `upload-artifact` v4.6.2 SHA):
+  - **Package AAX (unsigned)**:版本取 `gate` 的 `outputs.version`(与 VST3/AU 的 Package 同一个值、同一道空值断言,经 step env
+    间接读入),源码链接用脚本默认的 `v<版本>` 即本次 tag;随后断言 `dist/aax` 里恰好一个 AAX zip、名字逐字等于
+    `SynchainBridge-AAX-v<版本>-{win64,macos-arm64}-UNSIGNED.zip` 且带 `.sha256`(与 `ci.yml` 6d / 8d 同口径)。
+  - **Publish AAX job summary**:把 `dist/aax/package-summary.md` 追加进 job summary。
+  - **Upload**:artifact `aax-unsigned-win64` / `aax-unsigned-macos-arm64`(`-UNSIGNED.zip` + `.sha256`),保留 **30 天**
+    (`dist-*` 的 7 天不够:手工签名可能要等借到 Mac)。
+  - **`publish` job 一行未改**:它只从 `dist-win64` / `dist-macos-arm64` 取件,四资产精确名白名单与 `files:` 不变,draft 仍只挂
+    VST3/AU 四个资产;AAX 由维护者本机 PACE 签名后手工上传(`docs/release.md` 新增 §7「AAX(Pro Tools):本机签名 + 手工上传」)。
+  - **失败语义 fail-hard**:任一平台的 AAX 打包 / 上传失败 = 整个 tag 无产物,不用 `continue-on-error`(理由见
+    `docs/release.md` §6.1;同一脚本在 `ci.yml` 的每次 PR / push 上都冒烟过,回归在打 tag 前就会红)。
+- **`branch-gate` 启用 `dev` → `prod` 规则**(所有者批准的 workflow 改动;不加 secret、不加新 action、不用
+  `pull_request_target`):`on.pull_request.branches` 由 `[dev]` 改为 `[dev, prod]`;新增规则 ⓪ —— base 为 `prod` 时
+  只放行本仓的 `dev`,否则 exit 1。它排在机器人与 fork 的放行之前,fork / dependabot 开到 `prod` 的 PR 同样红(fork 的
+  head 即使叫 `dev` 也不算,连仓名一起比)。不设 `stage`,原先注释掉的 prod / stage 两行删除。base 为 `dev` 时的规则
+  逐字不变;DCO(merge commit 本就豁免)与冻结契约守卫在 base 为 `prod` 时照常跑。`ci` / `format` / `compliance` 的
+  触发面不变,`dev` → `prod` 的 PR 上不跑它们。
+
+### 发布 / 分发(对下游可见)
+
+- **本版 AAX 只发 Windows x64 签名件** `SynchainBridge-AAX-v1.6.0-win64.zip`(附 `.sha256`):维护者在本机用 PACE wraptool
+  签名,Authenticode 证书为自签名,文件摘要 SHA256,带 RFC 3161 时间戳(`scripts/sign-aax.ps1` 的默认方式),签名后手工
+  上传到 draft Release。**macOS AAX 暂不发布**:CI 照常构建并产出 `aax-unsigned-macos-arm64`,借 Mac 实测之后再发。draft
+  上因此是 6 个资产(VST3 / AU 两个 zip 加 Windows AAX zip,各带 `.sha256`)。
+- **发版分支流程改为 `feature/*` → `dev`(PR)→ `prod`(PR,只收 `dev`)→ 在 `prod` 的合并提交上打 `vX.Y.Z`**。本仓此前
+  没有 `prod`,首次从上一个已发布 tag(`v1.5.3`)的提交切出;`dev` → `prod` 用 merge commit 合并。冒烟 tag 规则不变,
+  可以打在任何分支上(`docs/release.md` §5 / §5.1)。
+- **新增 AAX 打包脚本 `scripts/package-aax.ps1`(Windows x64)与 `scripts/package-aax-macos.sh`(macOS arm64)**,是 AAX
+  打包的唯一真源(本机签名流程与 CI 共用);现有 `package.ps1` / `package-macos.sh` 一行未改,VST3 / AU 发版链路零风险。
+  - `-Mode Unsigned|Signed`(mac:`--mode unsigned|signed`)**必填、无默认值**。**`-UNSIGNED` 约定**:未签名件一律叫
+    `SynchainBridge-AAX-v<版本>-{win64,macos-arm64}-UNSIGNED.zip`;不带后缀的发行名只在 Signed 模式、且 bundle 确实带
+    签名时才产出 —— Windows 要求 DLL 有 Authenticode 签名者证书且签名完好(`NotSigned` / `HashMismatch` 拒收;自签名证书的
+    `UnknownError` 属预期、放行),macOS 要求 `codesign --verify --strict` 通过、有 `Authority=` 且不是 ad-hoc、并有
+    `_CodeSignature/CodeResources`(arm64 链接器自动加的 ad-hoc 签名必然被拒)。Signed 模式打包后再把 zip 解到临时目录
+    **回读验签**并比对主体二进制字节;从建 staging 起任何一步失败都删掉本次的 zip / `.sha256`,失败路径上绝不留发行名 zip。
+  - 版本:`-Version` 与 `-PrereleaseTag`(`ci.<sha7>` → `<CMake VERSION>-ci.<sha7>`)互斥,显式传空串直接失败(不静默回落);
+    结果须匹配 `release.yml` 的 tag 口径。`-PrereleaseTag` 的构建必须同时给 `-SourceRef <40 位 commit>`(没有对应 tag,
+    默认的 `v<版本>` 会是死链)。`-BundlePath` 供签名流程直接指定 bundle(签名产物不在构建目录里);走构建目录时
+    Windows 只计含 `Contents\` 的已构建 bundle —— VS 多配置生成器在 generate 期就给每个配置各建一个只有 `desktop.ini`
+    的空壳 `.aaxplugin` 目录(JUCE 的 `file(GENERATE)`),它们不是产物;已构建的必须恰好 1 个。
+  - bundle 断言:Windows 为 `Contents\x64\Synchain Bridge.aaxplugin` 的 PE 头 Machine = 0x8664、根目录有 `desktop.ini` /
+    `Plugin.ico`、不含 `*.pdb/*.ilk/*.exp/*.lib`;macOS 为 arm64-only、`CFBundleIdentifier` 等于 `CMakeLists.txt` 的
+    `BUNDLE_ID`、`Contents/MacOS/Synchain Bridge` 可执行。
+  - zip 内放 `INSTALL-AAX.txt`(中文;不叫 `INSTALL.txt`,与 VST3 包解压到同一目录时互不覆盖):Unsigned 版顶部是
+    「未签名构建(UNSIGNED)—— 不是发行版」横幅,Signed 版是签名说明;两平台的 Pro Tools 插件目录安装命令(先删旧版)、
+    mac 的 arm64 / Rosetta 与解隔离说明、Avid / Pro Tools / AAX / PACE / iLok 商标声明、AAX SDK 2.8.0 的 GPLv3 说明与
+    精确到 ref 的源码链接。合规文件与现有包同一组(`LICENSE.txt` / `THIRD-PARTY-NOTICES.md` / `LICENSES/OFL-1.1.txt`)。
+  - `.sha256` 与 `package-summary.md` 的格式与现有脚本逐字一致(默认输出目录 `dist/aax`,与 VST3 的 `dist/` 分开)。
+    打包脚本**不调用 wraptool、不碰任何凭据**,所以 CI 能跑。
+- `.gitignore` 追加 `*.aaxplugin/`、`*.pfx`、`*.p12`、`*.pvk`:AAX bundle 与代码签名材料都不入库(签名证书一律放仓库外)。
+
+### 兼容性
+
+- **无契约变更**:桥 #1 / 桥 #2 的 wire 协议、Init 键与 `BRIDGE_CONTRACT_VERSION` 均零改动,握手里不带
+  格式字段。七个契约文件中只有 `BRIDGE_CONTRACT.md` 被改动,且只改 §三的登记快照(VERSION 行随发版改为 `1.6.0`、
+  「产物」行登记 AAX),`contract-impact: none`。
+- **VST3 / AU 行为与 1.5.3 一致**:声道布局判定对 VST3 / AU 仍恒为接受(与 JUCE 默认逐字等价,已存工程的
+  声道协商结果不变);离线早退只对 AAX 生效;`Snch` / `Snb1` / `BUNDLE_ID` 未变,已有 DAW 工程无需重建。
+- AAX 是**新增格式**,不存在旧实例迁移问题。
+- 从源码构建:`cmake --build` 默认会多编 AAX 目标(共享代码多一个 `JucePlugin_Build_AAX=1`,首次构建全量
+  重编);configure 状态行改为 `Building Synchain Bridge for Windows: VST3 + AAX (static CRT, WebView2)` /
+  `Building Synchain Bridge for macOS: VST3 + AU + AAX, …`。只要 VST3 / AU 的话加 `-DSYNCHAIN_BRIDGE_AAX=OFF`,
+  状态行与产物都回到 1.5.3 的样子(Windows 行的措辞除外)。
+
+### 文档 / 合规
+
+- **AAX(Pro Tools)文档按已合入的脚本 / workflow / 代码定稿**:
+  - README(中英,标题骨架对等)新增「Pro Tools (AAX) 安装」「Pro Tools (AAX) 已知限制」「AAX (Pro Tools) 源码构建」三节,
+    同步徽章、简介(标 Beta)、安装表(AAX 资产签名后手工上传;1.6.0 只发 Windows x64,见本节最后一条)、`-UNSIGNED` 件与
+    `aax-unsigned-*` artifact 的定位、AAX 身份(`Snch` / `Snb1` + `com.synchain.bridge`)不可改;Windows 安装命令与
+    `INSTALL-AAX.txt` 同口径(`$env:CommonProgramW6432`);已知限制按代码实际行为写(只有 mono→mono / stereo→stereo、
+    无 AudioSuite / multi-mono、AAX 离线渲染不推流、DPP、1024 块口径、自签名 / 未公证、诊断日志前缀 `SynchainBridge:`)。
+  - `docs/build-windows.md` / `docs/build-macos.md` 新增 AAX 段:产物布局、`package-aax*.ps1/sh` 的 Unsigned 用法与参数要点、
+    `build.ps1 -InstallAax`、本地门禁(3h / `-IncludeAax` 的 5c / 5d / 5e)、四行诊断日志的实际文案、自签名证书助手、
+    AAX Validator 探查步骤(TODO-AAXVAL);CI 对照段补 6c–6e / 8c–8e 与 artifact 名。
+  - `docs/DAW_TEST_GUIDE.md` 新增 Pro Tools 实测一节:被测件三种来源、两平台安装、已知口径与 P-mac + T01–T13 检查表
+    (附每项应看到的诊断行),措辞为本项目自拟。
+  - `docs/release.md` §7.3 第 4 步补 `-SourceRunId <run-id>` / `--source-run-id <run-id>`(run-id 取第 2 步查到的 release run,
+    用于来源核对),并按 `sign-aax.ps1` / `sign-aax-macos.sh` 的实际预检 / 后检与开关逐项写准;§7.4 注明本机重建件没有 run
+    可核对。各文档指向 release.md §7 的链接补上锚点。
+  - `CLAUDE.md`(§0 安全铁律一字未动)/ `CONTRIBUTING.md` 同步 U13 的 AAX 例外、`feature/aax` 支线、gates 的 AAX 开关、
+    workflow 的 AAX artifact 与 fail-hard、AAX 资产与打包 / 签名脚本;CONTRIBUTING 补「AAX 声道布局发版后只许加不许删」。
+- **`THIRD-PARTY-NOTICES.md`**(随每个发行 zip 分发,`INSTALL-AAX.txt` 的许可证一节指向它):新增 Avid AAX SDK 2.8.0 一行
+  (GPL-3.0-only;双授权取 GPL v3,原文核验自 JUCE 8.0.8 tag 下的 SDK `LICENSE.txt`,仅 AAX 产物);闭包差集改写为
+  Windows VST3 / Windows AAX / macOS VST3+AU / macOS AAX 四个闭包;补说明 —— AAX 二进制整体按 GPL 第 3 版分发(只能 v3、
+  JUCE 部分照旧 AGPLv3)、PACE wraptool 与 iLok 只在维护者本机使用、Avid 测试工具不入库,以及 Avid / Pro Tools / AAX、
+  PACE / iLok、VST 商标行与「与 Avid 无隶属、赞助或背书关系」。不新增 `LICENSES/GPL-3.0-only.txt`(无入库文件声明该
+  标识,`reuse lint` 会报未使用)。
+- **发版文档按新分支流程改写**:`docs/release.md` 开头写明分支流程;§5 改为晋升 `prod` 后在 `prod` 上打 tag(先
+  `git switch prod` + `git pull --ff-only`),写明 `dev` → `prod` 的 PR 上哪些检查会跑、用 merge commit 合并、首次建立
+  `prod` 的做法,以及 `prod` 的分支保护只设 `branch-gate` 一个 required check(其余检查不在 `prod` 的 PR 上跑,设成
+  required 会一直 pending);§5.1 注明冒烟 tag 可以打在任何分支上;§6.1 重打 tag 同样在 `prod` 上;§7.3 第 3 步从
+  `prod` 上的 tag 检出,并先核对 tag 在 `prod` 上。`CLAUDE.md`(§0 一字未动)同步 §1 分支模型、§4 `branch-gate` 触发面
+  (`dev, prod`,没有 push 触发;原文把它与 `ci` / `format` 并列写成有 push 触发,一并改正)与 §9 tag 只打在 `prod` 上;
+  `CONTRIBUTING.md` 同步分支模型与发版流程。
+- **README(中英)与 `docs/DAW_TEST_GUIDE.md`**:AAX 状态改为「自 v1.6.0 起提供 Windows x64 Beta,macOS AAX 稍后」,
+  安装表写实际资产名 `SynchainBridge-AAX-v1.6.0-win64.zip`(签名后手工上传到 Release),macOS AAX 一行标为暂未发布。
+  Pro Tools 已知限制(DAW_TEST_GUIDE 为「已知口径」)新增一条:Pro Tools 使用电脑自带声卡时会独占该设备,同一台电脑上的
+  浏览器可能无法播放声音;这不影响向房间推流,其他参与者照常能听到;需要在本机浏览器监听时,建议改用独立声卡,或把
+  浏览器的输出设成另一个设备。
+
 ## [1.5.3] — 2026-09-30
 
 > 版本号由 1.5.0 升至 **1.5.3**(唯一真源 `CMakeLists.txt` 的 `project(... VERSION)`,四镜像同步:
