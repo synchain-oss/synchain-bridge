@@ -123,7 +123,7 @@
   `PACE_FUSION_HOME` 与 v6 默认路径候选;mac 上没法实测,仍标 TO-VALIDATE);`new-selfsigned-codesign-cert.ps1` 醒目打印
   Thumbprint、推荐 `-CertThumbprint`,加 `-RemoveFromStore` 时提醒之后只能用 `-KeyFile`。已实测的项去掉 TO-VALIDATE、注明实测
   日期;真签名能否成功、自签名证书签的件零售版 Pro Tools 是否接受、`--verbose` 是否回显参数、已签名件 verify 的退出码仍标
-  TO-VALIDATE(待首次真签名;除零售版 Pro Tools 一项外已在 AAX-18 实测,见下一条)。上面各条已按此改写。
+  TO-VALIDATE(后均已实测:前三项见下一条 AAX-18;零售版 Pro Tools 接受自签名件于 2026-10-08 由所有者实测)。上面各条已按此改写。
 - **签名脚本显式指定 signtool、默认 SHA256 文件摘要(AAX-18,2026-10-08 首次真签名实测)**:
   - signtool:不给 `--signtool` 时,wraptool 6.0.1 在它自己的「默认位置」找不到 Windows SDK 10.0.19041 的 signtool,报的却是
     "Can't sign with the certificate identified by the thumbprint ..."(证书本身没问题)。`sign-aax.ps1` 新增 `-SignToolPath`,不给时按

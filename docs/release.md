@@ -230,7 +230,9 @@ git tag v1.5.0 $sha && git push origin v1.5.0
 >
 > 同日完成首次真签名（wraptool 6.0.1 + Windows SDK 10.0.19041 的 signtool + 自签名证书），以下已实测：`--signid` 指纹 + `--wcguid` + `--signtool` 的真签名成功；对内层 DLL 原地签名；已签名件 `wraptool verify` 退出码 0（输出 "The digital signature was verified" 与 "The binary was signed, but not wrapped."）；`--verbose` 不回显口令（会回显 wcguid、默认账号名和它调用 signtool 的整条命令行，前两者脚本已打码）；签名件确实带时间戳。文件摘要默认为 SHA256 + RFC 3161 时间戳，做法见 §7.3 第 4 步。
 >
-> 仍标 **TO-VALIDATE** 的：自签名证书签的件零售版 Pro Tools / Pro Tools Intro 是否接受；`-KeyFile` 身份与 customer number 发布者这两条备选路径还没真签过；证书放在 `Cert:\LocalMachine\My`（而不是 `CurrentUser\My`）时能否签；`gh release upload` 能否直传 draft；macOS 侧全部（脚本照搬同一套写法，但 mac 上没法实测，相关项全部保留标记）。签名脚本的预检在 flag 不符时会中止并提示；核对完删除脚本与本节里的标记。
+> 已实测（2026-10-08）：自签名证书 + PACE 签名的件，零售版 Pro Tools（Windows 11）照常加载；`gh release upload` 可直传 draft（`v0.0.0-test` 彩排）。
+>
+> 仍标 **TO-VALIDATE** 的：Pro Tools Intro 未单独实测；`-KeyFile` 身份与 customer number 发布者这两条备选路径还没真签过；证书放在 `Cert:\LocalMachine\My`（而不是 `CurrentUser\My`）时能否签；macOS 侧全部（脚本照搬同一套写法，但 mac 上没法实测，相关项全部保留标记）。签名脚本的预检在 flag 不符时会中止并提示；核对完删除脚本与本节里的标记。
 
 ### 7.1 一次性准备（Windows）
 
@@ -246,7 +248,7 @@ git tag v1.5.0 $sha && git push origin v1.5.0
    pwsh scripts/new-selfsigned-codesign-cert.ps1   # 证书留在 Cert:\CurrentUser\My;pfx 默认导出到 $env:USERPROFILE\.synchain-signing\synchain-aax-codesign.pfx
    ```
 
-   记下脚本最后打印的 **Thumbprint**，签名时传给 `sign-aax.ps1 -CertThumbprint`（推荐方式：wraptool 直接用「个人」证书库里的证书签名，不读 pfx 口令，wraptool 的命令行上也没有 `--keypassword`）。这种方式要求证书留在 `Cert:\CurrentUser\My`，所以**不要加 `-RemoveFromStore`**；加了就只能用 `-KeyFile <pfx>` 方式。pwsh 7 里没有 PKI cmdlet 时，改用 `powershell.exe -File scripts/new-selfsigned-codesign-cert.ps1`（TO-VALIDATE）。证书是自签名的：用户在「属性 → 数字签名」里会看到不受信任的签名者，属预期；零售版 Pro Tools 是否照常加载待首次真签名验证（TO-VALIDATE）。
+   记下脚本最后打印的 **Thumbprint**，签名时传给 `sign-aax.ps1 -CertThumbprint`（推荐方式：wraptool 直接用「个人」证书库里的证书签名，不读 pfx 口令，wraptool 的命令行上也没有 `--keypassword`）。这种方式要求证书留在 `Cert:\CurrentUser\My`，所以**不要加 `-RemoveFromStore`**；加了就只能用 `-KeyFile <pfx>` 方式。pwsh 7 里没有 PKI cmdlet 时，改用 `powershell.exe -File scripts/new-selfsigned-codesign-cert.ps1`（TO-VALIDATE）。证书是自签名的：用户在「属性 → 数字签名」里会看到不受信任的签名者，属预期；零售版 Pro Tools 照常加载（2026-10-08 实测，Windows 11）。
 
 4. 把 pfx 和口令备份进密码管理器：pfx 是证书的仓库外备份（换机器时导入「个人」证书库，就能接着用 `-CertThumbprint`），也可以直接交给 `-KeyFile`。pfx 只放在仓库外（`.gitignore` 也已忽略 `*.pfx` / `*.p12` / `*.pvk`）；PACE 账号、wcguid 与 customer number 只在签名时作为命令行参数传入，**不写进任何入库文件**。
 5. **PACE 账号口令**。`-WcGuid` 方式签名要连 PACE 服务器，需要账号口令。两种处理方式：
