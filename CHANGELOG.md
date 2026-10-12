@@ -16,6 +16,10 @@
   必需检查、无路径过滤。
 - **`release.yml` 的 `publish`:带后缀的 tag 建成预发布**。`vX.Y.Z-<后缀>`(含冒烟 tag `*-test`)的 draft 设 `prerelease: true`、
   `make_latest: false`,发布后不会成为 Latest;正式 tag 的行为不变。不加新 action、不改 action 版本、不动 `gate`。
+- **review bot 收紧工具边界**(`claude-review` / `deepseek-review` / `review-dispatch`):模型只剩 Read / Glob / Grep 与
+  action 托管的评论工具,Bash、编辑与联网类工具以及敏感路径(`.git/`、`/proc`、runner 安装目录与家目录点文件等)一律 deny;
+  PR 的 diff 与元数据由前置步骤写进 `.ot-review/`;PR 含符号链接时不做 AI 审查(job 失败);`review-dispatch` 在 action 之后
+  再核对一次模型读到的提交与符号链接,不一致就回帖说明结论不可信并判红。`pr-agent` 只在 PR → `dev` 时运行。
 
 ### 内部工程(无契约变更)
 
