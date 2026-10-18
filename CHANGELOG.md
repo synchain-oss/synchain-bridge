@@ -16,11 +16,11 @@
   `LITELLM.EXTRA_HEADERS`。pr-agent 的输出上限改用真正生效的 `DEFAULT_ANTHROPIC_CHAT_MAX_TOKENS`
   (v0.39.0 并未实现 `config.max_output_tokens`,不抬高则 litellm 默认只发 4096、带推理的模型会把额度
   全花在 reasoning 上,审查空跑而 job 报绿)。**触发面不变**:`pr-agent` 仍只在 PR → `dev` 时运行,
-  `claude-review` / `deepseek-review` 仍覆盖所有 base 分支。(pending #72)
+  `claude-review` / `deepseek-review` 仍覆盖所有 base 分支。(#72)
 
 - **审查数据流登记**:迁移后 PR 的 diff 与标题正文会经第三方网关 `opencode.ai` 处理(此前经
   `api.deepseek.com`)。两者都是外部服务;API key 由维护者持有并写在仓库级 secret 里,轮换时同时更新
-  本仓与其他同款仓库。(pending #72)
+  本仓与其他同款仓库。(#72)
 
 - **`compliance` 新增版本镜像一致性检查**(步骤 `Plugin version mirrors`,只用 node 内建模块,不 npm install):
   `scripts/check-version-mirrors.mjs` 断言 `CMakeLists.txt` 的 `project(... VERSION)` 与 5 处镜像一致 ——
