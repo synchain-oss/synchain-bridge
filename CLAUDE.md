@@ -77,7 +77,7 @@ required check,无 paths 过滤)的 Frozen-contract change guard 守同一组七
 - macOS(Apple Silicon):JUCE 同一真源、CMake ≥3.22 + **Ninja**、Xcode command line tools(clang,`-Wall -Wextra -Wpedantic`)、pluginval 同一真源 + **`auval`**(AU 唯一验收工具,以输出里的 `AU VALIDATION SUCCEEDED` 判定,退出码不可靠)、ixwebsocket 走 CMake `FetchContent`(`IXWEBSOCKET_TAG` 钉 40 位 commit,与 Windows 侧 vcpkg 同版本;CI 预取源码进 `actions/cache` 后经 `FETCHCONTENT_SOURCE_DIR_IXWEBSOCKET` 喂给 configure)。产物为 **VST3 + AU + AAX**、**arm64-only**(v1 不出 universal / x86_64),VST3 / AU 不签名不公证,AAX 由维护者本机签名但不公证;CI runner = `macos-15`。构建细节见 `docs/build-macos.md`。
 - 本地 gates(`scripts/gates.ps1`)目前仍是纯 Windows 实现(vswhere / VS 生成器 / nuget / `pluginval.exe`),mac 侧本地验收按 `docs/build-macos.md` 手工执行。
 - AAX SDK 随 JUCE 自带(`juce_audio_plugin_client/AAX/SDK`),不需要另外下载。PACE wraptool / iLok 只在维护者本机使用;Avid 的评估工具(DigiShell / AAX Validator)与测试计划不入库、不分发、CI 不下载。
-- 构建流水线不需要任何 secret(06 §3.1);review bot 用 org secrets(`CLAUDE_CODE_OAUTH_TOKEN` / `DEEPSEEK_KEY`)。
+- 构建流水线不需要任何 secret(06 §3.1);review bot 用 secret(`CLAUDE_CODE_OAUTH_TOKEN` / `OPENCODE_GO_API_KEY_FOR_REVIEW`)。后者是**仓库级** secret(不是 org secret):2026-10-18 起**原先走 DeepSeek 直连的两个 bot**(`deepseek-review` / `pr-agent`)改经 OpenCode Go 网关(`https://opencode.ai/zen/go`),key 由 OpenCode 控制台签发,旧的 `DEEPSEEK_KEY` 停用。`claude-review` 仍用 `CLAUDE_CODE_OAUTH_TOKEN`(订阅 OAuth,非按量 key),不经网关。
 
 ## 7. 跨仓库协议规范
 
