@@ -8,6 +8,20 @@
 
 ### 持续集成
 
+- **review bot 从 DeepSeek 直连迁到 OpenCode Go 网关**(`deepseek-review` / `pr-agent`):
+  端点由 `https://api.deepseek.com/anthropic` 改为 `https://opencode.ai/zen/go`,模型改用 `deepseek-v4.1-flash`
+  —— 该网关只认裸 id,`[1M]` 后缀会返回 `Model is unavailable`,而裸 id 本身就是 1M 上下文(实测约 96 万
+  token 输入通过、约 107 万被拒)。secret 由 `DEEPSEEK_KEY` 改为仓库级 `OPENCODE_GO_API_KEY_FOR_REVIEW`。
+  网关强制要求会话头:claude-code-action 侧用 job 级 `ANTHROPIC_CUSTOM_HEADERS`,pr-agent 侧用
+  `LITELLM.EXTRA_HEADERS`。pr-agent 的输出上限改用真正生效的 `DEFAULT_ANTHROPIC_CHAT_MAX_TOKENS`
+  (v0.39.0 并未实现 `config.max_output_tokens`,不抬高则 litellm 默认只发 4096、带推理的模型会把额度
+  全花在 reasoning 上,审查空跑而 job 报绿)。**触发面不变**:`pr-agent` 仍只在 PR → `dev` 时运行,
+  `claude-review` / `deepseek-review` 仍覆盖所有 base 分支。(pending #72)
+
+- **审查数据流登记**:迁移后 PR 的 diff 与标题正文会经第三方网关 `opencode.ai` 处理(此前经
+  `api.deepseek.com`)。两者都是外部服务;API key 由维护者持有并写在仓库级 secret 里,轮换时同时更新
+  本仓与其他同款仓库。(pending #72)
+
 - **`compliance` 新增版本镜像一致性检查**(步骤 `Plugin version mirrors`,只用 node 内建模块,不 npm install):
   `scripts/check-version-mirrors.mjs` 断言 `CMakeLists.txt` 的 `project(... VERSION)` 与 5 处镜像一致 ——
   `web-preview/mock-server.mjs` 的 `PLUGIN_VERSION`、`web-preview/package.json` 的 `version`、`web-preview/package-lock.json`
