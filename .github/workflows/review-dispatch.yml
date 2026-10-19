@@ -109,8 +109,10 @@ jobs:
               --body "该 PR 含符号链接,按安全策略不能通过 /review 审查;请维护者本地拉分支人工审。"
           fi
 
-      # prompt 与工具边界(claude_args 的 --tools / --allowedTools / --disallowedTools)与 §3.4 claude-review.yml
-      # 完全共用同一份(唯一真源 = §3.4;上面的前置步骤 Prepare PR context 也逐字共用,只有 PR 编号的来源不同),
+      # prompt 与工具边界(claude_args 的 --tools / --allowedTools / --disallowedTools)是本文件自带的一份。
+      # 以前它与 claude-review.yml 逐字共用同一份;claude-review.yml 现已改成调用 Synchain-oss/ci-workflows
+      # 中央可复用 workflow 的薄调用方(审查要点在它的 focus / extra_prompt 里,工具边界在中央 claude-review.yml),
+      # 不再有可同步的内联真源。改审查要点时手动同步这里的 prompt;中央工具边界变动时对照更新这里的 claude_args。
       # 末尾必带 §3.4 的「不可信数据声明」防注入结尾(§8.4 第五条)。
       - uses: anthropics/claude-code-action@9ca9355b36297178e28d37c799d1c9c8a28e6507 # main, Claude Code 2.1.280
         with:
