@@ -54,6 +54,9 @@
 > （`claude-code-action` 的 `9ca9355b…` 与 `actions/checkout` v4.4.0 仍由 `review-dispatch` 使用）。
 > 新增一条被本仓引用的可复用 workflow：`Synchain-oss/ci-workflows/.github/workflows/{pr-agent,claude-review,deepseek-review}.yml`
 > 钉到 `62556ec3f2b4e049c5b099ebd9c56c4a2888a0a9`（注释 `# v1.1.0`），同样是 40 位 commit SHA。
+>
+> 2026-10-19 补记：上述三条中央可复用 workflow 的引用改钉到 `8028e34628bc2276ca978d87ccfc364432742820`（注释 `# v1.3.1`），同样是 40 位 commit SHA；
+> 上一条里的 `62556ec3…`（`# v1.1.0`）不再被本仓引用。
 
 口径说明：
 
