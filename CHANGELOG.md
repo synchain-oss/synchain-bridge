@@ -22,7 +22,7 @@
   三个文件缩成薄调用方,只留本仓专属的 `focus` / `extra_prompt` / `ignore_globs`;模型、工具边界、符号链接拒审、超时、
   pr-agent 镜像(按 digest 钉住、无备用模型)统一在中央维护,调用方按 commit SHA 引用。`deepseek-review` 改为只能
   `workflow_dispatch` 手动触发。检查名随之变为 `pr-agent / pr-agent`、`claude-pr-review / review`。
-  `review-dispatch`(`/review`)不迁移,仍自带 prompt。
+  `review-dispatch`(`/review`)不迁移,仍自带 prompt。(#73)
 
 - **审查数据流登记**:迁移后 PR 的 diff 与标题正文会经第三方网关 `opencode.ai` 处理(此前经
   `api.deepseek.com`)。两者都是外部服务;API key 由维护者持有并写在仓库级 secret 里,轮换时同时更新
