@@ -235,7 +235,7 @@ jobs:
             --model claude-opus-5-5
             --tools "Read,Glob,Grep"
             --allowedTools "mcp__github_inline_comment__create_inline_comment,Read,Glob,Grep"
-            --disallowedTools "Bash,Edit,MultiEdit,Write,NotebookEdit,WebFetch,WebSearch,Agent,Task,RemoteTrigger,CronCreate,CronDelete,CronList,PushNotification,SendMessage,ScheduleWakeup,Monitor,Workflow,Skill,Read(./.git/**),Read(//home/runner/work/**/.git/**),Read(//proc/**),Read(//sys/**),Read(//run/**),Read(//var/run/**),Read(//tmp/**),Read(//etc/**),Read(//home/runner/work/_temp/**),Read(//home/runner/actions-runner/**),Read(//home/runner/.*/**),Read(//home/runner/.*)"
+            --disallowedTools "Bash,Edit,MultiEdit,Write,NotebookEdit,WebFetch,WebSearch,Agent,Task,RemoteTrigger,CronCreate,CronDelete,CronList,PushNotification,SendMessage,ScheduleWakeup,Monitor,Workflow,Skill,Read(./.git/**),Read(//home/runner/work/**/.git/**),Read(//proc/**),Read(//sys/**),Read(//run/**),Read(//var/run/**),Read(//tmp/**),Read(//etc/**),Read(//home/runner/work/_temp/**),Read(//home/runner/actions-runner/**),Read(//home/runner/.*/**),Read(//home/runner/.*),Read(//github/**)"
 
       # 事后核对(堵住检查与使用之间的时间差):action 会按 PR 的 head 分支名再 fetch 并 checkout 一次
       # (src/github/operations/branch.ts 的 setupBranch),模型读到的提交可能不是 Prepare 检查过的那一份。
