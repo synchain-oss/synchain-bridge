@@ -6,6 +6,27 @@
 
 ## [未发布]
 
+### 修复
+
+- **Windows 开窗时占位之后又闪一下白**(无契约变更):根因在 JUCE 8.0.8 的 WebView2 后端 ——
+  控制器建好的回调里先按组件**当前**边界把宿主窗口摆好、设为可见,然后才发导航;而遮挡闸要等
+  「导航开始」事件回来才把 WebView 挪出可视区,中间这一段宿主窗口已经在屏上却没有内容(机器越忙越长)。
+  现在 `beginLoadAttempt` 在 `goToURL` **之前**就把 WebView 挪到可视区之外,控制器建好时 JUCE 拿到的
+  已经是可视区之外的边界。配套:挡住期间闸门不起算超时(这一段归 5s 看门狗,到点切兜底面板)、忽略
+  首帧信号、导航开始时只落超时起点;挡住期间 JUCE 的控制器创建重试泵(挂在基类 paint 上,挪走后
+  不再被画到)由 25Hz 定时器代调**同一个**基类 paint 驱动(画进 1×1 软件小图),不复刻 JUCE 的私有实现;
+  前端的桥就绪时若闸门仍挡在导航之前(导航开始事件没送到),按导航开始补记,不会永远挪在外面。
+  只在 Windows(WebView2)武装,macOS 路径不变。与 Rinne(synchain-oss/rinne)里的同一修法。
+- **开窗占位改成与成品外壳同形的圆角**:此前占位是方角整块渐变,而成品卡片是 20px 圆角、圆角之外露出
+  `#vst-root` 的深色径向底,占位切到内容时四个角会跳一下。占位现在先铺同一组径向底、再画同半径
+  (按缩放档位)的圆角占位渐变;两层 C++ paint 共用 `paintShellPlaceholder` 一个实现。
+- **新增关窗诊断行**:编辑器析构时写 `window closed after N ms (<档位>)`,档位为 `revealed` /
+  `parked` / `parked before navigation` / `reveal gate off` / `fallback`。放行行只在放行时写,
+  「内容出来之前就关了窗」在日志里原本一个字都没有。
+- **判据**:`tests/reveal_gate_selftest.cpp` 新增挡住 / 超时起点 / 首帧信号忽略 / 兜底放手 / 重试清除 /
+  桥就绪补记 / 关窗档位 / 外壳几何各组;`web-preview/reveal-first-frame.test.mjs` 新增第 ⑥ 格(外壳圆角与
+  外圈底与页面逐项对拍)与第 ⑦ 格(导航之前挡住的接线源钉)。
+
 ### 持续集成
 
 - **review bot 从 DeepSeek 直连迁到 OpenCode Go 网关**(`deepseek-review` / `pr-agent`):

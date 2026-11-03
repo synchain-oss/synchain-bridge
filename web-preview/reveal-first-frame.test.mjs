@@ -5,8 +5,9 @@
 // =============================================================================
 // [SL-386] 开窗遮挡闸的跨语言同源判据(node:test + node:assert,零依赖,不需要 npm install)
 // =============================================================================
-// 钉五格「删一处就红」的事实(①②③ 来自 SL-386 各推,④ 来自 SL-386 第 2/3 推,
-// ⑤ 来自 [SL-421],② 于 [SL-433] 大改;格数与下面的 test() 一一对应,改动时两边一起改):
+// 钉七格「删一处就红」的事实(①②③ 来自 SL-386 各推,④ 来自 SL-386 第 2/3 推,
+// ⑤ 来自 [SL-421],② 于 [SL-433] 大改,⑥⑦ 来自「导航发出之前就挡住 + 圆角占位」;
+// 格数与下面的 test() 一一对应,改动时两边一起改):
 //   ① 占位底三处同源:web/styles.css 的 --vb-card-surface(css token,卡片消费它)
 //      == web/index.html <head> 内联 html 底(外链 css 未到时的第一层底)
 //      == src/WebViewRevealGate.h kPlaceholderStops/kPlaceholderGradientDeg(C++ 占位色标)。
@@ -38,6 +39,15 @@
 //      ⚠ 这一层缺席是**静默**的:编译过、其余判据全绿,屏上却是白 —— 本格是它唯一的机检。
 //      纯文本断言钉不住运行期行为(那半边由 tests/reveal_gate_selftest.cpp 与真机
 //      pluginval 数表兜),这里钉的是「同源与接线」这一层。
+//   ⑥ 外壳轮廓三处同源:src/WebViewRevealGate.h 的 kShellCornerRadiusPx / kShellRimStops /
+//      kShellRimCenter*Frac == web/index.html [data-card] 的 border-radius == #vst-root 内联的
+//      径向底(圆心与全部色标);C++ 设计盒 kDesignW/H == 页面 DESIGN_W/H(圆角半径按它们的比值缩放);
+//      占位的唯一绘制实现真的用了圆角矩形与外圈色标。
+//   ⑦ 「导航发出之前就挡住」的接线(src/WebViewEditor.cpp):beginLoadAttempt 在 goToURL 之前
+//      (且在运行时缺失的早退之后)调 holdBeforeNavigation;timerCallback 在挡住期间调
+//      pumpControllerCreation;pumpControllerCreation 调的是基类 paint 且画进成员小图;
+//      handleRequestInitialState 调 onBridgeReady;析构里写关窗诊断行。这些都是编译过、
+//      纯逻辑自测全绿、却会让白闪回来(或让闸门永远挪在外面)的删除,所以必须有源钉。
 //
 // 运行:node --test web-preview/reveal-first-frame.test.mjs(仓库根)
 //      或 cd web-preview && npm test(node --test 会拾取本目录 *.test.mjs)。
@@ -69,8 +79,12 @@ function parseGradient(css) {
 function parseCppPlaceholder(src) {
   const deg = src.match(/kPlaceholderGradientDeg\s*=\s*([\d.]+)/);
   assert.ok(deg, "WebViewRevealGate.h 应有 kPlaceholderGradientDeg");
+  // 只读 kPlaceholderStops 这一张表:头里还有别的同形色标表(如外壳外圈底 kShellRimStops,
+  // 由第 ⑥ 格单独对拍),不限定范围会把它们一并算进来。
+  const table = src.match(/kPlaceholderStops\[\]\s*=\s*\{([\s\S]*?)\};/);
+  assert.ok(table, "WebViewRevealGate.h 应有 kPlaceholderStops 色标表");
   const stops = [
-    ...src.matchAll(/\{\s*([\d.]+),\s*0x([0-9a-fA-F]{8})u?\s*\}/g),
+    ...table[1].matchAll(/\{\s*([\d.]+),\s*0x([0-9a-fA-F]{8})u?\s*\}/g),
   ].map((s) => ({
     pos: Number(s[1]),
     hex: s[2].slice(2).toLowerCase(), // 0xAARRGGBB → 取 RRGGBB,与 CSS #RRGGBB 同域
@@ -620,8 +634,8 @@ test("③ 接线源钉:webView 的 setVisible(false) 只许在 showFallback(兜�
   const paintBody = code.slice(paintAt, paintAt + 900);
   assert.match(
     paintBody,
-    /paintPlaceholderGradient\(/,
-    "宿主 paint 必须经 paintPlaceholderGradient 铺占位(与 BridgeWebView 共用唯一实现)",
+    /paintShellPlaceholder\(/,
+    "宿主 paint 必须经 paintShellPlaceholder 铺占位(与 BridgeWebView 共用唯一实现)",
   );
 });
 
@@ -744,5 +758,278 @@ test("⑤ WebView2 DefaultBackgroundColor 那一层必须接上,且取值不许�
   assert.ok(
     logAt < navAt,
     "诊断行必须打在 goToURL() 之前:控制器一建好 JUCE 就 put 那个颜色,打在后面会让读表的人分不清先后",
+  );
+});
+
+/** 与 ③ ⑤ 同一套词法近似:先把字符串字面量整体换成占位、再剥注释(顺序不能反,理由见 ③)。 */
+function cppCode(src) {
+  return src
+    .replace(/"(?:[^"\\]|\\.)*"/g, '""')
+    .replace(/'(?:[^'\\]|\\.)*'/g, "''")
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/\/\/[^\n]*/g, "");
+}
+
+/** 只剥注释的头文件文本(头里的常量表要读数值,不能把字符串占位掉;头里没有带 `//` 的字符串)。 */
+function stripCppComments(src) {
+  return src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+}
+
+test("⑥ 外壳轮廓三处同源:C++ 圆角/外圈底 == 页面 [data-card] 圆角 == #vst-root 径向底;设计盒两处一致(源钉)", () => {
+  const hdr = stripCppComments(read("src/WebViewRevealGate.h"));
+  const html = read("web/index.html");
+
+  // --- C++ 侧事实 ---
+  const radius = hdr.match(/kShellCornerRadiusPx\s*=\s*([\d.]+)/);
+  assert.ok(radius, "WebViewRevealGate.h 应有 kShellCornerRadiusPx");
+  const cx = hdr.match(/kShellRimCenterXFrac\s*=\s*([\d.]+)/);
+  const cy = hdr.match(/kShellRimCenterYFrac\s*=\s*([\d.]+)/);
+  assert.ok(
+    cx && cy,
+    "WebViewRevealGate.h 应有 kShellRimCenterXFrac / kShellRimCenterYFrac",
+  );
+  const rimArr = hdr.match(/kShellRimStops\[\]\s*=\s*\{([\s\S]*?)\};/);
+  assert.ok(rimArr, "WebViewRevealGate.h 应有 kShellRimStops 色标表");
+  const cppStops = [
+    ...rimArr[1].matchAll(/\{\s*([\d.]+)\s*,\s*0x([0-9a-fA-F]{8})u?\s*\}/g),
+  ].map((s) => ({
+    pos: Number(s[1]),
+    hex: s[2].slice(2).toLowerCase(),
+  }));
+  assert.ok(cppStops.length > 0, "应能解析出 kShellRimStops 色标");
+
+  // --- 页面侧事实 ---
+  // [data-card] 的内联 style(圆角在这里)。锚点 `data-card` 后紧跟 style=" ——
+  // 页面里其它 data-card 引用(注释、选择器)不带这个形态。
+  const card = html.match(/<div\s+data-card\s+style="([^"]*)"/);
+  assert.ok(card, "index.html 应有带内联 style 的 [data-card] 卡片");
+  const cardRadius = card[1].match(/border-radius:\s*([\d.]+)px/);
+  assert.ok(cardRadius, "[data-card] 的内联 style 应写 border-radius: <N>px");
+
+  // #vst-root 的内联径向底(圆角之外露出来的就是它)。
+  const root = html.match(/<div\s+id="vst-root"[^>]*?style="([^"]*)"/);
+  assert.ok(root, "index.html 应有带内联 style 的 #vst-root");
+  const radial = root[1].match(
+    /radial-gradient\(\s*circle at\s+([\d.]+)%\s+([\d.]+)%\s*,([^)]*)\)/,
+  );
+  assert.ok(
+    radial,
+    "#vst-root 的内联 style 应是 radial-gradient(circle at X% Y%, ...)",
+  );
+  const pageStops = [
+    ...radial[3].matchAll(/#([0-9a-fA-F]{6})\s+([\d.]+)%/g),
+  ].map((s) => ({ hex: s[1].toLowerCase(), pos: Number(s[2]) / 100 }));
+
+  // --- 逐项对拍 ---
+  assert.equal(
+    Number(radius[1]),
+    Number(cardRadius[1]),
+    "C++ kShellCornerRadiusPx 必须等于页面 [data-card] 的 border-radius",
+  );
+  assert.ok(
+    Math.abs(Number(cx[1]) - Number(radial[1]) / 100) < 1e-9,
+    "C++ 径向底圆心 x 占比必须等于页面 #vst-root 的 circle at X%",
+  );
+  assert.ok(
+    Math.abs(Number(cy[1]) - Number(radial[2]) / 100) < 1e-9,
+    "C++ 径向底圆心 y 占比必须等于页面 #vst-root 的 circle at _ Y%",
+  );
+  assert.equal(
+    cppStops.length,
+    pageStops.length,
+    "外圈底色标个数 C++ 与页面不一致",
+  );
+  cppStops.forEach((s, i) => {
+    assert.equal(s.hex, pageStops[i].hex, `外圈底第 ${i} 个色标色值不一致`);
+    assert.ok(
+      Math.abs(s.pos - pageStops[i].pos) < 1e-9,
+      `外圈底第 ${i} 个色标位置不一致(${s.pos} vs ${pageStops[i].pos})`,
+    );
+  });
+
+  // --- 设计盒:圆角半径按「窗口 / 设计盒」缩放,两处设计盒必须一致 ---
+  const src = read("src/WebViewEditor.cpp");
+  const cppW = cppCode(src).match(/kDesignW\s*=\s*(\d+)/);
+  const cppH = cppCode(src).match(/kDesignH\s*=\s*(\d+)/);
+  assert.ok(cppW && cppH, "WebViewEditor.cpp 应有 kDesignW / kDesignH");
+  const pageW = html.match(/const\s+DESIGN_W\s*=\s*(\d+)/);
+  const pageH = html.match(/const\s+DESIGN_H\s*=\s*(\d+)/);
+  assert.ok(pageW && pageH, "index.html 应有 DESIGN_W / DESIGN_H");
+  assert.equal(cppW[1], pageW[1], "C++ kDesignW 必须等于页面 DESIGN_W");
+  assert.equal(cppH[1], pageH[1], "C++ kDesignH 必须等于页面 DESIGN_H");
+
+  // --- 占位的唯一绘制实现真的用了圆角矩形与外圈色标(删了其中任何一处,占位就退回方角) ---
+  const paintFn = functionBodyAt(
+    cppCode(src),
+    /void\s+paintShellPlaceholder\s*\(/,
+    "paintShellPlaceholder()",
+  );
+  assert.match(
+    paintFn,
+    /fillRoundedRectangle\s*\(/,
+    "占位必须用 fillRoundedRectangle 画圆角",
+  );
+  assert.match(
+    paintFn,
+    /shellCornerRadius\s*\(/,
+    "圆角半径必须经 webview::shellCornerRadius 现算(按缩放),不许写死",
+  );
+  assert.match(paintFn, /kShellRimStops/, "占位必须先铺外圈底(kShellRimStops)");
+  assert.match(
+    paintFn,
+    /shellRimGeometry\s*\(/,
+    "外圈底的几何必须经 webview::shellRimGeometry",
+  );
+  // 外圈渐变必须真的被设成填充色,并且先于圆角内的占位渐变铺满整个区域
+  // (只建渐变不设填充,或顺序反了,外圈就不是径向底,圆角之外露出的是上一次的填充色)。
+  const rimFillAt = paintFn.search(/setGradientFill\s*\(\s*rimGrad\s*\)/);
+  const rimPaintAt = paintFn.search(/fillAll\s*\(\s*\)/);
+  const innerFillAt = paintFn.search(/setGradientFill\s*\(\s*grad\s*\)/);
+  assert.ok(
+    rimFillAt >= 0 && rimPaintAt > rimFillAt,
+    "外圈渐变必须先 setGradientFill(rimGrad) 再 fillAll()",
+  );
+  assert.ok(
+    innerFillAt > rimPaintAt,
+    "圆角内的占位渐变必须排在外圈 fillAll() 之后(后画的盖在上面)",
+  );
+  // 占位只有一个实现、两个调用点(宿主层 paint + BridgeWebView::paint):多了说明又有人另写一份,
+  // 少了说明某一层退回方角占位。
+  const callCount = (cppCode(src).match(/\bpaintShellPlaceholder\s*\(/g) ?? [])
+    .length;
+  assert.equal(
+    callCount,
+    3,
+    "paintShellPlaceholder 应恰有 1 处定义 + 2 处调用(宿主层 paint、BridgeWebView::paint)",
+  );
+});
+
+test("⑦ 导航发出之前就挡住的接线源钉:hold 在 goToURL 之前 / 挡住期间代驱动泵 / 桥就绪补记 / 关窗诊断行", () => {
+  const code = cppCode(read("src/WebViewEditor.cpp"));
+
+  // --- (a) beginLoadAttempt:hold 在 goToURL 之前,且在运行时缺失的早退之后 ---
+  // 删除式:删掉 holdBeforeNavigation ⇒ 红(白闪回来,纯逻辑自测抓不到);挪到 goToURL 之后 ⇒ 红
+  // (控制器可能在那之前就建好并按当前边界上屏);挪到缺失早退之前 ⇒ 红(缺失时走兜底面板,不该挡)。
+  const blBody = functionBodyAt(
+    code,
+    /void\s+SynchainBridgeWebEditor::beginLoadAttempt\s*\(/,
+    "beginLoadAttempt()",
+  );
+  const holdAt = blBody.search(/mRevealGate\.holdBeforeNavigation\s*\(/);
+  const navAt = blBody.search(/goToURL\s*\(/);
+  const missingAt = blBody.search(
+    /showFallback\s*\(\s*FallbackReason::MissingRuntime/,
+  );
+  assert.ok(
+    holdAt >= 0,
+    "beginLoadAttempt() 必须调 mRevealGate.holdBeforeNavigation()",
+  );
+  assert.ok(
+    navAt >= 0 && missingAt >= 0,
+    "beginLoadAttempt() 应有 goToURL() 与运行时缺失的兜底分支",
+  );
+  assert.ok(
+    holdAt < navAt,
+    "holdBeforeNavigation 必须排在 goToURL **之前**:JUCE 在控制器建好的回调里按组件当时的边界摆窗,再发导航",
+  );
+  assert.ok(
+    holdAt > missingAt,
+    "holdBeforeNavigation 必须排在运行时缺失的早退**之后**:缺失时直接走兜底面板,不挡",
+  );
+  assert.match(
+    blBody.slice(holdAt, navAt),
+    /applyRevealGate\s*\(/,
+    "挡住之后必须立刻 applyRevealGate() 把边界落地(否则 JUCE 建控制器时拿到的仍是原位边界)",
+  );
+
+  // --- (b) timerCallback:挡住期间代驱动控制器创建的重试泵 ---
+  // 删除式:删掉这一句 ⇒ 红。没有它,WebView 挪出可视区后 JUCE 不再画它,重试泵停摆,
+  // 控制器建不起来(纯逻辑自测与编译都看不出来)。
+  const tickBody = functionBodyAt(
+    code,
+    /void\s+SynchainBridgeWebEditor::timerCallback\s*\(/,
+    "timerCallback()",
+  );
+  assert.match(
+    tickBody,
+    /if\s*\(\s*mRevealGate\.holdingBeforeNavigation\s*\(\s*\)\s*\)\s*mWebView->pumpControllerCreation\s*\(\s*\)\s*;/,
+    "timerCallback 在挡住期间(holdingBeforeNavigation)必须调 mWebView->pumpControllerCreation()",
+  );
+
+  // --- (c) pumpControllerCreation:调的是**基类** paint,画进成员小图(不是每次新建) ---
+  // 删除式:改成调自己的 paint(g) 或删掉基类调用 ⇒ 红;把成员小图改回局部变量 ⇒ 红。
+  const pumpBody = functionBodyAt(
+    code,
+    /void\s+pumpControllerCreation\s*\(/,
+    "pumpControllerCreation()",
+  );
+  assert.match(
+    pumpBody,
+    /juce::WebBrowserComponent::paint\s*\(\s*g\s*\)/,
+    "pumpControllerCreation 必须调**基类** juce::WebBrowserComponent::paint(g)(同一个泵,不复刻)",
+  );
+  assert.match(
+    pumpBody,
+    /juce::Graphics\s+g\s*\(\s*mPumpScratch\s*\)/,
+    "pumpControllerCreation 必须画进成员小图 mPumpScratch(不是每个 tick 新建)",
+  );
+  assert.match(
+    code,
+    /juce::Image\s+mPumpScratch\s*\{[^}]*juce::SoftwareImageType\s*\(\s*\)\s*\}/,
+    "mPumpScratch 必须是软件渲染的小图(默认图像类型走 Direct2D,每个 tick 建一次 GPU 上下文)",
+  );
+
+  // --- (d) handleRequestInitialState:桥就绪补记导航开始(纵深防御) ---
+  // 删除式:删掉 ⇒ 红。没有它,导航开始事件一旦没送到,闸门挡住期间不起算超时、看门狗又在桥就绪后
+  // 就停了 ⇒ 永远挪在外面(一块不动的占位板,比白闪坏得多)。
+  const hrisBody = functionBodyAt(
+    code,
+    /void\s+SynchainBridgeWebEditor::handleRequestInitialState\s*\(/,
+    "handleRequestInitialState()",
+  );
+  assert.match(
+    hrisBody,
+    /mRevealGate\.onBridgeReady\s*\(/,
+    "handleRequestInitialState 必须调 mRevealGate.onBridgeReady()",
+  );
+
+  // --- (e) 析构:关窗诊断行 ---
+  const dtorBody = functionBodyAt(
+    code,
+    /SynchainBridgeWebEditor::~SynchainBridgeWebEditor\s*\(/,
+    "~SynchainBridgeWebEditor()",
+  );
+  assert.match(dtorBody, /stopTimer\s*\(\s*\)/, "析构应先 stopTimer()");
+  assert.match(
+    dtorBody,
+    /logDiag\([^;]*windowClosedState\s*\(\s*mRevealGate\b/,
+    "析构必须写关窗诊断行,档位经 webview::windowClosedState(mRevealGate, ...)",
+  );
+  assert.ok(
+    dtorBody.search(/stopTimer\s*\(/) < dtorBody.search(/logDiag\s*\(/),
+    "关窗诊断行必须在 stopTimer() 之后写(定时器不再改闸门状态)",
+  );
+
+  // --- (f) 首帧诊断行:挡住期间闸门忽略信号,诊断行要如实写,且先判挡住再判 parked ---
+  // 删除式:去掉这一档 ⇒ 红;先判 parked() ⇒ 红(挡住时 parked 同为真,这一档就永远走不到)。
+  // code 里字符串已占位成 "",所以判文案用未处理的源码。
+  const ffBody = functionBodyAt(
+    code,
+    /void\s+SynchainBridgeWebEditor::handleFirstFrame\s*\(/,
+    "handleFirstFrame()",
+  );
+  const heldAt = ffBody.search(
+    /mRevealGate\.holdingBeforeNavigation\s*\(\s*\)\s*\?/,
+  );
+  const parkedAt = ffBody.search(/mRevealGate\.parked\s*\(\s*\)\s*\?/);
+  assert.ok(heldAt >= 0, "首帧诊断行应先判 holdingBeforeNavigation()");
+  assert.ok(
+    parkedAt > heldAt,
+    "首帧诊断行必须先判 holdingBeforeNavigation() 再判 parked():挡住时 parked 同为真",
+  );
+  assert.match(
+    read("src/WebViewEditor.cpp"),
+    /holdingBeforeNavigation\s*\(\s*\)\s*\?\s*juce::String\s*\(\s*" \(ignored, held before navigation\)"\s*\)/,
+    "导航前挡住期间首帧诊断行应写 (ignored, held before navigation)",
   );
 });

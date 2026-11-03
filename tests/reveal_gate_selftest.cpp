@@ -6,6 +6,8 @@
 // 只记账 / settle 双条件(tick 数 ∧ kRevealSettleMs 毫秒下界,回绕安全)/ 3s 超时兜底 / 挪窗几何 /
 // 占位渐变(CSS 同形)的 C++ 侧 golden;[SL-421] 起还含 WebView2 DefaultBackgroundColor
 // 那一层的两件纯逻辑:占位渐变轴中点色 golden、与「这一层在不在」的版本判定三态。
+// 另含:发起导航之前就挡住(挡住期间不起算超时 / 导航开始只落超时起点 / 首帧信号忽略 /
+// 兜底面板与重试放手 / 桥就绪补记)、关窗诊断档位、外壳圆角占位的几何。
 // 只 include 那一个头 + 标准库,不链接 JUCE /
 // ixwebsocket,故能脱离插件目标单独构建运行(cmake -DBRIDGE_BUILD_SELFTESTS=ON,随后由
 // scripts/gates.ps1 的 gate 5b、ci.yml 两个平台 job 与 compliance workflow 执行)。
@@ -439,6 +441,271 @@ int main()
         check(defaultBackgroundSupport("") == Support::unknown, "空版本串:unknown", __LINE__);
         check(defaultBackgroundSupport("dev137") == Support::unknown, "解析不出:unknown,不许落到 unavailable",
               __LINE__);
+    }
+
+    // ------------------------------------------------------------------
+    // 导航发出之前就挡住(holdBeforeNavigation)。以下几格守的是同一件事的不同侧面:
+    // 挡住期间不起算超时、导航开始只落超时起点、首帧信号不属于这一次加载、
+    // 兜底面板与新的加载尝试能放手、前端的桥就绪能补记导航开始。
+    // 每格头上写一句改哪里会红,删除式实测见提交说明。
+    // ------------------------------------------------------------------
+
+    // 删除式:holdBeforeNavigation 里删掉 parked_ = true ⇒ 第一条红;删掉 holding_ = true ⇒ 第二条红;
+    //        onTick 里删掉 `|| holding_` ⇒ 后面「多久都不放行」那两条红。
+    {
+        RevealGate gate;
+        gate.beginLoadAttempt();
+        gate.holdBeforeNavigation();
+        check(gate.parked(), "挡住:发起导航之前就应挪出可视区", __LINE__);
+        check(gate.holdingBeforeNavigation(), "挡住:应标记为「导航之前」", __LINE__);
+
+        // 导航开始之前没有超时:多久都不放行,这一段归看门狗管。
+        gate.onTick(0);
+        gate.onTick(static_cast<std::uint32_t>(kRevealFallbackMs) * 10u);
+        check(gate.parked(), "导航开始之前不起算超时:多久都不许放行", __LINE__);
+        check(reasonIs(gate, ""), "导航开始之前不应写下放行原因", __LINE__);
+    }
+
+    // 删除式:onNavigationStarted 里把 `(parked_ && !holding_)` 改回 `parked_` ⇒ 超时起点没落下(仍是 0),
+    //        「5000 + 3000 - 1 仍按住」那格红(按 0 起算早已超时);删掉 `parkedAtMs_ = nowMs` ⇒ 同样红。
+    {
+        RevealGate gate;
+        gate.beginLoadAttempt();
+        gate.holdBeforeNavigation();
+        gate.onNavigationStarted(5000);
+        check(gate.parked(), "导航开始后位置不动,仍挡着", __LINE__);
+        check(!gate.holdingBeforeNavigation(), "导航开始后不再是「导航之前」(代驱动泵该停了)", __LINE__);
+
+        gate.onTick(5000 + static_cast<std::uint32_t>(kRevealFallbackMs) - 1);
+        check(gate.parked(), "超时从导航开始那一刻起算:前一毫秒必须按住", __LINE__);
+        gate.onTick(5000 + static_cast<std::uint32_t>(kRevealFallbackMs));
+        check(!gate.parked(), "超时从导航开始那一刻起算:到点放行", __LINE__);
+        check(reasonIs(gate, "timeout"), "放行原因应为 timeout", __LINE__);
+    }
+
+    // 删除式:onNavigationStarted 里把 `(parked_ && !holding_)` 改成 `revealed_`(第二次导航也重落起点)⇒ 红。
+    {
+        RevealGate gate;
+        gate.beginLoadAttempt();
+        gate.holdBeforeNavigation();
+        gate.onNavigationStarted(1000);
+        gate.onNavigationStarted(2500); // 页面自己再导航一次:超时仍从第一次起算
+        gate.onTick(1000 + static_cast<std::uint32_t>(kRevealFallbackMs));
+        check(!gate.parked(), "第二次导航开始不许挪超时起点", __LINE__);
+        check(reasonIs(gate, "timeout"), "放行原因应为 timeout", __LINE__);
+    }
+
+    // 删除式:onFirstFrame 里删掉 `if (holding_) return;` ⇒ 信号被武装 ⇒ 「被忽略的信号没有武装放行」那格红。
+    {
+        RevealGate gate;
+        gate.beginLoadAttempt();
+        gate.holdBeforeNavigation();
+        gate.onFirstFrame(100); // 这一次还没有文档,信号不属于它
+        gate.onTick(1000);
+        check(gate.parked(), "挡住期间到的首帧信号不许放行", __LINE__);
+
+        gate.onNavigationStarted(2000);
+        gate.onTick(2000 + static_cast<std::uint32_t>(kRevealSettleMs) + 10u);
+        check(gate.parked(), "被忽略的信号没有武装放行(导航开始后一拍也不放)", __LINE__);
+
+        gate.onFirstFrame(2100);
+        gate.onTick(2100 + static_cast<std::uint32_t>(kRevealSettleMs));
+        check(!gate.parked(), "导航开始之后到的信号照常放行", __LINE__);
+        check(reasonIs(gate, "firstFrame"), "放行原因应为 firstFrame", __LINE__);
+    }
+
+    // 删除式:reveal() 里删掉 `holding_ = false` ⇒ 「面板放手后不再是导航之前」那格红;
+    //        onFallbackShown 不再放手 ⇒ parked 那格红。
+    {
+        RevealGate gate;
+        gate.beginLoadAttempt();
+        gate.holdBeforeNavigation();
+        gate.onFallbackShown();
+        check(!gate.parked(), "兜底面板必须能放开导航之前的挡", __LINE__);
+        check(!gate.holdingBeforeNavigation(), "放手后不再是「导航之前」", __LINE__);
+        check(reasonIs(gate, "fallback"), "放行原因应为 fallback", __LINE__);
+
+        // 放行过就不再挡:迟到的导航开始不会把面板后面的 WebView 再挪走。
+        gate.onNavigationStarted(100);
+        check(!gate.parked(), "放手之后迟到的导航开始不许再挡", __LINE__);
+    }
+
+    // 删除式:beginLoadAttempt 里删掉 `holding_ = false` ⇒ 重试后「不再是导航之前」那格红。
+    //        holdBeforeNavigation 里删掉 `revealed_ || parked_` 早退 ⇒ 「已挡住/已放行再挡」两格红。
+    {
+        RevealGate parkedByNav;
+        parkedByNav.beginLoadAttempt();
+        parkedByNav.onNavigationStarted(1000);
+        parkedByNav.holdBeforeNavigation();
+        check(!parkedByNav.holdingBeforeNavigation(), "已按导航挡住的,不许改回「导航之前」", __LINE__);
+        parkedByNav.onTick(1000 + static_cast<std::uint32_t>(kRevealFallbackMs));
+        check(reasonIs(parkedByNav, "timeout"), "已按导航挡住的,超时照常", __LINE__);
+
+        RevealGate released;
+        released.beginLoadAttempt();
+        released.onNavigationStarted(0);
+        released.onFirstFrame(0);
+        released.onTick(static_cast<std::uint32_t>(kRevealSettleMs));
+        check(!released.parked(), "前置:这一格的闸门应已放行", __LINE__);
+        released.holdBeforeNavigation();
+        check(!released.parked(), "放行过的不许再挡", __LINE__);
+
+        RevealGate retry;
+        retry.beginLoadAttempt();
+        retry.holdBeforeNavigation();
+        retry.beginLoadAttempt();
+        check(!retry.parked(), "新的加载尝试应清掉上一次的挡", __LINE__);
+        check(!retry.holdingBeforeNavigation(), "新的加载尝试应清掉「导航之前」标记", __LINE__);
+        retry.holdBeforeNavigation();
+        check(retry.holdingBeforeNavigation(), "重试的加载尝试照样能再挡一次", __LINE__);
+    }
+
+    // 删除式:onBridgeReady 里删掉 onNavigationStarted 调用 / 把整个函数改成恒 false ⇒ 第一组红;
+    //        删掉 `if (!holding_) return false;` ⇒ 「正常顺序不补记」那组的返回值断言红。
+    {
+        // 纵深防御:导航开始没送到、桥却就绪了。闸门不能永远挪在外面,补记之后照常超时放行。
+        RevealGate gate;
+        gate.beginLoadAttempt();
+        gate.holdBeforeNavigation();
+        check(gate.onBridgeReady(4000), "挡着时桥就绪应补记并返回真", __LINE__);
+        check(gate.parked(), "补记后位置不动", __LINE__);
+        check(!gate.holdingBeforeNavigation(), "补记后不再是「导航之前」", __LINE__);
+        gate.onTick(4000 + static_cast<std::uint32_t>(kRevealFallbackMs) - 1);
+        check(gate.parked(), "补记后超时从桥就绪那一刻起算:前一毫秒按住", __LINE__);
+        gate.onTick(4000 + static_cast<std::uint32_t>(kRevealFallbackMs));
+        check(!gate.parked(), "补记后超时到点放行(不会永远挪在外面)", __LINE__);
+        check(reasonIs(gate, "timeout"), "放行原因应为 timeout", __LINE__);
+
+        // 正常顺序:导航开始先到。桥就绪不补记,超时仍从导航开始起算。
+        RevealGate normal;
+        normal.beginLoadAttempt();
+        normal.holdBeforeNavigation();
+        normal.onNavigationStarted(1000);
+        check(!normal.onBridgeReady(2500), "导航开始之后桥就绪不补记", __LINE__);
+        normal.onTick(1000 + static_cast<std::uint32_t>(kRevealFallbackMs));
+        check(!normal.parked(), "超时仍从导航开始起算", __LINE__);
+        check(reasonIs(normal, "timeout"), "放行原因应为 timeout", __LINE__);
+
+        // 已放行之后也不补记,不会再挪走。
+        check(!normal.onBridgeReady(9000), "放行之后桥就绪不补记", __LINE__);
+        check(!normal.parked(), "放行之后桥就绪不许再挡", __LINE__);
+
+        // 从没挡住过(mac 上闸门不武装):什么都不做。
+        RevealGate idle;
+        idle.beginLoadAttempt();
+        check(!idle.onBridgeReady(100), "从没挡住过:不补记", __LINE__);
+        check(!idle.parked(), "从没挡住过:不许因为桥就绪而挡住", __LINE__);
+    }
+
+    // ------------------------------------------------------------------
+    // 关窗诊断行的档位。优先级:fallback > reveal gate off > parked before navigation > parked > revealed。
+    // 删除式:调换 ?: 链里任意两档的次序 / 删掉任一档 ⇒ 对应那格红。
+    // ------------------------------------------------------------------
+    {
+        using synchain::webview::windowClosedState;
+        RevealGate gate;
+        gate.beginLoadAttempt();
+        check(std::strcmp(windowClosedState(gate, true, false), "revealed") == 0, "从未挡住:revealed", __LINE__);
+
+        gate.holdBeforeNavigation();
+        check(std::strcmp(windowClosedState(gate, true, false), "parked before navigation") == 0,
+              "挡着、导航未开始:parked before navigation", __LINE__);
+        gate.onNavigationStarted(1200);
+        check(std::strcmp(windowClosedState(gate, true, false), "parked") == 0, "挡着、导航已开始:parked", __LINE__);
+
+        // 兜底面板在场时先报面板;闸门不启用的平台报 gate off,不管闸门对象里记着什么。
+        check(std::strcmp(windowClosedState(gate, true, true), "fallback") == 0, "面板在场:fallback", __LINE__);
+        check(std::strcmp(windowClosedState(gate, false, false), "reveal gate off") == 0,
+              "闸门不启用的平台:reveal gate off", __LINE__);
+        check(std::strcmp(windowClosedState(gate, false, true), "fallback") == 0,
+              "面板与 gate off 同时成立时先报 fallback", __LINE__);
+
+        gate.onFirstFrame(1300);
+        gate.onTick(1300 + static_cast<std::uint32_t>(kRevealSettleMs));
+        check(!gate.parked(), "前置:这一格的闸门应已放行", __LINE__);
+        check(std::strcmp(windowClosedState(gate, true, false), "revealed") == 0, "已放行:revealed", __LINE__);
+    }
+
+    // ------------------------------------------------------------------
+    // 外壳轮廓(圆角占位):半径 = 20 × 缩放,外圈径向底的色标与几何。
+    // 断言口径:数值是 node 另算的字面量,不是拿被测函数反推。
+    // 三处同源(本头 / index.html 的 [data-card] 圆角 / #vst-root 的径向底)另由
+    // web-preview/reveal-first-frame.test.mjs 第 ⑥ 格逐项对拍。
+    // 删除式:改半径常量 / 把 shellZoom 的 min 换成 max / 删掉回落 1 / 改圆心占比或半径公式 ⇒ 对应格红。
+    // ------------------------------------------------------------------
+    {
+        using synchain::webview::kShellCornerRadiusPx;
+        using synchain::webview::kShellRimStopCount;
+        using synchain::webview::kShellRimStops;
+        using synchain::webview::shellCornerRadius;
+        using synchain::webview::shellRimGeometry;
+        using synchain::webview::shellZoom;
+
+        checkNear(kShellCornerRadiusPx, 20.0, "外壳圆角半径 = 20(设计盒坐标)", __LINE__);
+
+        // 缩放:窗口 = 设计盒 × 档位。
+        checkNear(shellZoom(460.0, 560.0, 460.0, 560.0), 1.0, "100% 档缩放 = 1", __LINE__);
+        checkNear(shellZoom(920.0, 1120.0, 460.0, 560.0), 2.0, "200% 档缩放 = 2", __LINE__);
+        // 取两维里小的那个:窗口比设计盒宽,按高缩放。
+        checkNear(shellZoom(1000.0, 560.0, 460.0, 560.0), 1.0, "宽窗取小的:按高缩放", __LINE__);
+        checkNear(shellZoom(460.0, 1120.0, 460.0, 560.0), 1.0, "高窗取小的:按宽缩放", __LINE__);
+        // 小档位取整后宽高比值略有出入:仍取小的(152×185 = 33% 档取整)。
+        checkNear(shellZoom(152.0, 185.0, 460.0, 560.0), 0.330357143, "33% 档取整后取小的比值", __LINE__);
+        // 退化输入回落 1:还没 setSize 时不能把圆角缩成 0 或 NaN。
+        checkNear(shellZoom(0.0, 560.0, 460.0, 560.0), 1.0, "宽为 0 回落 1", __LINE__);
+        checkNear(shellZoom(460.0, -1.0, 460.0, 560.0), 1.0, "高为负回落 1", __LINE__);
+        checkNear(shellZoom(460.0, 560.0, 0.0, 560.0), 1.0, "设计宽为 0 回落 1", __LINE__);
+        checkNear(shellZoom(std::nan(""), 560.0, 460.0, 560.0), 1.0, "NaN 回落 1", __LINE__);
+        // 设计盒某一维为 0 时,另一维的比值照常算出非 1 的结果,所以必须有专门的守卫。上面设计宽为 0 的那格
+        // 因为另一比值恰好等于 1,守卫删掉也看不出来;下面两格让结果不等于 1,守卫一删就红。
+        checkNear(shellZoom(460.0, 1120.0, 0.0, 560.0), 1.0, "设计宽为 0、高比值为 2 仍回落 1", __LINE__);
+        checkNear(shellZoom(920.0, 560.0, 460.0, 0.0), 1.0, "设计高为 0、宽比值为 2 仍回落 1", __LINE__);
+        // 窗口宽高都无穷大时比值是无穷,不是正有限数,回落 1。
+        checkNear(shellZoom(INFINITY, INFINITY, 460.0, 560.0), 1.0, "无穷大尺寸回落 1", __LINE__);
+
+        // 半径 = 20 × 缩放。
+        checkNear(shellCornerRadius(460.0, 560.0, 460.0, 560.0), 20.0, "100% 档半径 20", __LINE__);
+        checkNear(shellCornerRadius(920.0, 1120.0, 460.0, 560.0), 40.0, "200% 档半径 40", __LINE__);
+        checkNear(shellCornerRadius(152.0, 185.0, 460.0, 560.0), 6.607142857, "33% 档半径", __LINE__);
+        checkNear(shellCornerRadius(0.0, 0.0, 460.0, 560.0), 20.0, "未布局时半径回落 20", __LINE__);
+
+        // 外圈径向底色标 golden(= index.html #vst-root 的 radial-gradient 三个色标)。
+        struct GoldenStop
+        {
+            double pos;
+            std::uint32_t argb;
+        };
+        static constexpr GoldenStop kRimGolden[] = {
+            {0.0, 0xff272430u}, // #272430
+            {0.7, 0xff18161du}, // #18161d
+            {1.0, 0xff131119u}, // #131119
+        };
+        constexpr int kRimGoldenN = static_cast<int>(sizeof(kRimGolden) / sizeof(kRimGolden[0]));
+        checkEqInt(kShellRimStopCount, kRimGoldenN, "外圈色标个数应与 golden 一致(3)", __LINE__);
+        const int rimN = kShellRimStopCount < kRimGoldenN ? kShellRimStopCount : kRimGoldenN;
+        for (int i = 0; i < rimN; ++i)
+        {
+            checkNear(kShellRimStops[i].position, kRimGolden[i].pos, "rim stop position", __LINE__);
+            checkEqInt(static_cast<long long>(kShellRimStops[i].argb), static_cast<long long>(kRimGolden[i].argb),
+                       "rim stop argb", __LINE__);
+        }
+
+        // 外圈几何:圆心 (50%, 28%),半径 = 圆心到最远角(farthest-corner)。
+        const auto g460 = shellRimGeometry(460.0, 560.0);
+        checkNear(g460.cx, 230.0, "460×560 圆心 x", __LINE__);
+        checkNear(g460.cy, 156.8, "460×560 圆心 y(28%)", __LINE__);
+        checkNear(g460.radius, 464.187720648, "460×560 半径 = 圆心到下角的距离", __LINE__);
+        // 宽窗:最远角换成左右边里更远的那一侧的下角(圆心恰在水平中点,两侧等远)。
+        const auto wide = shellRimGeometry(1000.0, 560.0);
+        checkNear(wide.cx, 500.0, "1000×560 圆心 x", __LINE__);
+        checkNear(wide.radius, 642.316308372, "1000×560 半径", __LINE__);
+        // 退化尺寸不许产生零半径或非有限值。
+        const auto deg = shellRimGeometry(0.0, 0.0);
+        check(deg.radius > 0.0 && std::isfinite(deg.radius) && std::isfinite(deg.cx) && std::isfinite(deg.cy),
+              "退化尺寸(0×0)不许产生零半径或非有限值", __LINE__);
+        // 宽、高各自单独钳到 1:只钳一边时 0×0 的半径仍为正,所以分别按一维退化来断言圆心(删掉哪一个钳制都红)。
+        checkNear(shellRimGeometry(0.0, 560.0).cx, 0.5, "宽为 0 时按宽 1 算圆心 x", __LINE__);
+        checkNear(shellRimGeometry(460.0, 0.0).cy, 0.28, "高为 0 时按高 1 算圆心 y", __LINE__);
     }
 
     std::printf("%d checks, %d failures\n", gChecks, gFailures);
