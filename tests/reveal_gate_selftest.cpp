@@ -23,6 +23,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <limits>
 
 namespace
 {
@@ -706,6 +707,13 @@ int main()
         // 宽、高各自单独钳到 1:只钳一边时 0×0 的半径仍为正,所以分别按一维退化来断言圆心(删掉哪一个钳制都红)。
         checkNear(shellRimGeometry(0.0, 560.0).cx, 0.5, "宽为 0 时按宽 1 算圆心 x", __LINE__);
         checkNear(shellRimGeometry(460.0, 0.0).cy, 0.28, "高为 0 时按高 1 算圆心 y", __LINE__);
+        // 非有限输入同样按 1 算,宽、高分开断言(删掉哪一个守卫都红)。
+        const double nonFiniteNan = std::nan("");
+        const double nonFiniteInf = std::numeric_limits<double>::infinity();
+        checkNear(shellRimGeometry(nonFiniteNan, 560.0).cx, 0.5, "宽为 NaN 时按宽 1 算圆心 x", __LINE__);
+        checkNear(shellRimGeometry(nonFiniteInf, 560.0).cx, 0.5, "宽为无穷大时按宽 1 算圆心 x", __LINE__);
+        checkNear(shellRimGeometry(460.0, nonFiniteNan).cy, 0.28, "高为 NaN 时按高 1 算圆心 y", __LINE__);
+        checkNear(shellRimGeometry(460.0, nonFiniteInf).cy, 0.28, "高为无穷大时按高 1 算圆心 y", __LINE__);
     }
 
     std::printf("%d checks, %d failures\n", gChecks, gFailures);

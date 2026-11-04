@@ -443,6 +443,16 @@ void SynchainBridgeWebEditor::retryWebView()
     resized();
 }
 
+#if JUCE_WINDOWS
+// 绊线：导航前挡住依赖 JUCE WebView2 后端的两条私有实现，只在读过这个版本的源码后才成立：
+// ① 控制器建好的回调里先摆窗（put_Bounds）再 Navigate；② 基类 paint 是控制器创建的重试泵。
+// ② 一变，失败的样子不是白闪，而是每次开窗都等满看门狗、切兜底面板，编译和所有测试都还是绿的。
+// 所以升级 JUCE 时在这里停下，重读 juce_WebBrowserComponent_windows.cpp，核对后再改版本号。
+// 这里的版本号由 reveal-first-frame.test.mjs 第 ⑦ 格与 .juce-version 对拍。
+static_assert(JUCE_MAJOR_VERSION == 8 && JUCE_MINOR_VERSION == 0 && JUCE_BUILDNUMBER == 8,
+              "JUCE changed: re-verify the WebView2 backend timing that holdBeforeNavigation relies on");
+#endif
+
 // [SL-386] 一次新的加载尝试（构造 / retry 共用）：重置看门狗与遮挡闸后重新 goToURL。
 // 起算前提（WebViewEditor.h static_assert 的另一半）：看门狗 kWatchdogBudgetMs 与遮挡闸
 // kRevealFallbackMs 都以**本次 beginLoadAttempt 落下的 mStartMs** 一侧为共同参照 —— 看门狗
@@ -452,7 +462,7 @@ void SynchainBridgeWebEditor::retryWebView()
 void SynchainBridgeWebEditor::beginLoadAttempt()
 {
     mBridgeReady = false;
-    mRevealGate.beginLoadAttempt(); // 重新武装：下一次导航开始时再挪一次
+    mRevealGate.beginLoadAttempt(); // 重新武装；下面在 goToURL 之前就挡住（holdBeforeNavigation）
     mRevealLogged = false;
     mStartMs = juce::Time::getMillisecondCounter();
 
@@ -496,7 +506,9 @@ void SynchainBridgeWebEditor::beginLoadAttempt()
 // -----------------------------------------------------------------------------
 void SynchainBridgeWebEditor::onNavigationStarted(const juce::String& url)
 {
-    logDiag("navigation started: " + url);
+    // after N ms 从本次加载尝试起算：挡住那一段有多长、是否逼近看门狗预算，从这一行直接读。
+    logDiag("navigation started: " + url + " (after " +
+            juce::String(static_cast<int>(juce::Time::getMillisecondCounter() - mStartMs)) + " ms)");
 
 #if JUCE_WINDOWS
     // WebView 早在加载尝试开头就挪出了可视区（beginLoadAttempt），这里不再挪，只把闸门的超时

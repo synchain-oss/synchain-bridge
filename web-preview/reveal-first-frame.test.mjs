@@ -1032,4 +1032,29 @@ test("⑦ 导航发出之前就挡住的接线源钉:hold 在 goToURL 之前 / �
     /holdingBeforeNavigation\s*\(\s*\)\s*\?\s*juce::String\s*\(\s*" \(ignored, held before navigation\)"\s*\)/,
     "导航前挡住期间首帧诊断行应写 (ignored, held before navigation)",
   );
+
+  // --- (g) JUCE 绊线:挡住依赖 WebView2 后端的私有时序,版本号与 .juce-version 对拍 ---
+  // 删除式:删掉 static_assert ⇒ 红;只改 .juce-version 或只改 static_assert 的版本号 ⇒ 红。
+  // 这条逼升级 JUCE 的人回头重读后端源码:那两条时序变了,编译和其余测试都还是绿的。
+  const tripwire = code.match(
+    /static_assert\s*\(\s*JUCE_MAJOR_VERSION\s*==\s*(\d+)\s*&&\s*JUCE_MINOR_VERSION\s*==\s*(\d+)\s*&&\s*JUCE_BUILDNUMBER\s*==\s*(\d+)/,
+  );
+  assert.ok(tripwire, "WebViewEditor.cpp 必须有 JUCE 版本绊线 static_assert");
+  assert.equal(
+    tripwire.slice(1, 4).join("."),
+    read(".juce-version").trim(),
+    "JUCE 绊线的版本号必须与 .juce-version 一致:升级时先重读 WebView2 后端,核对后再改",
+  );
+
+  // --- (h) 导航开始诊断行带 after N ms ---
+  const navBody = functionBodyAt(
+    code,
+    /void\s+SynchainBridgeWebEditor::onNavigationStarted\s*\(/,
+    "onNavigationStarted()",
+  );
+  assert.match(
+    navBody,
+    /logDiag\([^;]*getMillisecondCounter\s*\(\s*\)\s*-\s*mStartMs/,
+    "navigation started 诊断行应带从 mStartMs 算起的毫秒数",
+  );
 });

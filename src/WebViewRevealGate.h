@@ -570,6 +570,9 @@ inline PlaceholderGradientEndpoints placeholderGradientEndpoints(double w, doubl
 //     像素),但取值与页面同源,免得角上亮一块暗一块。
 // 三处同源(本段 / index.html 的 [data-card] 圆角 / #vst-root 的径向底)由
 // web-preview/reveal-first-frame.test.mjs 第 ⑥ 格逐项对拍,改任一处即红。
+// 不对拍的一项:页面的四个缺口里还叠着 [data-card] 的 box-shadow(画在圆角形状之外),
+// 占位没有画它,所以页面的角比占位略暗,底部两个角最明显。四个角不是逐像素同形;
+// 真机切换时角上若有轻微明暗跳动,先看这里。
 // -----------------------------------------------------------------------------
 inline constexpr double kShellCornerRadiusPx = 20.0; // 设计盒坐标(缩放前的 CSS px)
 
@@ -610,9 +613,9 @@ struct ShellRimGeometry
 
 inline ShellRimGeometry shellRimGeometry(double w, double h) noexcept
 {
-    if (w < 1.0)
-        w = 1.0; // 退化尺寸(尚未布局)时不产生零半径渐变
-    if (h < 1.0)
+    if (!std::isfinite(w) || w < 1.0)
+        w = 1.0; // 退化尺寸(尚未布局)或非有限值时,不产生零半径或非有限的渐变
+    if (!std::isfinite(h) || h < 1.0)
         h = 1.0;
     const double cx = w * kShellRimCenterXFrac;
     const double cy = h * kShellRimCenterYFrac;
