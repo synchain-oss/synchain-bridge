@@ -338,13 +338,14 @@ SynchainBridgeWebEditor::~SynchainBridgeWebEditor()
     // 关窗诊断行：开到关用了多久、关的时候停在哪一档（档位含义见 WebViewRevealGate.h 的
     // windowClosedState）。放行行只在放行时写，「内容出来之前就关了窗」在日志里原本没有一个字。
     // 闸门只在 Windows 武装（gateEnabled），其余平台报 reveal gate off。
+    // 时长从 mOpenedMs 算，不用 mStartMs：后者每次重试都会重落，算出来就不是窗口开着的时长了。
 #if JUCE_WINDOWS
     constexpr bool gateEnabled = true;
 #else
     constexpr bool gateEnabled = false;
 #endif
     logDiag("window closed after " +
-            juce::String(static_cast<juce::int32>(juce::Time::getMillisecondCounter() - mStartMs)) + " ms (" +
+            juce::String(static_cast<juce::int32>(juce::Time::getMillisecondCounter() - mOpenedMs)) + " ms (" +
             webview::windowClosedState(mRevealGate, gateEnabled, mFallback != nullptr) + ")");
 }
 

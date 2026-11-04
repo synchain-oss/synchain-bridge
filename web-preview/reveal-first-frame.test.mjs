@@ -1009,6 +1009,17 @@ test("⑦ 导航发出之前就挡住的接线源钉:hold 在 goToURL 之前 / �
     dtorBody.search(/stopTimer\s*\(/) < dtorBody.search(/logDiag\s*\(/),
     "关窗诊断行必须在 stopTimer() 之后写(定时器不再改闸门状态)",
   );
+  // 时长必须是窗口开着的时长:mStartMs 每次重试都会重落,用它就成了从最后一次加载尝试算起。
+  assert.match(
+    dtorBody,
+    /getMillisecondCounter\s*\(\s*\)\s*-\s*mOpenedMs/,
+    "关窗诊断行的时长必须从 mOpenedMs 算,不能用 mStartMs",
+  );
+  assert.match(
+    cppCode(read("src/WebViewEditor.h")),
+    /const\s+juce::uint32\s+mOpenedMs\s*=\s*juce::Time::getMillisecondCounter\s*\(\s*\)/,
+    "mOpenedMs 必须在构造时落一次、之后不再改(const)",
+  );
 
   // --- (f) 首帧诊断行:挡住期间闸门忽略信号,诊断行要如实写,且先判挡住再判 parked ---
   // 删除式:去掉这一档 ⇒ 红;先判 parked() ⇒ 红(挡住时 parked 同为真,这一档就永远走不到)。
