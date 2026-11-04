@@ -354,7 +354,8 @@ private:
 // 档位优先级:fallback(兜底面板在场)> reveal gate off(闸门不启用的平台,不管闸门对象里记着什么)>
 // parked before navigation(挡着、导航还没开始)> parked(挡着、导航已开始、首帧还没放行)> revealed。
 // 本头零依赖(不碰 juce::String),所以只回档位名;「window closed after N ms (档位)」由
-// WebViewEditor.cpp 拼装,用时从加载尝试起点(mStartMs)算,与其余诊断行同一个起点。
+// WebViewEditor.cpp 拼装,用时从窗口打开时(mOpenedMs,重试不重落)算,
+// 与其余诊断行的起点(mStartMs,每次加载尝试重落)不同。
 inline const char* windowClosedState(const RevealGate& gate, bool gateEnabled, bool fallbackShown) noexcept
 {
     return fallbackShown                    ? "fallback"

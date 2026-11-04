@@ -156,7 +156,7 @@ private:
     float mLastLdb = 1.0e9f, mLastRdb = 1.0e9f;
     int mLastClients = -1, mLastSampleRate = -1, mLastChannels = -1, mLastVolume = -1;
     bool mLastRunning = false;
-    juce::uint32 mStartMs = 0; // 看门狗计时基准（beginLoadAttempt 落点；诊断行 after 也从这里算）
+    juce::uint32 mStartMs = 0; // 看门狗计时基准（beginLoadAttempt 落点；诊断行 after 也从这里算，关窗行除外）
     // 窗口开始的时刻，重试不重落；只给关窗诊断行用
     const juce::uint32 mOpenedMs = juce::Time::getMillisecondCounter();
 
