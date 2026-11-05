@@ -73,7 +73,7 @@ Prebuilt builds for both platforms are on [GitHub Releases](https://github.com/s
 |---|---|---|
 | Windows x64 | `SynchainBridge-VST3-vX.Y.Z-win64.zip` | `Synchain Bridge.vst3` |
 | macOS arm64 | `SynchainBridge-VST3-AU-vX.Y.Z-macos-arm64.zip` | `Synchain Bridge.vst3` + `Synchain Bridge.component` |
-| Windows x64 (Pro Tools) | `SynchainBridge-AAX-v1.6.0-win64.zip` | `Synchain Bridge.aaxplugin` (PACE-signed; uploaded to the Release by hand) |
+| Windows x64 (Pro Tools) | `SynchainBridge-AAX-vX.Y.Z-win64.zip` | `Synchain Bridge.aaxplugin` (PACE-signed; uploaded to the Release by hand) |
 | macOS arm64 (Pro Tools) | not released yet — macOS AAX comes later | `Synchain Bridge.aaxplugin` |
 
 Every asset ships a matching `.sha256`. The macOS build is **Apple Silicon only and is neither signed nor notarized** — see [Known limitations on macOS](#known-limitations-on-macos) and the quarantine step below.

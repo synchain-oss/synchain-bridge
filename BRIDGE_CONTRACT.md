@@ -91,7 +91,7 @@
 | PLUGIN_CODE | `Snb1` |
 | 默认端口 | `9420`（可配置 1024..65535） |
 | C++ namespace | `synchain` |
-| 产物 | Windows：`Synchain Bridge.vst3` + `Synchain Bridge.aaxplugin`（AAX）；macOS：`Synchain Bridge.vst3` + `Synchain Bridge.component`（AU）（AAX 由 CI 构建，1.6.0 不发布） |
+| 产物 | Windows：`Synchain Bridge.vst3` + `Synchain Bridge.aaxplugin`（AAX）；macOS：`Synchain Bridge.vst3` + `Synchain Bridge.component`（AU）（AAX 由 CI 构建，暂不发布） |
 
 > ⚠️ 改厂商码/插件码 → 新 VST3 唯一 ID，DAW 视为**全新插件**（旧工程不自动映射）。README 需注明。
 
