@@ -29,13 +29,15 @@ namespace synchain
 // Windows 显式选 WebView2 后端（makeOptions withBackend）；运行时缺失 -> 立即切最小原生兜底面板
 // （含安装引导 + 重试）；运行时在但加载超时（看门狗）亦切兜底。
 //
-// [SL-386] 开窗遮挡闸（机理/理由只写在 src/WebViewRevealGate.h 一处）：导航开始后把
-// WebView 子窗口挪出可视区（不 setVisible(false)、不零尺寸），占位渐变分两层铺：
+// [SL-386] 开窗遮挡闸（机理/理由只写在 src/WebViewRevealGate.h 一处）：Windows 上从加载尝试
+// 开头（发起导航之前）就把 WebView 子窗口挪出可视区（不 setVisible(false)、不零尺寸），
+// 占位（外圈底 + 与成品外壳同圆角的渐变）分两层铺：
 //   • 宿主本类 paint() —— 遮挡窗口内唯一会跑的一层（BridgeWebView 被挪到 x=2W、与可视区
 //     零交集，JUCE 整个跳过它的 paint）；
 //   • BridgeWebView::paint —— 守「导航开始前 / 已放行」时自己表面上的白（fallbackPaint），
 //     未遮挡时被 WebView2 表面盖住。
-// 两层用同一组 kPlaceholderStops（成品可见底同形）。前端在 **paint 记录到达**（[SL-433]；
+// 两层用同一组 kPlaceholderStops（成品可见底同形）与同一份外壳轮廓。导航开始之前闸门不起算
+// 超时（只有看门狗管这一段），超时兜底从导航开始起算。前端在 **paint 记录到达**（[SL-433]；
 // SL-386 原来是 DOMContentLoaded，那个触发条件不保证页面已经画过一帧）后再走两层 rAF 发
 // 首帧信号（timing::FirstFrameSignal），**只认首帧放行**（navFinished 只记账），信号后再压
 // tick ∧ kRevealSettleMs 一拍才挪回；3s 超时兜底，兜底面板逻辑不变。挪窗激活只在 Windows
@@ -46,8 +48,10 @@ namespace synchain
 //        由 BridgeWebView::paint「先调基类再整块盖占位」压住（[SL-386] 已有）；
 //   ①-b 控制器已建好、页面还没画出来 —— WebView2 的 DefaultBackgroundColor，由
 //        makeOptions 的 withBackgroundColour(placeholderMidArgb()) 铺上（[SL-421] 本卡补，
-//        此前整层缺席 ⇒ JUCE put 进去的是全透明 ⇒ 露白）。**遮挡闸盖不到这一节**：
-//        park 落在 pageAboutToLoad，而控制器是在 Navigate 之前就建好并上屏的；
+//        此前整层缺席 ⇒ JUCE put 进去的是全透明 ⇒ 露白）。当时**遮挡闸盖不到这一节**：
+//        park 落在 pageAboutToLoad，而控制器是在 Navigate 之前就建好并上屏的。现在 Windows 上
+//        闸门在发起导航之前就挡住，这一节在开窗路上不再上屏；本层保留作纵深防御（闸门放行之后、
+//        或闸门失效时仍然兜底），所以不删；
 //   ①-c 页面已开画、外链 styles.css 还没到 —— web/index.html <head> 内联的 html 底
 //        （[SL-386] 已有）。⚠ 它**确定**兜住的只有「外链取不到/加载失败」那条路：
 //        Chromium 对 <head> 里的 <link rel="stylesheet"> 是渲染阻塞的，正常路径上那一段
@@ -152,7 +156,9 @@ private:
     float mLastLdb = 1.0e9f, mLastRdb = 1.0e9f;
     int mLastClients = -1, mLastSampleRate = -1, mLastChannels = -1, mLastVolume = -1;
     bool mLastRunning = false;
-    juce::uint32 mStartMs = 0; // 看门狗计时基准（beginLoadAttempt 落点；诊断行 after 也从这里算）
+    juce::uint32 mStartMs = 0; // 看门狗计时基准（beginLoadAttempt 落点；诊断行 after 也从这里算，关窗行除外）
+    // 窗口开始的时刻，重试不重落；只给关窗诊断行用
+    const juce::uint32 mOpenedMs = juce::Time::getMillisecondCounter();
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(SynchainBridgeWebEditor)
 };

@@ -12,9 +12,10 @@
 // 无条件 fillAll(Colours::white),控制器建好前的白由它画;DefaultBackgroundColor 只在
 // 控制器建好之后才生效)。修法(移植自 SCVB 的 SL-370/376/378 方案,参考实现
 // scvb @ feature/v1 76ffb04 src/plugin-common/WebViewRevealGate.h):**根本不让它上屏** ——
-// 导航开始到「页面首帧已绘」之间,把 WebView 子窗口挪出宿主客户区之外,那块地方由**宿主**
-// (SynchainBridgeWebEditor::paint)自绘占位底色(与页面成品可见底同形,见本文件下半段)。
-// 占位共两层,各守一段、共用同一组色标(WebViewEditor.cpp 的 paintPlaceholderGradient):
+// 从加载尝试开始(发起导航**之前**)到「页面首帧已绘」之间,把 WebView 子窗口挪出宿主客户区
+// 之外,那块地方由**宿主**(SynchainBridgeWebEditor::paint)自绘占位底色(与页面成品可见底
+// 同形、同外壳圆角,见本文件下半段)。
+// 占位共两层,各守一段、共用同一组色标与外壳轮廓(WebViewEditor.cpp 的 paintShellPlaceholder):
 //   • 宿主 paint —— 遮挡窗口内唯一会跑的一层(挪走的子组件与可视区零交集,JUCE 按 bounds
 //     裁剪会整个跳过它的 paint;没有宿主这一层,屏上就是 wrapper 残留像素——bot 第 1 轮
 //     【重要】的定谳);
@@ -39,9 +40,24 @@
 //   读成「这条风险已排除」**:两边不共享时间原点(页内从脚本执行起算、这里从导航开始起算,
 //   中间那一段读不出来),保险跑输时放行原因照样掉成 timeout。数表指标一个字不改。
 //
-// 【为什么等到导航开始才挪】JUCE 的 WebView2 控制器重试泵挂在基类 paint 的
-// fallbackPaint 尾部(checkWindowAssociation),控制器建好之前挪走组件会让 JUCE 不再
-// 画它 ⇒ 泵停。导航开始 = 控制器已建好(泵本就是空调用),此刻才挪,泵此前照常被驱动。
+// 【为什么从加载尝试一开头就挪,而不是等到导航开始】JUCE 8.0.8 的 WebView2 后端在
+// 「控制器建好」的回调里依次做:addEventHandlers → setWebViewPreferences(其中
+// put_IsVisible)→ componentMovedOrResized(put_Bounds,按组件**当前**边界)→ Navigate
+// (读 juce_WebBrowserComponent_windows.cpp 的 createWebView 核过)。也就是说宿主窗口是先按
+// 组件此刻的边界摆好、可见,**然后才**发导航;「导航开始」事件(pageAboutToLoad)要等这次
+// 导航真的发出去才回来。只在导航开始才挪的话,中间这一段宿主窗口已经在可视区里、可见、
+// 还没有任何内容 —— 机器越忙这一段越长,用户看到的是「占位之后又闪一下白」。
+// ⇒ beginLoadAttempt 在 goToURL 之前就 holdBeforeNavigation():控制器建好时 JUCE 拿到的
+// 已经是可视区之外的边界,宿主窗口从出生起就不在屏上。
+//   · 这一段**不起算超时**(超时从导航开始算):导航开始之前的时长归看门狗管(5s),到点切
+//     兜底面板,面板那条路照常放行(onFallbackShown);
+//   · 这一段到达的首帧信号**不属于这一次加载**(这一次还没有文档),不记账;
+//   · 纵深防御:导航开始事件若没送到、前端的桥却已就绪(onBridgeReady),按导航开始补记一次,
+//     否则闸门会永远挪在外面 —— 挡住期间不起算超时,看门狗又在桥就绪之后就停了。
+// 【代价与解法】JUCE 的 WebView2 控制器创建重试泵挂在基类 paint 的 fallbackPaint 尾部
+// (checkWindowAssociation),挪出可视区后 JUCE 不再画这个组件 ⇒ 泵停。所以挡住期间由宿主
+// 的 25Hz 定时器代为调一次**同一个**基类 paint(画进一张 1×1 的软件小图,屏上什么都不变),
+// 泵的条件与实现仍一字不动留在 JUCE 里,不复刻它的私有实现。
 //
 // 【只认首帧放行(SL-376)】pageFinishedLoading 只说明文档下载完、load 事件发了,
 // 不保证任何一帧已合成 —— SCVB 的 pluginval 数表里它有 4/10 次抢在首帧信号前 3–6 ms
@@ -163,11 +179,13 @@
 // 代入(理想模型):旧值(32)时 32+40=**72 ms**;改成 64 后 64+40=**104 ms**,
 // 多约 32 ms(每次开窗占位段多停这么久)。
 //
-// 【SL-386 与 SCVB 的口径差】挪窗激活与占位铺色只在 Windows(#if JUCE_WINDOWS,调用点在
-// WebViewEditor.cpp);mac 路径保持现状(WKWebView 不挪窗、不铺占位),纯逻辑闸本身
+// 【SL-386 与 SCVB 的口径差】挪窗激活(含导航之前的挡)与占位铺色只在 Windows(#if JUCE_WINDOWS,
+// 调用点在 WebViewEditor.cpp);mac 路径保持现状(WKWebView 不挪窗、不铺占位),纯逻辑闸本身
 // 平台无关、两平台照常编译。看门狗:本仓维持既有 5s 固定预算(不移植 SCVB 的冷/热分段),
 // kRevealFallbackMs < kWatchdogBudgetMs 由 WebViewEditor.h 的 static_assert 在每次编译上守;
 // 预算同时起算的前提(都从 beginLoadAttempt 落 mStartMs 起算)在调用点注释里写明。
+// 导航一次都没开始就到了看门狗预算时,切的是兜底面板(`webview revealed (fallback)` 现在也
+// 可能由这一条路打出)—— 闸门在导航之前不起算超时,这一段只有看门狗管。
 //
 // 本类不进插件目标之外的任何东西:tests/reveal_gate_selftest.cpp 直接编译本头(零依赖),
 // 接线那一半(谁在何时调 onNavigationStarted / onFirstFrame / onTick)在 WebViewEditor.cpp,
@@ -200,6 +218,7 @@ public:
     void beginLoadAttempt() noexcept
     {
         parked_ = false;
+        holding_ = false;
         revealed_ = false;
         settling_ = false;
         settleTicksSeen_ = 0;
@@ -208,23 +227,50 @@ public:
         revealReason_ = "";
     }
 
-    // 导航开始(WebView2 控制器已建好)。已经放行过就不再挪 —— 页面自己再导航一次时
-    // 重新挪走比那点白更难看。
-    void onNavigationStarted(std::uint32_t nowMs) noexcept
+    // 发起导航之前先挪走(加载尝试开头、goToURL 之前调)。理由见文件头。这一段不起算超时,
+    // 超时从导航开始算。已经挡住或已放行过的不再动(同一次加载尝试里只挡一次)。
+    void holdBeforeNavigation() noexcept
     {
         if (revealed_ || parked_)
             return;
         parked_ = true;
+        holding_ = true;
+    }
+
+    // 导航开始(WebView2 控制器已建好)。已经放行过就不再挪 —— 页面自己再导航一次时
+    // 重新挪走比那点白更难看。导航之前已经挪走的,位置不动,只把超时的起点落在此刻;
+    // 此后再来的导航开始(页面自己再导航)不再移动这个起点。
+    void onNavigationStarted(std::uint32_t nowMs) noexcept
+    {
+        if (revealed_ || (parked_ && !holding_))
+            return;
+        parked_ = true;
+        holding_ = false;
         parkedAtMs_ = nowMs;
+    }
+
+    // 前端的桥就绪了:页面已经在跑,导航必定开始过。按 JUCE 8.0.8 的事件顺序导航开始一定先于
+    // 桥就绪,这里是纵深防御:万一导航开始没送到、闸门还挡着,就按导航开始补记一次,超时从此刻
+    // 起算。不补的话闸门会永远挪在外面 —— 挡住期间不起算超时,看门狗又在桥就绪之后就停了。
+    // 返回是否补记了(调用方据此写一行诊断)。
+    bool onBridgeReady(std::uint32_t nowMs) noexcept
+    {
+        if (!holding_)
+            return false;
+        onNavigationStarted(nowMs);
+        return true;
     }
 
     // 前端「首帧已绘」信号(timing::FirstFrameSignal)。**这里不放行**,只武装 ——
     // 真正放行在后面的 onTick 上(tick 数 ∧ 毫秒下界)。还没挪走时也要记账:记成已放行,
-    // 后面那次 onNavigationStarted 就不会再把已经画好的页面挪走。
+    // 后面那次 onNavigationStarted 就不会再把已经画好的页面挪走。导航开始之前(holding_)
+    // 到的信号不属于这一次加载(这一次还没有文档),不记账。
     // 取 nowMs 是为了毫秒下界从**信号到达那一刻**起算 —— 从「下一个 tick」起算等于把要量的
     // 那段时间自己抹掉(#247 复审【重要】② 的落地细节)。
     void onFirstFrame(std::uint32_t nowMs) noexcept
     {
+        if (holding_)
+            return;
         if (!parked_)
         {
             revealed_ = true;
@@ -245,11 +291,12 @@ public:
 
     // 25Hz tick:先结算首帧信号的那一拍,再看超时兜底(settle 分支**必须先于**超时判定,
     // 否则信号踩着 3s 线到达时会被记成 timeout,数表里凭空多一次「信号缺席」)。
+    // 导航开始之前(holding_)整个不结算:没有超时起点可比,这一段归看门狗。
     // 差值走 uint32 → int32:getMillisecondCounter 每 ~49 天回绕,直接比大小会在回绕点
     // 把「刚挪走」算成「早该放行」(或反过来永不放行)。
     void onTick(std::uint32_t nowMs) noexcept
     {
-        if (!parked_)
+        if (!parked_ || holding_)
             return;
         if (settling_)
         {
@@ -264,10 +311,13 @@ public:
     }
 
     // 切兜底面板:面板自己铺满本组件,闸门不该再按住 WebView 的位置(否则 retry 回来时
-    // bounds 还停在可视区外)。
+    // bounds 还停在可视区外)。导航之前的挡同样由它放手。
     void onFallbackShown() noexcept { reveal("fallback"); }
 
     bool parked() const noexcept { return parked_; }
+
+    // 挡住了、但导航还没开始:这一段由宿主代驱动 JUCE 的控制器创建重试泵(文件头【代价与解法】)。
+    bool holdingBeforeNavigation() const noexcept { return holding_; }
 
     // 最近一次放行的原因(诊断行用;从未放行过是空串)。reason ∈ firstFrame / timeout /
     // fallback(fallback 不是「放行」,是被兜底面板顶掉,数表时单列)。
@@ -281,6 +331,7 @@ private:
     {
         revealed_ = true;
         settling_ = false;
+        holding_ = false;
         if (!parked_)
             return;
         parked_ = false;
@@ -288,6 +339,7 @@ private:
     }
 
     bool parked_ = false;
+    bool holding_ = false; // 导航开始之前就挪走了(此时 parked_ 同为真)
     bool revealed_ = false;
     bool settling_ = false; // 首帧信号已到、正在压那一拍
     bool navFinishedSeen_ = false;
@@ -296,6 +348,22 @@ private:
     std::uint32_t parkedAtMs_ = 0;
     const char* revealReason_ = "";
 };
+
+// 关窗诊断行的「停在哪一档」。放行行只在放行时写,「内容出来之前就关了窗」或「开窗卡在占位上」
+// 在日志里原本一个字都没有,关窗那一行补的就是这一类。
+// 档位优先级:fallback(兜底面板在场)> reveal gate off(闸门不启用的平台,不管闸门对象里记着什么)>
+// parked before navigation(挡着、导航还没开始)> parked(挡着、导航已开始、首帧还没放行)> revealed。
+// 本头零依赖(不碰 juce::String),所以只回档位名;「window closed after N ms (档位)」由
+// WebViewEditor.cpp 拼装,用时从窗口打开时(mOpenedMs,重试不重落)算,
+// 与其余诊断行的起点(mStartMs,每次加载尝试重落)不同。
+inline const char* windowClosedState(const RevealGate& gate, bool gateEnabled, bool fallbackShown) noexcept
+{
+    return fallbackShown                    ? "fallback"
+           : !gateEnabled                   ? "reveal gate off"
+           : gate.holdingBeforeNavigation() ? "parked before navigation"
+           : gate.parked()                  ? "parked"
+                                            : "revealed";
+}
 
 // -----------------------------------------------------------------------------
 // [SL-386] 占位底 —— 成品可见底的 C++ 侧真源。
@@ -486,6 +554,75 @@ inline PlaceholderGradientEndpoints placeholderGradientEndpoints(double w, doubl
     const double hx = dx * len / 2.0;
     const double hy = dy * len / 2.0;
     return {cx - hx, cy - hy, cx + hx, cy + hy};
+}
+
+// -----------------------------------------------------------------------------
+// 成品外壳的轮廓 —— 占位与它同形:圆角之外铺外圈底,圆角之内铺上面那组占位渐变,
+// 占位切到内容时四个角不跳。
+//
+// 页面侧(web/index.html)的事实:插件内卡片 [data-card] 是固定设计盒 460×560 CSS px、
+// 圆角 20px、zoom = 界面缩放档位,恰好铺满编辑器窗口;圆角之外露出的是 #vst-root 的
+// 径向渐变底(inline style:radial-gradient(circle at 50% 28%, #272430 0%, #18161d 70%,
+// #131119 100%))。所以 C++ 侧:
+//   · 外壳矩形 = 整个编辑器区域;圆角半径 = 20 × (窗口宽 / 设计宽)(= 20 × 缩放档位;
+//     Windows AAX 的 DPI 补偿让窗口变大的同时 CSS 视口也等比放大,比值不变);
+//   · 外圈底 = 同一组径向色标,圆心 (50%, 28%),半径 = 圆心到最远角的距离(CSS 的
+//     radial-gradient 缺省 farthest-corner)。外圈底只在四个圆角的缺口里露出来(几十个
+//     像素),但取值与页面同源,免得角上亮一块暗一块。
+// 三处同源(本段 / index.html 的 [data-card] 圆角 / #vst-root 的径向底)由
+// web-preview/reveal-first-frame.test.mjs 第 ⑥ 格逐项对拍,改任一处即红。
+// 不对拍的一项:页面的四个缺口里还叠着 [data-card] 的 box-shadow(画在圆角形状之外),
+// 占位没有画它,所以页面的角比占位略暗,底部两个角最明显。四个角不是逐像素同形;
+// 真机切换时角上若有轻微明暗跳动,先看这里。
+// -----------------------------------------------------------------------------
+inline constexpr double kShellCornerRadiusPx = 20.0; // 设计盒坐标(缩放前的 CSS px)
+
+inline constexpr double kShellRimCenterXFrac = 0.5; // 径向底圆心,占外壳宽高的比例
+inline constexpr double kShellRimCenterYFrac = 0.28;
+
+inline constexpr PlaceholderStop kShellRimStops[] = {
+    {0.0, 0xff272430u}, // #272430
+    {0.7, 0xff18161du}, // #18161d
+    {1.0, 0xff131119u}, // #131119
+};
+
+inline constexpr int kShellRimStopCount = static_cast<int>(sizeof(kShellRimStops) / sizeof(kShellRimStops[0]));
+
+// 外壳装进窗口的缩放 = 窗口尺寸 / 设计盒,宽高两个比值取小的那个。任一维不是正数
+// (还没 setSize)或结果不是正有限数时回落 1,免得把圆角缩成 0 或 NaN。
+inline double shellZoom(double width, double height, double designW, double designH) noexcept
+{
+    if (!(width > 0.0) || !(height > 0.0) || !(designW > 0.0) || !(designH > 0.0))
+        return 1.0;
+    const double zw = width / designW;
+    const double zh = height / designH;
+    const double z = zw < zh ? zw : zh;
+    return (z > 0.0 && std::isfinite(z)) ? z : 1.0;
+}
+
+// 当前窗口尺寸下的圆角半径(组件本地像素)。
+inline double shellCornerRadius(double width, double height, double designW, double designH) noexcept
+{
+    return kShellCornerRadiusPx * shellZoom(width, height, designW, designH);
+}
+
+// 外圈径向底的几何(组件本地坐标):圆心,以及半径 = 圆心到最远角的距离。
+struct ShellRimGeometry
+{
+    double cx, cy, radius;
+};
+
+inline ShellRimGeometry shellRimGeometry(double w, double h) noexcept
+{
+    if (!std::isfinite(w) || w < 1.0)
+        w = 1.0; // 退化尺寸(尚未布局)或非有限值时,不产生零半径或非有限的渐变
+    if (!std::isfinite(h) || h < 1.0)
+        h = 1.0;
+    const double cx = w * kShellRimCenterXFrac;
+    const double cy = h * kShellRimCenterYFrac;
+    const double dx = (cx > w - cx) ? cx : (w - cx); // 到最远的左右边
+    const double dy = (cy > h - cy) ? cy : (h - cy); // 到最远的上下边
+    return {cx, cy, std::sqrt(dx * dx + dy * dy)};
 }
 
 } // namespace webview

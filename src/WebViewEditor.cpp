@@ -49,12 +49,28 @@ juce::Rectangle<int> parkedBounds(juce::Rectangle<int> visible) noexcept
 }
 
 #if JUCE_WINDOWS
-// [SL-386] 占位渐变的**唯一绘制实现**,两个调用点共用(不许各写一份——三处同源的 C++ 侧
+// [SL-386] 开窗占位的**唯一绘制实现**,两个调用点共用(不许各写一份——三处同源的 C++ 侧
 // 只有一个消费者入口):① 宿主 SynchainBridgeWebEditor::paint(遮挡窗口内唯一会跑的一层);
 // ② BridgeWebView::paint(守导航开始前/已放行时自己表面上的 fallbackPaint 白)。
-// 色标与几何真源 = webview::kPlaceholderStops / placeholderGradientEndpoints。
-void paintPlaceholderGradient(juce::Graphics& g, int width, int height)
+// 画法:先整块铺外圈径向底(页面 #vst-root 的底),再在整个区域上画同半径圆角的占位渐变
+// (页面 [data-card] 的底)—— 与成品外壳同形,占位切到内容时四个角不跳。
+// 色标与几何真源 = webview::kPlaceholderStops / placeholderGradientEndpoints /
+// kShellRimStops / shellRimGeometry / shellCornerRadius。
+void paintShellPlaceholder(juce::Graphics& g, int width, int height)
 {
+    // 外圈:径向渐变。JUCE 的径向 ColourGradient 以第二点到圆心的距离为半径。
+    const auto rim = webview::shellRimGeometry(width, height);
+    const auto centre = juce::Point<float>(static_cast<float>(rim.cx), static_cast<float>(rim.cy));
+    const auto edge = juce::Point<float>(static_cast<float>(rim.cx + rim.radius), static_cast<float>(rim.cy));
+    auto rimGrad =
+        juce::ColourGradient(juce::Colour(webview::kShellRimStops[0].argb), centre,
+                             juce::Colour(webview::kShellRimStops[webview::kShellRimStopCount - 1].argb), edge, true);
+    for (int i = 1; i < webview::kShellRimStopCount - 1; ++i)
+        rimGrad.addColour(webview::kShellRimStops[i].position, juce::Colour(webview::kShellRimStops[i].argb));
+    g.setGradientFill(rimGrad);
+    g.fillAll();
+
+    // 圆角之内:占位渐变。外壳矩形 = 整个区域(插件内卡片恰好铺满编辑器窗口,见 WebViewRevealGate.h)。
     const auto e = webview::placeholderGradientEndpoints(width, height);
     const auto p0 = juce::Point<float>(static_cast<float>(e.x0), static_cast<float>(e.y0));
     const auto p1 = juce::Point<float>(static_cast<float>(e.x1), static_cast<float>(e.y1));
@@ -64,7 +80,8 @@ void paintPlaceholderGradient(juce::Graphics& g, int width, int height)
     for (int i = 1; i < webview::kPlaceholderStopCount - 1; ++i)
         grad.addColour(webview::kPlaceholderStops[i].position, juce::Colour(webview::kPlaceholderStops[i].argb));
     g.setGradientFill(grad);
-    g.fillAll();
+    const auto radius = static_cast<float>(webview::shellCornerRadius(width, height, kDesignW, kDesignH));
+    g.fillRoundedRectangle(0.0f, 0.0f, static_cast<float>(width), static_cast<float>(height), radius);
 }
 #endif
 
@@ -198,8 +215,10 @@ private:
 // BridgeWebView —— 为「开窗遮挡闸 + 导航时序回调」而存在的薄子类（[SL-386] 移植 SCVB 的
 // HostWebView；机理与理由只写在 src/WebViewRevealGate.h 一处，这里不复述）。
 // -----------------------------------------------------------------------------
-//   • pageAboutToLoad / pageFinishedLoading：JUCE 唯一暴露导航时序的两个虚函数。闸门靠
-//     「导航开始」（= WebView2 控制器已建好）才知道何时可以挪窗；navFinished 只记账不放行。
+//   • pageAboutToLoad / pageFinishedLoading：JUCE 唯一暴露导航时序的两个虚函数。Windows 上
+//     闸门在发起导航**之前**就已挡住（beginLoadAttempt），「导航开始」只用来落超时起点；
+//     navFinished 只记账不放行。
+//   • pumpControllerCreation：挡住期间代驱动基类 paint（见该函数注释）。
 //   • paint：**先调基类，再整块盖上占位底**。基类 = WebView2 后端的 fallbackPaint：每帧
 //     无条件 fillAll(Colours::white) —— 开窗白闪的白的来源就是它；它尾巴上的
 //     checkWindowAssociation 又是 WebView2 控制器的重试泵，所以**必须**调基类（拆掉泵是
@@ -222,14 +241,28 @@ public:
         juce::WebBrowserComponent::paint(g);
 
 #if JUCE_WINDOWS
-        // [SL-386] 这一层守的是「**没被挪走时**自己表面上的白」：控制器已建好但导航尚未开始
-        // （闸门还没 parked）、以及放行之后的稳态过渡。⚠ 遮挡窗口内它**不被绘制**——本组件被
+        // [SL-386] 这一层守的是「**没被挪走时**自己表面上的白」：Windows 上闸门从加载尝试
+        // 开头就挡住，所以这一层在开窗路上不再上屏，只剩放行之后的稳态过渡（以及将来闸门被
+        // 关掉的情形）。⚠ 遮挡窗口内它**不被绘制**——本组件被
         // 挪到 x=2W、与可视区零交集，JUCE 按 bounds 裁剪整个跳过它的 paint（bot 第 1 轮
         // 【重要】抓到的正是这一点）；遮挡窗口的占位由宿主 paint() 铺，见本文件
         // SynchainBridgeWebEditor::paint。占位底 = 成品可见底（web/styles.css
         // --vb-card-surface 的玻璃拟态渐变，三处同源判据 = web-preview/reveal-first-frame.test.mjs）。
-        paintPlaceholderGradient(g, getWidth(), getHeight());
+        // 外壳轮廓（圆角 + 圆角之外的外圈底）与宿主层同一个函数、同一份几何。
+        paintShellPlaceholder(g, getWidth(), getHeight());
 #endif
+    }
+
+    // 挡住期间（本组件被挪到可视区之外，JUCE 不再画它）代驱动上面那一句基类绘制：画进一张
+    // 1×1 的临时小图，屏上什么都不变，基类尾部那句「控制器没建起来就继续检查窗口关联」
+    // （= WebView2 控制器的重试泵）照样每个定时 tick 被调到一次。调的是**同一个**基类函数，
+    // 不是复刻件 —— 泵的条件与实现一字不动留在 JUCE 里。小图用软件渲染（JUCE 8 在 Windows 上
+    // 默认的图像类型走 Direct2D，不指定的话每个 tick 都要建一次 GPU 绘制上下文），
+    // 且只建一次，挡住期间每个 tick 复用。mac 上闸门从不在导航之前挡住，这个函数不会被调到。
+    void pumpControllerCreation()
+    {
+        juce::Graphics g(mPumpScratch);
+        juce::WebBrowserComponent::paint(g);
     }
 
     bool pageAboutToLoad(const juce::String& url) override
@@ -250,6 +283,8 @@ public:
 
 private:
     SynchainBridgeWebEditor& mOwner;
+    // pumpControllerCreation 画进去的 1×1 软件图：只建一次，挡住期间每个 tick 复用
+    juce::Image mPumpScratch{juce::Image::RGB, 1, 1, false, juce::SoftwareImageType()};
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(BridgeWebView)
 };
@@ -300,6 +335,18 @@ SynchainBridgeWebEditor::SynchainBridgeWebEditor(SynchainBridgeAudioProcessor& p
 SynchainBridgeWebEditor::~SynchainBridgeWebEditor()
 {
     stopTimer();
+    // 关窗诊断行：开到关用了多久、关的时候停在哪一档（档位含义见 WebViewRevealGate.h 的
+    // windowClosedState）。放行行只在放行时写，「内容出来之前就关了窗」在日志里原本没有一个字。
+    // 闸门只在 Windows 武装（gateEnabled），其余平台报 reveal gate off。
+    // 时长从 mOpenedMs 算，不用 mStartMs：后者每次重试都会重落，算出来就不是窗口开着的时长了。
+#if JUCE_WINDOWS
+    constexpr bool gateEnabled = true;
+#else
+    constexpr bool gateEnabled = false;
+#endif
+    logDiag("window closed after " +
+            juce::String(static_cast<juce::int32>(juce::Time::getMillisecondCounter() - mOpenedMs)) + " ms (" +
+            webview::windowClosedState(mRevealGate, gateEnabled, mFallback != nullptr) + ")");
 }
 
 // [SL-421] 运行时版本串（空 = 没探到运行时）。原先这里只回一个 bool，把 loader 给的版本串
@@ -366,6 +413,8 @@ void SynchainBridgeWebEditor::showFallback(FallbackReason reason)
     // bounds 还停在可视区外，而那条路上不一定再有导航事件把它推回来）；noteRevealed 在
     // 这里调：走到兜底的典型场景恰恰是首帧信号不会来，`webview revealed (fallback)` 这行
     // 只可能在此处打出来。missing 那条路闸门从未 parked ⇒ 该行不打（reason 留空）。
+    // 闸门在导航之前就挡住之后，这行有两条路打得出来：前端启动失败，以及导航一次都没开始
+    // 就到了看门狗预算（闸门在导航之前不起算超时，只有看门狗管这一段）。
     mRevealGate.onFallbackShown();
     noteRevealed();
     mWebView->setVisible(false);
@@ -395,6 +444,16 @@ void SynchainBridgeWebEditor::retryWebView()
     resized();
 }
 
+#if JUCE_WINDOWS
+// 绊线：导航前挡住依赖 JUCE WebView2 后端的两条私有实现，只在读过这个版本的源码后才成立：
+// ① 控制器建好的回调里先摆窗（put_Bounds）再 Navigate；② 基类 paint 是控制器创建的重试泵。
+// ② 一变，失败的样子不是白闪，而是每次开窗都等满看门狗、切兜底面板，编译和所有测试都还是绿的。
+// 所以升级 JUCE 时在这里停下，重读 juce_WebBrowserComponent_windows.cpp，核对后再改版本号。
+// 这里的版本号由 reveal-first-frame.test.mjs 第 ⑦ 格与 .juce-version 对拍。
+static_assert(JUCE_MAJOR_VERSION == 8 && JUCE_MINOR_VERSION == 0 && JUCE_BUILDNUMBER == 8,
+              "JUCE changed: re-verify the WebView2 backend timing that holdBeforeNavigation relies on");
+#endif
+
 // [SL-386] 一次新的加载尝试（构造 / retry 共用）：重置看门狗与遮挡闸后重新 goToURL。
 // 起算前提（WebViewEditor.h static_assert 的另一半）：看门狗 kWatchdogBudgetMs 与遮挡闸
 // kRevealFallbackMs 都以**本次 beginLoadAttempt 落下的 mStartMs** 一侧为共同参照 —— 看门狗
@@ -404,7 +463,7 @@ void SynchainBridgeWebEditor::retryWebView()
 void SynchainBridgeWebEditor::beginLoadAttempt()
 {
     mBridgeReady = false;
-    mRevealGate.beginLoadAttempt(); // 重新武装：下一次导航开始时再挪一次
+    mRevealGate.beginLoadAttempt(); // 重新武装；下面在 goToURL 之前就挡住（holdBeforeNavigation）
     mRevealLogged = false;
     mStartMs = juce::Time::getMillisecondCounter();
 
@@ -425,6 +484,14 @@ void SynchainBridgeWebEditor::beginLoadAttempt()
     // 人指向一个不存在的缺口。⚠ 修法只能是给**调用点**加平台闸门：**不许改哨兵值** ——
     // 哨兵改成空串会让上面那个 isEmpty() 判成「运行时缺失」，直接切兜底面板。
     logDefaultBackgroundSupport(runtimeVersion);
+
+    // 发起导航之前先挪出可视区：JUCE 的 WebView2 后端在控制器建好的回调里，先按组件**此刻**的
+    // 边界摆好宿主窗口（可见、落在可视区里），然后才发导航；等「导航开始」再挪就晚了这一段
+    // （理由与代价见 WebViewRevealGate.h）。挡住期间控制器创建的重试泵由 timerCallback 代驱动。
+    // 只在 Windows（WebView2）：mac 的 WKWebView 闸门不武装，路径保持现状。
+    // ⚠ 必须在下面的 goToURL **之前**，且排在运行时缺失的早退之后（缺失时走兜底面板，不挡）。
+    mRevealGate.holdBeforeNavigation();
+    applyRevealGate();
 #endif
 
     // 必须在任何 emit 之前完成首个 goToURL（前端脚本随后加载并注册监听）。
@@ -440,12 +507,16 @@ void SynchainBridgeWebEditor::beginLoadAttempt()
 // -----------------------------------------------------------------------------
 void SynchainBridgeWebEditor::onNavigationStarted(const juce::String& url)
 {
-    logDiag("navigation started: " + url);
+    // after N ms 从本次加载尝试起算：挡住那一段有多长、是否逼近看门狗预算，从这一行直接读。
+    logDiag("navigation started: " + url + " (after " +
+            juce::String(static_cast<int>(juce::Time::getMillisecondCounter() - mStartMs)) + " ms)");
 
 #if JUCE_WINDOWS
-    // 导航开始 = WebView2 控制器已建好 ⇒ 基类 paint 里的重试泵已是空调用，此刻才可以把
-    // WebView 挪出可视区（挪走之后 JUCE 不再画它）。mac：路径保持现状，不挪窗、不铺占位
-    // （闸门保持未武装，纯逻辑其余调用点照常记账）。
+    // WebView 早在加载尝试开头就挪出了可视区（beginLoadAttempt），这里不再挪，只把闸门的超时
+    // 起点落在此刻；导航开始 = 控制器已建好，timerCallback 里代驱动的那个重试泵也随之停下
+    // （holdingBeforeNavigation 翻假）。下面那句 applyRevealGate 在这条路上是原位重设，
+    // 留着是为了「闸门状态一变就落地」只有一个出口。
+    // mac：路径保持现状，不挪窗、不铺占位（闸门保持未武装，纯逻辑其余调用点照常记账）。
     mRevealGate.onNavigationStarted(juce::Time::getMillisecondCounter());
     applyRevealGate();
 #endif
@@ -515,9 +586,14 @@ void SynchainBridgeWebEditor::handleFirstFrame(const juce::var& payload)
     // 先记「信号到了」，再谈放行 —— 两件事分开数：信号可能在 3s 兜底或兜底面板之后才到，
     // 只看放行行会把「信号来晚了」误读成「信号没来」。真机/pluginval 验收数的就是这一行
     // 与 noteRevealed() 放行行的条数比（开 N 次窗应有 N 行 first-frame signal）。
+    // 导航前挡住期间闸门不收这个信号（onFirstFrame 直接忽略），这里要如实写「被忽略」，
+    // 不能写 still parked：那句的意思是闸门已武装、只等结算。
     logDiag(juce::String("first-frame signal after ") +
             juce::String(static_cast<int>(juce::Time::getMillisecondCounter() - mStartMs)) + " ms" +
-            (mRevealGate.parked() ? juce::String(" (still parked)") : juce::String(" (already revealed)")) + paintNote);
+            (mRevealGate.holdingBeforeNavigation() ? juce::String(" (ignored, held before navigation)")
+             : mRevealGate.parked()                ? juce::String(" (still parked)")
+                                                   : juce::String(" (already revealed)")) +
+            paintNote);
     // onFirstFrame 只武装不放行（tick ∧ kRevealSettleMs 一拍在 timerCallback 的 onTick 里结算）；
     // 传 nowMs 是因为毫秒下界要从信号到达那一刻起算。
     // 防御性保留，效果为零 —— 信号在 settling 期到达时 noteRevealed() 的 parked() 条件早退；
@@ -584,13 +660,14 @@ void SynchainBridgeWebEditor::resized()
 // 未遮挡时它仍会整块 fill —— WebBrowserComponent 不是 JUCE 意义上的 opaque 组件,JUCE
 // 不会把它的矩形从父层裁掉 —— 只是绘制结果被 WebView2 自己的 HWND 盖住;频次为一次开窗
 // 2–3 次,可忽略。刻意**不加**「未遮挡就 return」的早退:放行路径本轮不动,别为省一次
-// fill 引入新分支面。与 BridgeWebView::paint 共用 paintPlaceholderGradient(同一组色标
-// 真源,不许各写一份)。mac:保持现状,不铺占位(Component::paint 默认空实现)。
+// fill 引入新分支面。与 BridgeWebView::paint 共用 paintShellPlaceholder(同一组色标与外壳
+// 轮廓真源,不许各写一份)。Windows 上遮挡从加载尝试开头就开始,所以用户在内容出来之前看到的
+// 占位就是这一层。mac:保持现状,不铺占位(Component::paint 默认空实现)。
 void SynchainBridgeWebEditor::paint(juce::Graphics& g)
 {
     juce::ignoreUnused(g);
 #if JUCE_WINDOWS
-    paintPlaceholderGradient(g, getWidth(), getHeight());
+    paintShellPlaceholder(g, getWidth(), getHeight());
 #endif
 }
 
@@ -691,8 +768,9 @@ juce::WebBrowserComponent::Options SynchainBridgeWebEditor::makeOptions()
 
     // [SL-421] WebView2 在**任何** web 内容之下铺的那一层（= put_DefaultBackgroundColor）。
     // 不设的话 JUCE 把默认构造的 juce::Colour = ARGB 0x00000000（**全透明**）原样 put 进去，
-    // 于是从控制器建好到页面画出来为止，这一层什么都不挡，露的是窗口的白 —— 遮挡闸守不到
-    // 它（park 落在 pageAboutToLoad，而控制器是在 Navigate **之前**就建好并上屏的），
+    // 于是从控制器建好到页面画出来为止，这一层什么都不挡，露的是窗口的白 —— 遮挡闸当时守不到
+    // 它（park 落在 pageAboutToLoad，而控制器是在 Navigate **之前**就建好并上屏的；现在闸门
+    // 在发起导航之前就挡住，这一节在开窗路上不再上屏，本层留作纵深防御），
     // <head> 内联底也守不到它（那一层管的是外链 css 未到那一段）。取值 = 占位渐变沿轴 50%
     // 的插值色（DefaultBackgroundColor 只收纯色，没有渐变形态），由 kPlaceholderStops 现算；
     // 理由与「这条只证到哪一步」见 WebViewRevealGate.h 的 placeholderMidArgb 头注一处。
@@ -813,6 +891,11 @@ void SynchainBridgeWebEditor::handleRequestInitialState(const juce::Array<juce::
                                                         WBC::NativeFunctionCompletion complete)
 {
     mBridgeReady = true; // 前端确认就绪 -> 此后 timer 才允许 emit
+    // 看门狗从这里起就不管了；闸门如果还挡在导航之前（导航开始事件没送到），按导航开始补记，
+    // 超时兜底照常生效（理由见 RevealGate::onBridgeReady）。按 JUCE 8.0.8 的事件顺序正常路上
+    // 导航开始一定先到，这里是纵深防御，命中时留一行诊断。
+    if (mRevealGate.onBridgeReady(juce::Time::getMillisecondCounter()))
+        logDiag("bridge ready while still held before navigation; reveal deadline starts now");
     complete(buildSnapshot());
 }
 
@@ -952,8 +1035,13 @@ void SynchainBridgeWebEditor::timerCallback()
     //   · 信号没来时到点强制放行（kRevealFallbackMs），绝不允许「永远挪在外面」——
     //     那会是一块彻底不动的占位板，比白闪坏得多。
     // 放行只可能发生在这个 tick 上（fallback 那条除外）；判定与几何的落点见 applyRevealGate。
+    // 导航开始之前的那一段（holdingBeforeNavigation）闸门不起算超时，这里只代驱动控制器创建的
+    // 重试泵：WebView 在可视区之外，JUCE 不再画它，泵要靠这一句才有人调（理由见
+    // WebViewRevealGate.h）。mWebView 在整个对象生命周期里恒非空（构造里创建，析构才释放）。
     if (mRevealGate.parked())
     {
+        if (mRevealGate.holdingBeforeNavigation())
+            mWebView->pumpControllerCreation();
         mRevealGate.onTick(juce::Time::getMillisecondCounter());
         if (!mRevealGate.parked())
         {
