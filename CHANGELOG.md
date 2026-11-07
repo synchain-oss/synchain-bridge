@@ -6,6 +6,96 @@
 
 ## [未发布]
 
+## [1.6.1] — 2026-11-07
+
+> 版本号由 1.6.0 升至 **1.6.1**(patch:只有修复与发版 / 评审工具链改动,没有新功能;唯一真源
+> `CMakeLists.txt` 的 `project(... VERSION)`,四镜像同步:web-preview 的 mock-server.mjs / package.json /
+> package-lock.json 与 `BRIDGE_CONTRACT.md` §三)。本版的用户可见变化只有 **Windows 开窗时的白闪修复**
+> (VST3 与 AAX 共用同一套 WebView2 代码);macOS 路径不变。**不涉及契约变更**(wire 协议零改动,
+> `BRIDGE_CONTRACT_VERSION` 仍为 `2.0`;`BRIDGE_CONTRACT.md` 只改 §三的登记快照)。没有跳过的版本号
+> (1.6.0 之后直接是 1.6.1)。
+
+### 修复
+
+- **Windows 开窗时占位之后又闪一下白**(无契约变更):根因在 JUCE 8.0.8 的 WebView2 后端 ——
+  控制器建好的回调里先按组件**当前**边界把宿主窗口摆好、设为可见,然后才发导航;而遮挡闸要等
+  「导航开始」事件回来才把 WebView 挪出可视区,中间这一段宿主窗口已经在屏上却没有内容(机器越忙越长)。
+  现在 `beginLoadAttempt` 在 `goToURL` **之前**就把 WebView 挪到可视区之外,控制器建好时 JUCE 拿到的
+  已经是可视区之外的边界。配套:挡住期间闸门不起算超时(这一段归 5s 看门狗,到点切兜底面板)、忽略
+  首帧信号、导航开始时只落超时起点;挡住期间 JUCE 的控制器创建重试泵(挂在基类 paint 上,挪走后
+  不再被画到)由 25Hz 定时器代调**同一个**基类 paint 驱动(画进 1×1 软件小图),不复刻 JUCE 的私有实现;
+  前端的桥就绪时若闸门仍挡在导航之前(导航开始事件没送到),按导航开始补记,不会永远挪在外面。
+  只在 Windows(WebView2)武装,macOS 路径不变。与 Rinne(synchain-oss/rinne)里的同一修法。
+- **开窗占位改成与成品外壳同形的圆角**:此前占位是方角整块渐变,而成品卡片是 20px 圆角、圆角之外露出
+  `#vst-root` 的深色径向底,占位切到内容时四个角会跳一下。占位现在先铺同一组径向底、再画同半径
+  (按缩放档位)的圆角占位渐变;两层 C++ paint 共用 `paintShellPlaceholder` 一个实现。
+- **新增关窗诊断行**:编辑器析构时写 `window closed after N ms (<档位>)`,档位为 `revealed` /
+  `parked` / `parked before navigation` / `reveal gate off` / `fallback`。放行行只在放行时写,
+  「内容出来之前就关了窗」在日志里原本一个字都没有。
+- **判据**:`tests/reveal_gate_selftest.cpp` 新增挡住 / 超时起点 / 首帧信号忽略 / 兜底放手 / 重试清除 /
+  桥就绪补记 / 关窗档位 / 外壳几何各组;`web-preview/reveal-first-frame.test.mjs` 新增第 ⑥ 格(外壳圆角与
+  外圈底与页面逐项对拍)与第 ⑦ 格(导航之前挡住的接线源钉)。
+
+### 持续集成
+
+- **review bot 从 DeepSeek 直连迁到 OpenCode Go 网关**(`deepseek-review` / `pr-agent`):
+  端点由 `https://api.deepseek.com/anthropic` 改为 `https://opencode.ai/zen/go`,模型改用 `deepseek-v4.1-flash`
+  —— 该网关只认裸 id,`[1M]` 后缀会返回 `Model is unavailable`,而裸 id 本身就是 1M 上下文(实测约 96 万
+  token 输入通过、约 107 万被拒)。secret 由 `DEEPSEEK_KEY` 改为仓库级 `OPENCODE_GO_API_KEY_FOR_REVIEW`。
+  网关强制要求会话头:claude-code-action 侧用 job 级 `ANTHROPIC_CUSTOM_HEADERS`,pr-agent 侧用
+  `LITELLM.EXTRA_HEADERS`。pr-agent 的输出上限改用真正生效的 `DEFAULT_ANTHROPIC_CHAT_MAX_TOKENS`
+  (v0.39.0 并未实现 `config.max_output_tokens`,不抬高则 litellm 默认只发 4096、带推理的模型会把额度
+  全花在 reasoning 上,审查空跑而 job 报绿)。**触发面不变**:`pr-agent` 仍只在 PR → `dev` 时运行,
+  `claude-review` / `deepseek-review` 仍覆盖所有 base 分支。(#72)
+
+- **review bot 改为调用 `Synchain-oss/ci-workflows` 的中央可复用 workflow**(`claude-review` / `deepseek-review` / `pr-agent`):
+  三个文件缩成薄调用方,只留本仓专属的 `focus` / `extra_prompt` / `ignore_globs`;模型、工具边界、符号链接拒审、超时、
+  pr-agent 镜像(按 digest 钉住、无备用模型)统一在中央维护,调用方按 commit SHA 引用。`deepseek-review` 改为只能
+  `workflow_dispatch` 手动触发。检查名随之变为 `pr-agent / pr-agent`、`claude-pr-review / review`。
+  `review-dispatch`(`/review`)不迁移,仍自带 prompt。(#73)
+
+- **中央 workflow 的引用依次改钉到 v1.3.1 → v1.3.2 → v1.3.3**(仍是 40 位 commit SHA,行尾注释写版本):
+  `claude-review` 与 `pr-agent` 的 workflow 名标出所用模型(`Claude PR Review (Opus 5.5)`、
+  `PR Agent (DeepSeek V4.1 Flash)`);`deepseek-review` 的 prompt 改为「没有行内评论工具,文件级问题在结论里写
+  `文件:行号`」,文件头补上应急手动触发的用法(平时保持 disable);`review-dispatch` 的 deny 列表补上
+  `Read(//github/**)`,与中央 v1.3.2 对齐。(#74、#75、#76)
+
+- **审查数据流登记**:迁移后 PR 的 diff 与标题正文会经第三方网关 `opencode.ai` 处理(此前经
+  `api.deepseek.com`)。两者都是外部服务;API key 由维护者持有并写在仓库级 secret 里,轮换时同时更新
+  本仓与其他同款仓库。(#72)
+
+- **`compliance` 新增版本镜像一致性检查**(步骤 `Plugin version mirrors`,只用 node 内建模块,不 npm install):
+  `scripts/check-version-mirrors.mjs` 断言 `CMakeLists.txt` 的 `project(... VERSION)` 与 5 处镜像一致 ——
+  `web-preview/mock-server.mjs` 的 `PLUGIN_VERSION`、`web-preview/package.json` 的 `version`、`web-preview/package-lock.json`
+  的根 `version` 与 `packages[""].version`、`BRIDGE_CONTRACT.md` §三的 VERSION 行。此前只有本地 gate 3e 守(CI 的版本门禁只在
+  打 tag 时比 tag 与 CMake)。另加一步 `node --test scripts/version-mirrors.test.mjs`(夹具测试)。`compliance` 是 `dev` 的
+  必需检查、无路径过滤。
+- **`release.yml` 的 `publish`:带后缀的 tag 建成预发布**。`vX.Y.Z-<后缀>`(含冒烟 tag `*-test`)的 draft 设 `prerelease: true`、
+  `make_latest: false`,发布后不会成为 Latest;正式 tag 的行为不变。不加新 action、不改 action 版本、不动 `gate`。
+- **review bot 收紧工具边界**(`claude-review` / `deepseek-review` / `review-dispatch`):模型只剩 Read / Glob / Grep 与
+  action 托管的评论工具,Bash、编辑与联网类工具以及敏感路径(`.git/`、`/proc`、runner 安装目录与家目录点文件等)一律 deny;
+  PR 的 diff 与元数据由前置步骤写进 `.ot-review/`;PR 含符号链接时不做 AI 审查(job 失败);`review-dispatch` 在 action 之后
+  再核对一次模型读到的提交与符号链接,不一致就回帖说明结论不可信并判红。`pr-agent` 只在 PR → `dev` 时运行。
+
+### 内部工程(无契约变更)
+
+- **新增 `scripts/bump-version.mjs X.Y.Z`**:一次改齐 CMake 真源与 5 处镜像(定点改写,lockfile 里依赖自己的 `version` 不动;
+  改动超出版本字段所在的 6 行、JSON 不是 npm 的标准格式、或当前镜像本就不一致时整体放弃),并把 CHANGELOG 的 `[未发布]`
+  切成 `[X.Y.Z] — <UTC 日期>`;只改工作区,不提交、不打 tag。定位与读写规则只有一份(`scripts/version-mirrors.mjs`),
+  检查脚本与 bump 共用。
+- **gate 3e 改为调用 `scripts/check-version-mirrors.mjs`**:本地与 CI 同一份实现,原来 PowerShell 内联的读取规则随之移走,
+  判据不变(定点读取、CMake 先剔行注释再要求真源恰好一处、每个文件的取值个数必须等于期望);mock-server 的 `PLUGIN_VERSION`
+  由「取第一处」收紧为「恰好一处」。
+
+### 文档 / 合规
+
+- 新增 `docs/release-notes-template.md`:GitHub Release 双语正文模板(照 v1.5.3 / v1.6.0 的结构)与填写规则(SHA-256 从
+  `.sha256` 复制、链接钉 tag、compare 从上一个已发布版本算起、对官网的承诺要成立、发 AAX 时另加的两节)。
+  `docs/release.md` §1 改为用 bump 脚本,§5 / §6 / §7.3 链接模板;`CLAUDE.md` §4 / §9 同步。
+- `CLAUDE.md` §4 按新的 review bot 口径改写(三个 bot 都是中央 workflow 的薄调用方、检查名、`deepseek-review` 只能手动触发),
+  `BEFORE_PUBLIC_CHECKLIST.md` 登记中央 workflow 引用的 SHA 变更;`docs/webview-ui-pattern.md` 补「导航发出之前就挡住」与
+  占位轮廓与外壳同形两节。(#72–#77)
+
 ## [1.6.0] — 2026-10-08
 
 > 版本号由 1.5.3 升至 **1.6.0**(minor:新增 AAX 格式;唯一真源 `CMakeLists.txt` 的 `project(... VERSION)`,四镜像同步:

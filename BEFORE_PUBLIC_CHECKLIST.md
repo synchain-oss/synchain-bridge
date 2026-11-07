@@ -48,6 +48,22 @@
 | `qodo-ai/pr-agent` | `8e4d32e5497defd43c023a404f73560c62728961` | v0.39.0 | pr-agent |
 | `softprops/action-gh-release` | `3bb12739c298aeb8a4eeaf626c5b8d85266b0e65` | v2.6.2 | release |
 
+> 2026-10-18 补记：`claude-review` / `deepseek-review` / `pr-agent` 三个 workflow 改为调用
+> `Synchain-oss/ci-workflows` 的中央可复用 workflow，不再直接 `uses:` 上表的 `actions/checkout`（v6.1.0）、
+> `anthropics/claude-code-action`（`239e3a73…`）与 `qodo-ai/pr-agent`——那三行现在不再被本仓 workflow 引用
+> （`claude-code-action` 的 `9ca9355b…` 与 `actions/checkout` v4.4.0 仍由 `review-dispatch` 使用）。
+> 新增一条被本仓引用的可复用 workflow：`Synchain-oss/ci-workflows/.github/workflows/{pr-agent,claude-review,deepseek-review}.yml`
+> 钉到 `62556ec3f2b4e049c5b099ebd9c56c4a2888a0a9`（注释 `# v1.1.0`），同样是 40 位 commit SHA。
+>
+> 2026-10-19 补记：上述三条中央可复用 workflow 的引用改钉到 `8028e34628bc2276ca978d87ccfc364432742820`（注释 `# v1.3.1`），同样是 40 位 commit SHA；
+> 上一条里的 `62556ec3…`（`# v1.1.0`）不再被本仓引用。
+>
+> 2026-10-20 补记：上述三条中央可复用 workflow 的引用改钉到 `5c5defd08f79a320261700a5c1d8696af5a20ec0`（注释 `# v1.3.2`），同样是 40 位 commit SHA；
+> 上一条里的 `8028e346…`（`# v1.3.1`）不再被本仓引用。
+>
+> 2026-10-20 补记（二）：上述三条中央可复用 workflow 的引用改钉到 `070537914c9af4c2742b8fc5c7f63e06daef82ae`（注释 `# v1.3.3`），同样是 40 位 commit SHA；
+> 上一条里的 `5c5defd0…`（`# v1.3.2`）不再被本仓引用。
+
 口径说明：
 
 - 每个 SHA 均由 `gh api repos/<owner>/<repo>/git/ref/tags/<tag>` 现场解析；annotated tag

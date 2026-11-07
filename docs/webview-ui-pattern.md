@@ -31,9 +31,11 @@
 >   重试泵，**必须**调），再整块盖占位。
 > - **①-b 控制器已建好、页面还没画出来** —— `makeOptions()` 里的 `wv2.withBackgroundColour(...)`
 >   （= WebView2 的 `DefaultBackgroundColor`）。**不设就是全透明**（JUCE 把默认构造的
->   `juce::Colour` 原样 put 进去）⇒ 露窗口的白。遮挡闸盖不到它（park 落在 `pageAboutToLoad`，
->   而控制器在 `Navigate` 之前就建好并上屏），①-c 也不替它顶班。取值必须与占位渐变同源、
->   且只能是纯色（这个属性没有渐变形态）⇒ 取渐变轴中点色**现算**，别另写字面量。
+>   `juce::Colour` 原样 put 进去）⇒ 露窗口的白。遮挡闸原先盖不到它（park 落在
+>   `pageAboutToLoad`，而控制器在 `Navigate` 之前就建好并上屏；现在闸门在发起导航之前就挡住，
+>   见下面「导航发出之前就挡住」，这一节在开窗路上不再上屏，本层留作纵深防御），①-c 也不替它
+>   顶班。取值必须与占位渐变同源、且只能是纯色（这个属性没有渐变形态）⇒ 取渐变轴中点色
+>   **现算**，别另写字面量。
 > - **①-c 页面已开画、外链 css 还没到** —— `web/index.html` `<head>` 内联的 `html` 底。
 >   ⚠ 正常路径上 `<link rel="stylesheet">` 是**渲染阻塞**的，那一段屏上其实是 ①-b；它确定
 >   兜住的只有「外链取不到 / 加载失败」那条路。
@@ -48,6 +50,21 @@
 > 问题，①-b 也盖不住它（①-b 铺在**任何 web 内容之下**）。判据面也不同：底色那三层由
 > `reveal-first-frame.test.mjs` 的 ① ⑤ 钉同源，时序这一段由同文件 ② 格钉「首帧信号必须
 > 等 paint 记录到达才发」。详见 `src/WebViewRevealGate.h` 头注的「首帧信号什么时候发」。
+>
+> ⚠ **导航发出之前就挡住（Windows）**：JUCE 8.0.8 的 WebView2 后端在控制器建好的回调里，先按
+> 组件**当前**边界摆好宿主窗口（可见、落在可视区里），然后才发导航；闸门若等 `pageAboutToLoad`
+> 才挪窗，中间那一段宿主窗口就在屏上却没有内容，表现为「占位之后又闪一下白」。所以
+> `beginLoadAttempt` 在 `goToURL` **之前**调 `RevealGate::holdBeforeNavigation()` 并落地边界。
+> 照搬时要带齐的配套：① 挡住期间不起算超时（超时从导航开始算，这一段归看门狗）、首帧信号
+> 忽略；② JUCE 的控制器创建重试泵挂在基类 paint 上，挪出可视区后不再被画到，要由定时器
+> 代调**同一个**基类 paint（`BridgeWebView::pumpControllerCreation`，画进 1×1 软件小图，
+> 别复刻 JUCE 的私有实现）；③ 前端桥就绪时若仍挡在导航之前，`onBridgeReady` 按导航开始补记，
+> 否则闸门可能永远挪在外面。接线源钉在 `reveal-first-frame.test.mjs` ⑦ 格。
+>
+> 占位的**轮廓**也要与成品外壳同形：圆角（页面 `[data-card]` 的 `border-radius`，按缩放档位
+> 缩放）+ 圆角之外的外圈底（页面 `#vst-root` 的径向底），由 `paintShellPlaceholder` 一个实现
+> 画，取值与页面逐项对拍（`reveal-first-frame.test.mjs` ⑥ 格）。三个产品的外壳半径现在都是 20，
+> 外圈色各不相同；照搬时两项都按自己页面取值，别套用本仓的数。
 
 ### 1. 设计盒常量 `kDesignW/kDesignH`
 - **复制来源**：`src/WebViewEditor.cpp` 的 `kDesignW` / `kDesignH`（匿名命名空间常量）

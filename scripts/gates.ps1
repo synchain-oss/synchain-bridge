@@ -5,7 +5,8 @@
   manifest 模式验 baseline 与依赖声明,依赖本身由 configure 期的 vcpkg toolchain 自动安装)、
   端口 9420 一致性检查(gate 3d:src/BridgeApi.h ↔ web/bridge.js ↔ web-preview/mock-server.mjs)、
   版本一致性检查(gate 3e:CMakeLists.txt project(VERSION) ↔ web-preview 的 mock-server.mjs /
-  package.json / package-lock.json ↔ BRIDGE_CONTRACT.md §三 VERSION 行)、
+  package.json / package-lock.json ↔ BRIDGE_CONTRACT.md §三 VERSION 行;调用 scripts/check-version-mirrors.mjs,
+  与 compliance.yml 同一份实现)、
   ixwebsocket 两平台版本一致性(gate 3g:vcpkg.json override ↔ CMakeLists.txt IXWEBSOCKET_TAG 注释,与 compliance.yml 同参)、
   vcpkg 安装版本断言(gate 4b:configure 后 <BuildDir>/vcpkg_installed/vcpkg/status ↔ vcpkg.json override 与
   THIRD-PARTY-NOTICES.md,经 scripts/assert-vcpkg-installed.ps1 与 ci.yml / release.yml 共用同一份逻辑)、
@@ -309,82 +310,33 @@ function Test-Port {
 # CLAUDE.md §9:版本号真源 = CMakeLists.txt 的 project(... VERSION)。web-preview 的 mock server 会把
 # PLUGIN_VERSION 当作插件版本上报给网页,漂了就等于向网页谎报一个不存在的插件版本。BRIDGE_CONTRACT.md
 # §三的 VERSION 行是给两端实现看的登记快照,漂了等于协议文档写错版本(实际漂过一次,见 PR #19 审查)。
-# CI 的版本门禁只在打 tag 时比 tag ↔ CMake,不覆盖这四处镜像,故在本地 gate 里断死。
+# 实现只有一份:scripts/check-version-mirrors.mjs(规则在 scripts/version-mirrors.mjs),compliance.yml 的
+# 「Plugin version mirrors」步骤跑的是同一个脚本,本地与 CI 同参。原先写在这里的几条规则 —— 定点读取不做全文 grep、
+# CMake 先剔行注释再要求真源恰好一处、每个文件的取值个数必须等于期望(issue #23、PR #29 review)—— 都随实现搬了过去。
+# node 与 gate 3 的 npx 同属 Node.js;找不到就 FAIL,静默 SKIP 等于把这条断言从门禁里删掉。
 function Test-Version {
     $ok = $true
     $detail = ''
-    $cmakePath = Join-Path $RepoRoot 'CMakeLists.txt'
-    $src = $null
-    if (-not (Test-Path $cmakePath)) {
-        $ok = $false; $detail = 'CMakeLists.txt 不存在'
+    $node = Get-Command node -ErrorAction SilentlyContinue
+    if (-not $node) {
+        $ok = $false; $detail = 'node 不在 PATH(需 Node.js)'
     } else {
-        $cmakeText = Get-Content -LiteralPath $cmakePath -Raw
-        # 真源取值先剔 CMake 行注释:注释里留着旧版本的 `project(... VERSION x.y.z)`(说明、示例、被注掉的
-        # 旧行)会被 -match 先命中,于是拿一个陈旧版本当真源,再拿它去比镜像 —— 本 gate 会全绿地比错。
-        # 剔完再断言「恰好一处」:多于一处说明真源本身有歧义,报错比静默取第一处安全。
-        $cmakeCode = (($cmakeText -split "`r?`n") -replace '#.*$', '') -join "`n"
-        $vm = [regex]::Matches($cmakeCode, 'project\s*\(\s*\S+\s+VERSION\s+([0-9]+\.[0-9]+\.[0-9]+)')
-        if ($vm.Count -eq 1) {
-            $src = $vm[0].Groups[1].Value
-        } elseif ($vm.Count -eq 0) {
-            $ok = $false; $detail = 'CMakeLists.txt 未找到 project(... VERSION x.y.z)'
-        } else {
-            $ok = $false; $detail = 'CMakeLists.txt 有 ' + $vm.Count + ' 处 project(... VERSION),真源有歧义'
-        }
-    }
-    if ($ok) {
-        # 镜像取值一律走「定点读取」,不做全文件 grep:package-lock.json 里 ws 依赖自己也有 "version",
-        # 宽正则会把它一起比进来。JSON 走 ConvertFrom-Json 取指定字段,.mjs 走常量名锚定的正则。
-        $bad = @()
-        $seen = @()
-        function Get-Mirror([string]$rel, [scriptblock]$reader, [int]$want) {
-            $path = Join-Path $RepoRoot $rel
-            if (-not (Test-Path $path)) { return @{ Err = ($rel + '(不存在)') } }
-            # reader 在文件结构变化时会直接抛(package-lock.json 升版把 packages[''] 挪走、JSON 不合法……),
-            # 本脚本 $ErrorActionPreference = 'Stop',不兜住的话整个 gates 会在这里中断、后面的 gate 一个不跑、
-            # 结果表也打不出。兜成本 gate 的 FAIL 并带上可读原因(issue #23)。
-            try {
-                $text = Get-Content -LiteralPath $path -Raw
-                $vals = @(& $reader $text | Where-Object { $_ })
-            } catch {
-                return @{ Err = ($rel + '(解析失败: ' + $_.Exception.Message + ')') }
+        Push-Location $RepoRoot
+        try {
+            $out = @(& $node.Source scripts/check-version-mirrors.mjs 2>&1 | ForEach-Object { "$_" })
+            $code = $LASTEXITCODE
+            $out | ForEach-Object { Write-Host $_ }
+            $last = @($out | Where-Object { $_.Trim() }) | Select-Object -Last 1
+            if ($code -ne 0) {
+                $ok = $false
+                $fails = @($out | Where-Object { $_ -match '^\s*(FAIL |::error::)' } | ForEach-Object { ($_ -replace '^\s*(FAIL |::error::)', '').Trim() })
+                $detail = if ($fails.Count -gt 0) { $fails -join '; ' } elseif ($last) { $last.Trim() } else { 'check-version-mirrors.mjs exit ' + $code }
+            } else {
+                $detail = $last.Trim()
             }
-            # try/catch 只兜得住「抛」的一半:结构变化也可能是**不抛而返回 $null**(键还在、version 字段没了,
-            # 索引 $null 在 PowerShell 里静默得 $null),被上面的 Where-Object 滤掉后就静默降级成只比剩下的
-            # 几处。故 reader 返回后再断言取值个数恰等于期望个数,少了同样记 FAIL(PR #29 review)。
-            if ($vals.Count -ne $want) {
-                return @{ Err = ($rel + '(结构变化:期望 ' + $want + ' 个版本字段,实际 ' + $vals.Count + ' 个)') }
-            }
-            return @{ Vals = $vals }
-        }
-        # 每处镜像:Read = 定点读取的 scriptblock;Want = 该文件里应取到的版本字段个数(lockfile 是根 version +
-        # packages[''].version 两处,其余各一处)。
-        $readers = [ordered]@{
-            'web-preview/mock-server.mjs'   = @{ Want = 1; Read = { param($t) if ($t -match 'PLUGIN_VERSION\s*=\s*"([^"]+)"') { $Matches[1] } } }
-            'web-preview/package.json'      = @{ Want = 1; Read = { param($t) ($t | ConvertFrom-Json).version } }
-            'web-preview/package-lock.json' = @{ Want = 2; Read = { param($t)
-                # lockfile v3 的根包挂在 packages 的**空字符串键**下,ConvertFrom-Json 不带
-                # -AsHashtable 时会直接报错(PSCustomObject 不支持空属性名),故这里必须用哈希表。
-                $j = $t | ConvertFrom-Json -AsHashtable
-                @($j['version'], $j['packages']['']['version'])
-            } }
-            # §三是一张 markdown 表:锚定行首竖线 + 单元格恰为 VERSION,避开同表的 BRIDGE_CONTRACT_VERSION 行
-            # (那是协议版本,独立于插件版本,不参与本 gate)。
-            'BRIDGE_CONTRACT.md'            = @{ Want = 1; Read = { param($t) if ($t -match '(?m)^\|\s*VERSION\s*\|\s*`([0-9]+\.[0-9]+\.[0-9]+)`') { $Matches[1] } } }
-        }
-        foreach ($rel in $readers.Keys) {
-            $r = Get-Mirror $rel $readers[$rel].Read $readers[$rel].Want
-            if ($r.Err) { $ok = $false; $bad += $r.Err; continue }
-            foreach ($v in $r.Vals) {
-                $seen += ($rel + '=' + $v)
-                if ($v -ne $src) { $ok = $false; $bad += ($rel + '=' + $v) }
-            }
-        }
-        if ($ok) {
-            $detail = 'CMake=' + $src + ' == ' + ($seen -join ' / ')
-        } else {
-            $detail = '与 CMake ' + $src + ' 不一致: ' + ($bad -join ' / ')
-        }
+        } catch {
+            $ok = $false; $detail = 'check-version-mirrors.mjs 无法运行: ' + $_.Exception.Message
+        } finally { Pop-Location }
     }
     Add-Result '版本一致性 (CMake ↔ web-preview ↔ BRIDGE_CONTRACT)' ($(if ($ok) { 'PASS' } else { 'FAIL' })) $detail
     return $ok

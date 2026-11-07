@@ -23,7 +23,7 @@
 
 - 默认主干 = `dev`;Bridge 主支线 = `feature/extraction`(ADR-013 / J13);AAX 支线 = `feature/aax`(子分支 `feat/AAX-NN-slug`);发布分支 = `prod`(不设 stage)。
 - 晋升链:`feat/*` →(子 PR)`feature/*` → `dev` → `prod`。`prod` 只收本仓 `dev` 的 PR(`branch-gate` 强制,对 fork / 机器人 PR 同样适用),用 merge commit 合并;正式 tag `vX.Y.Z` 只打在 `prod` 的合并提交上(§9、`docs/release.md` §5)。
-- same-repo 只收 `feat/*` / `feature/*`(以及 `dependabot/*`)到 `dev`;子 PR(base = `feature/*`)只跑 review bot,不跑完整 CI(D2)。
+- same-repo 只收 `feat/*` / `feature/*`(以及 `dependabot/*`)到 `dev`;子 PR(base = `feature/*`)只跑 review bot `claude-review`(`pr-agent` 只在 PR → `dev` 运行;`deepseek-review` 只能手动触发),不跑完整 CI(D2)。
 - **fork PR 门禁政策(J31/J41,唯一政策)**：
   - fork → **任意分支名**(不要用 `dev`/`stage`/`prod`/`feature/v1`/`feature/extraction`)→ PR 到 `dev`;
   - `branch-gate` 对到 `dev` 的 fork PR **不 exit 1**,只校验 head 分支名不在上述长期分支名集合(防同名伪装晋升),不强制 `feat/*` 命名;fork 开到 `prod` 的 PR 一律 exit 1(`prod` 只收本仓 `dev`);
@@ -46,10 +46,11 @@
 
 - `ci`(job `build-and-validate` = windows-2022;job `build-and-validate-macos` = macos-15,VST3 + AU + AAX,arm64-only;两个 job 都会经 AAX 打包脚本做 bundle 结构 / 架构断言和打包冒烟(含 Signed 模式拒收未签名 bundle 的反向断言),并在 push / workflow_dispatch 时上传未签名的 `aax-unsigned-win64` / `aax-unsigned-macos-arm64` artifact,pull_request 构建的是合并提交、不出件)/ `format`(job `clang-format`):`pull_request → dev` + `push → dev, 'feature/**'`。
 - `branch-gate`:`pull_request → dev, prod`(没有 push 触发)。base = `prod` 时只放行本仓的 `dev`,DCO 与冻结契约守卫照常跑;`dev` → `prod` 的 PR 上不跑 `ci` / `format` / `compliance`(这批提交合入 `dev` 时已验过,tag 触发的 `release` 会再完整构建一次)。
-- `compliance`(gitleaks + reuse lint):与 `ci` / `format` 同触发面,无 secrets,fork PR 同样跑。
-- `claude-review`:所有 base 分支、仅 same-repo(J31);`deepseek-review` / `pr-agent` 默认 disable。
-- `release`:push tags `v*` 触发草稿 Release,四段式 `gate`(版本一致性门禁,ubuntu-latest)→ `release`(windows-2022)∥ `release-macos`(macos-15)→ `publish`(ubuntu-latest,复验 sha256 后建 draft)。workflow 级 `contents: read`,`contents: write` 只授给 `publish` 一个 job。release 的 AAX 件只出未签名的 `aax-unsigned-*` artifact(保留 30 天),**不进 `publish`**(签名与上传由维护者手工做,见 `docs/release.md` §7)。**任一平台失败(含 AAX 构建 / 打包)= 整个 tag 无产物**(fail-hard,不用 `continue-on-error`;处理办法见 `docs/release.md` §6.1)。
-- `review-dispatch`:维护者评论 `/review` 显式触发(fork PR 唯一 AI 审查通道)。
+- `compliance`(gitleaks + reuse lint + 纯逻辑自测 + 版本镜像一致性 `scripts/check-version-mirrors.mjs` 等):与 `ci` / `format` 同触发面,无 secrets,fork PR 同样跑。
+- **三个 review bot 现在都是薄调用方**:`claude-review.yml` / `deepseek-review.yml` / `pr-agent.yml` 只保留本仓专属部分(前两者的 `focus` + `extra_prompt`,后者的 `ignore_globs`),真正的 workflow 在 `Synchain-oss/ci-workflows`(中央可复用 workflow),按 **commit SHA** 引用(行尾注释 `# v1.3.3`;§0 铁律第 3 条不放行 `@v1` 这类可变 ref),升级中央版本 = 三处一起改 SHA。模型、工具边界、符号链接拒审、diff 预取、draft / fork / dependabot 与晋升 PR(`dev` → `prod`)跳过、并发组与超时都在中央。secret 由调用方逐个显式传入,只传该 workflow 用到的那一个(最小权限,不用 `secrets: inherit`)。
+- `claude-review`:所有 base 分支(`dev` → `prod` 的晋升 PR 除外)、仅 same-repo(J31);`pr-agent`:仅 `pull_request → dev`、仅 same-repo(调用方触发器 `branches: [dev]`);`deepseek-review` **只剩 `workflow_dispatch` 手动触发**,不会自动跑,且保持 disable(`gh workflow disable`,按 workflow 文件路径对全部分支生效)。应急时:`gh workflow enable deepseek-review.yml` → Actions → DeepSeek PR Review → Run workflow → 填 PR 号(审查结论发成一条 PR 评论,问题写 `文件:行号`)→ 用完 `gh workflow disable deepseek-review.yml`。检查名变为调用方 job id + ` / ` + 中央 job id:`pr-agent / pr-agent`、`claude-pr-review / review`、`deepseek-pr-review / review`(本仓目前没有把它们列为必需检查)。
+- `release`:push tags `v*` 触发草稿 Release,四段式 `gate`(版本一致性门禁,ubuntu-latest)→ `release`(windows-2022)∥ `release-macos`(macos-15)→ `publish`(ubuntu-latest,复验 sha256 后建 draft;tag 带 `-<后缀>` 时 draft 标 prerelease、`make_latest: false`)。workflow 级 `contents: read`,`contents: write` 只授给 `publish` 一个 job。release 的 AAX 件只出未签名的 `aax-unsigned-*` artifact(保留 30 天),**不进 `publish`**(签名与上传由维护者手工做,见 `docs/release.md` §7)。**任一平台失败(含 AAX 构建 / 打包)= 整个 tag 无产物**(fail-hard,不用 `continue-on-error`;处理办法见 `docs/release.md` §6.1)。
+- `review-dispatch`:维护者评论 `/review` 显式触发(fork PR 唯一 AI 审查通道)。它**没有**迁到中央(中央 workflow 只接 `pull_request`,不接 `issue_comment`;且本仓的这条通道会签出 fork PR 代码并在 action 之后核对提交与符号链接),继续自带一份 prompt 与 `claude_args`;改 `claude-review.yml` 的 `focus` / `extra_prompt` 时,以及升级中央版本而中央 `claude_args` 的工具边界(如 deny 列表)有变化时,都要手动同步它。
 - 成本纪律:runner 就低不就高(V-4 确认前一律 `ubuntu-latest`)、按量计费 bot 克制使用。**例外(待用户拍板)**:`build-and-validate-macos` 必须跑 GitHub 托管 macOS runner,且当前继承整个 `ci` 工作流的触发面、全开;AAX 目标让 macOS job 的编译与打包时间有所增加;若要收敛,给 job 加 label/事件闸门是最小改动。
 
 ## 5. 协议变更规范
@@ -77,7 +78,7 @@ required check,无 paths 过滤)的 Frozen-contract change guard 守同一组七
 - macOS(Apple Silicon):JUCE 同一真源、CMake ≥3.22 + **Ninja**、Xcode command line tools(clang,`-Wall -Wextra -Wpedantic`)、pluginval 同一真源 + **`auval`**(AU 唯一验收工具,以输出里的 `AU VALIDATION SUCCEEDED` 判定,退出码不可靠)、ixwebsocket 走 CMake `FetchContent`(`IXWEBSOCKET_TAG` 钉 40 位 commit,与 Windows 侧 vcpkg 同版本;CI 预取源码进 `actions/cache` 后经 `FETCHCONTENT_SOURCE_DIR_IXWEBSOCKET` 喂给 configure)。产物为 **VST3 + AU + AAX**、**arm64-only**(v1 不出 universal / x86_64),VST3 / AU 不签名不公证,AAX 由维护者本机签名但不公证;CI runner = `macos-15`。构建细节见 `docs/build-macos.md`。
 - 本地 gates(`scripts/gates.ps1`)目前仍是纯 Windows 实现(vswhere / VS 生成器 / nuget / `pluginval.exe`),mac 侧本地验收按 `docs/build-macos.md` 手工执行。
 - AAX SDK 随 JUCE 自带(`juce_audio_plugin_client/AAX/SDK`),不需要另外下载。PACE wraptool / iLok 只在维护者本机使用;Avid 的评估工具(DigiShell / AAX Validator)与测试计划不入库、不分发、CI 不下载。
-- 构建流水线不需要任何 secret(06 §3.1);review bot 用 org secrets(`CLAUDE_CODE_OAUTH_TOKEN` / `DEEPSEEK_KEY`)。
+- 构建流水线不需要任何 secret(06 §3.1);review bot 用 secret(`CLAUDE_CODE_OAUTH_TOKEN` / `OPENCODE_GO_API_KEY_FOR_REVIEW`)。后者是**仓库级** secret(不是 org secret):2026-10-18 起**原先走 DeepSeek 直连的两个 bot**(`deepseek-review` / `pr-agent`)改经 OpenCode Go 网关(`https://opencode.ai/zen/go`),key 由 OpenCode 控制台签发,旧的 `DEEPSEEK_KEY` 停用。`claude-review` 仍用 `CLAUDE_CODE_OAUTH_TOKEN`(订阅 OAuth,非按量 key),不经网关。三个 bot 的 secret 都由调用方 workflow 显式传给 `Synchain-oss/ci-workflows`(见各文件 `secrets:` 段)。
 
 ## 7. 跨仓库协议规范
 
@@ -96,7 +97,7 @@ Bridge 特有:PCM 发送由后台发送线程经 SPSC ring 转投(移出音频�
 ## 9. 分发链路
 
 - 抽取为公开仓库后 **GitHub Releases 才是真正公开可下载的渠道**(private 仓的 Release 附件匿名下载走不通)。
-- 版本号真源 = 顶层 `CMakeLists.txt` 的 `project(... VERSION)`;网页侧(闭源仓库)存在一份下游版本镜像,发版后必须同步。
+- 版本号真源 = 顶层 `CMakeLists.txt` 的 `project(... VERSION)`;仓内 5 处镜像(web-preview 三个文件、`BRIDGE_CONTRACT.md` §三)用 `node scripts/bump-version.mjs X.Y.Z` 一次改齐,由 `scripts/check-version-mirrors.mjs` 守(`compliance` 与本地 gate 3e);网页侧(闭源仓库)存在一份下游版本镜像,发版后必须同步。Release 正文模板 = `docs/release-notes-template.md`。
 - tag 格式 `vX.Y.Z`(去掉 `vst-` 前缀);首个公开 tag = `v1.4.0`(U6,历史事实——实际打 tag 以 CMake 当前 VERSION 为准,gate 强制相等)。**正式 tag 只打在 `prod` 上**:`feature/*` → `dev`(PR)→ `prod`(PR,只收 `dev`)→ 在 `prod` 的合并提交上打 tag(`docs/release.md` §5)。`*-test` 结尾的冒烟 tag 跳过严格版本相等、产物恒为 draft,可以打在任何分支上,改过发版链路后先用它端到端实跑(`docs/release.md` §5.1)。
 - Release 资产两个平台各一个,均附同名 `.sha256`:`SynchainBridge-VST3-v<版本>-win64.zip`(VST3)与 `SynchainBridge-VST3-AU-v<版本>-macos-arm64.zip`(VST3 + AU,arm64-only,不签名不公证)。另有两个 AAX 资产 `SynchainBridge-AAX-v<版本>-win64.zip` 与 `SynchainBridge-AAX-v<版本>-macos-arm64.zip`,由维护者签名后**手工上传**到 draft Release(v1.6.0 只发 Windows x64;macOS AAX 由 CI 构建,借 Mac 实测之后再发布)。打包与签名的唯一真源 = `scripts/package.ps1` / `scripts/package-macos.sh` / `scripts/package-aax.ps1` / `scripts/package-aax-macos.sh` / `scripts/sign-aax.ps1` / `scripts/sign-aax-macos.sh`,绝不在 workflow 里内联打包命令。
 - R2 固定 key 覆盖上传是否保留由 08 文档决策;本仓不默认启用。

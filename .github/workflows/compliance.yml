@@ -121,6 +121,19 @@ jobs:
           grep -E '^[[:space:]]*set\(IXWEBSOCKET_TAG[[:space:]]+"[0-9a-f]{40}"' CMakeLists.txt | grep -qF "(= tag v$ver)" \
             || { echo "::error::CMakeLists.txt IXWEBSOCKET_TAG line is not annotated '(= tag v$ver)' while vcpkg.json pins $ver"; exit 1; }
           echo "ixwebsocket pin OK: vcpkg.json override $ver <-> CMakeLists.txt IXWEBSOCKET_TAG (= tag v$ver)"
+      - name: Plugin version mirrors (CMake <-> web-preview <-> BRIDGE_CONTRACT)
+        # 【Bridge 专属步骤,不属于文件头「三仓逐字」的那部分;与上面的 selftest / PCM wiring / ixwebsocket pin 同类】
+        # 与本地 gate 3e 跑同一个脚本(gates.ps1 直接调用它)。版本号真源 = CMakeLists.txt 的 project(... VERSION);
+        # 镜像 = web-preview/mock-server.mjs 的 PLUGIN_VERSION、web-preview/package.json 的 version、
+        # web-preview/package-lock.json 的根 version 与 packages[""].version、BRIDGE_CONTRACT.md §三的 VERSION 行。
+        # release.yml 的 gate 只在打 tag 时比 tag 与 CMake,不看这些镜像,此前它们只靠本地 gate 3e 守(PR #19 评审时漂过一次)。
+        # 只用 node 内建模块,不 npm install;抬版本用 scripts/bump-version.mjs,一次改齐五处。
+        run: node scripts/check-version-mirrors.mjs
+      - name: Version tools selftest (node:test)
+        # scripts/version-mirrors.mjs(上一步与 bump-version.mjs 共用的定位 / 读写规则)的夹具测试:把真实的 6 个文件
+        # 拷到临时目录,断言漂移与结构变化会报错、bump 只改版本字段所在的 6 行、依赖里同号的 version 不动、CHANGELOG 切版。
+        # 这些文件结构一变,这里先红,bump-version 不会等到发版那天才失灵。文件路径显式给出(与上面两个 node:test 步骤同口径)。
+        run: node --test scripts/version-mirrors.test.mjs
       - name: Font name-table RFN check
         # 与本地 gate 3b2 同参。上面两步的 gitleaks 只看文本:woff2 是 brotli 压缩的,
         # grep 不命中不等于保留字体名已从 name 表清除(OFL-1.1 §3 管的是「呈现给用户的
