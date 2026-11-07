@@ -50,19 +50,22 @@ cmake --build build --parallel
 
 ## 安装
 
+装进磁盘根目录下 `/Library` 里的系统插件目录（不是家目录下的 `~/Library`，与发行包 INSTALL.txt 同一口径）。
+这两个目录属 root，命令要加 `sudo`。
+
 用 `ditto` 而不是 `cp -r`：bundle 里有符号链接与扩展属性，`ditto` 会原样保留。
 
 但 `ditto` 对**已存在**的目标目录是**合并**语义，不是替换：上一版里已被删掉的文件（改过名的字体、旧
 helper 等）会原地留在新 bundle 里。所以覆盖安装前必须先删掉旧 bundle。
 
 ```bash
-rm -rf ~/Library/Audio/Plug-Ins/VST3/"Synchain Bridge.vst3" \
-       ~/Library/Audio/Plug-Ins/Components/"Synchain Bridge.component"
+sudo rm -rf /Library/Audio/Plug-Ins/VST3/"Synchain Bridge.vst3" \
+            /Library/Audio/Plug-Ins/Components/"Synchain Bridge.component"
 
-ditto "build/SynchainBridgeVST_artefacts/Release/VST3/Synchain Bridge.vst3" \
-      ~/Library/Audio/Plug-Ins/VST3/"Synchain Bridge.vst3"
-ditto "build/SynchainBridgeVST_artefacts/Release/AU/Synchain Bridge.component" \
-      ~/Library/Audio/Plug-Ins/Components/"Synchain Bridge.component"
+sudo ditto "build/SynchainBridgeVST_artefacts/Release/VST3/Synchain Bridge.vst3" \
+           /Library/Audio/Plug-Ins/VST3/"Synchain Bridge.vst3"
+sudo ditto "build/SynchainBridgeVST_artefacts/Release/AU/Synchain Bridge.component" \
+           /Library/Audio/Plug-Ins/Components/"Synchain Bridge.component"
 
 # AU 组件缓存由 AudioComponentRegistrar 持有：不重启它，DAW 扫到的仍是旧副本
 killall -9 AudioComponentRegistrar
@@ -178,7 +181,7 @@ Security.framework**；压缩用的 zlib 取 macOS SDK 自带的系统库。要�
 permessage-deflate 协商、close code、handshake header 解析这些 wire 层行为必须两平台同一实现同一版本
 （`BRIDGE_CONTRACT.md` 是唯一协议真源）。同块里还写死了 `BUILD_SHARED_LIBS=OFF`：ixwebsocket 一旦被外层
 `-DBUILD_SHARED_LIBS=ON` 带成 dylib，就不会被拷进 `.vst3` / `.component` 的 `Frameworks`，也没有 rpath
-处理，装到 `~/Library` 后换台机器直接加载失败。
+处理，装进插件目录后换台机器直接加载失败。
 
 ### 5. 浏览器侧：Safari 预计打不开 Creative Space（**尚未真机验证**）
 
@@ -194,7 +197,7 @@ mac 上建议用 Chrome / Edge / Firefox 打开 Creative Space；注意这些浏
 
 - **`JUCE_PATH must be set`**：没传 `-DJUCE_PATH`，或路径指到了 JUCE 子目录而非根。
 - **配置期卡在 `Fetching ixwebsocket`**：无网络或 git 被代理拦截。可先手工 `git clone --branch v12.0.1` 验证连通性。
-- **`auval` 找不到组件**：没装到 `~/Library/Audio/Plug-Ins/Components/`，或没 `killall -9 AudioComponentRegistrar`。
+- **`auval` 找不到组件**：没装到 `/Library/Audio/Plug-Ins/Components/`，或没 `killall -9 AudioComponentRegistrar`。
 - **DAW 里插件不显示 / 报架构不匹配**：宿主跑在 Rosetta（x86_64）下。本插件只有 arm64 slice，
   **勾「使用 Rosetta 打开」也加载不了**——请以原生 arm64 方式启动 DAW。
 - **插件窗口是英文兜底面板**：WKWebView 加载超时（多见于首次冷启动）。点 Retry，或关掉插件窗口重开。

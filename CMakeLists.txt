@@ -335,7 +335,7 @@ if(APPLE)
   set(BUILD_DEMO          OFF CACHE BOOL "" FORCE)
   # 上游 option 默认 OFF，但外层只要带 -DBUILD_SHARED_LIBS=ON（superbuild，或复用了别的 build 目录的
   # cache），ixwebsocket 就会变成 dylib：它不会被拷进 .vst3/.component 的 Frameworks，也没有任何 rpath
-  # 处理，装到 ~/Library 后换台机器直接加载失败。mac 侧产物必须自包含，故与上面五个变量同样写死。
+  # 处理，装进插件目录后换台机器直接加载失败。mac 侧产物必须自包含，故与上面五个变量同样写死。
   set(BUILD_SHARED_LIBS   OFF CACHE BOOL "" FORCE)
   # 上游默认 TRUE：不关掉会把 ixwebsocket 的 install 规则挂进本工程的 INSTALL 目标。
   set(IXWEBSOCKET_INSTALL OFF CACHE BOOL "" FORCE)
