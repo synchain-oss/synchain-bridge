@@ -6,7 +6,7 @@
 
 ## [未发布]
 
-## [1.6.1] — 2026-11-05
+## [1.6.1] — 2026-11-07
 
 > 版本号由 1.6.0 升至 **1.6.1**(patch:只有修复与发版 / 评审工具链改动,没有新功能;唯一真源
 > `CMakeLists.txt` 的 `project(... VERSION)`,四镜像同步:web-preview 的 mock-server.mjs / package.json /
