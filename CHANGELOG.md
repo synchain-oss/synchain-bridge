@@ -101,7 +101,8 @@
 
 - **macOS AAX 随本版发布**:README(中英)的下载表、AAX 资产说明、签名说明与路线图,`BRIDGE_CONTRACT.md` §三的产物行,
   `CLAUDE.md` §9,都从「macOS AAX 稍后 / 暂不发布」改为「macOS arm64 自 v1.6.1 起提供」。签名说明补上一句:macOS 的代码签名用的是
-  自签名身份(没有 Apple Developer ID),且未经公证,所以安装时要去掉隔离属性。
+  自签名身份(没有 Apple Developer ID),且未经公证,所以安装时要去掉隔离属性。下载表后面那句也按格式分开写:VST3/AU zip
+  不签名不公证,macOS AAX 带 PACE 签名但未经公证。
 - **macOS 安装说明统一装进系统目录 `/Library`**:发行包 INSTALL.txt(`scripts/package-macos.sh`)、README(中英)、
   `docs/build-macos.md` 与 `docs/release.md` §3 不再给家目录 `~/Library` 的写法。VST3 / AU 一律装进
   `/Library/Audio/Plug-Ins/VST3` 与 `/Library/Audio/Plug-Ins/Components`,删除旧版、复制与 `xattr` 都要 `sudo`。
