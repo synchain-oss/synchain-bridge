@@ -86,9 +86,10 @@ chmod +x pluginval.app/Contents/MacOS/pluginval
 ./pluginval.app/Contents/MacOS/pluginval --strictness-level 5 --timeout-ms 60000 --skip-gui-tests \
   "build/SynchainBridgeVST_artefacts/Release/VST3/Synchain Bridge.vst3"
 
-# AU:先 ditto 装进 ~/Library(cp -r 会丢符号链接,bundle 会散架),再踢一次注册器强制重扫
-ditto "build/SynchainBridgeVST_artefacts/Release/AU/Synchain Bridge.component" \
-      ~/Library/Audio/Plug-Ins/Components/"Synchain Bridge.component"
+# AU:先 ditto 装进 /Library(与 INSTALL.txt 同一位置;cp -r 会丢符号链接,bundle 会散架),再踢一次注册器强制重扫
+sudo rm -rf /Library/Audio/Plug-Ins/Components/"Synchain Bridge.component"
+sudo ditto "build/SynchainBridgeVST_artefacts/Release/AU/Synchain Bridge.component" \
+           /Library/Audio/Plug-Ins/Components/"Synchain Bridge.component"
 killall -9 AudioComponentRegistrar
 auval -v aufx Snb1 Snch
 ```

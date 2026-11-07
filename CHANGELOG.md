@@ -10,8 +10,9 @@
 
 > 版本号由 1.6.0 升至 **1.6.1**(patch:只有修复与发版 / 评审工具链改动,没有新功能;唯一真源
 > `CMakeLists.txt` 的 `project(... VERSION)`,四镜像同步:web-preview 的 mock-server.mjs / package.json /
-> package-lock.json 与 `BRIDGE_CONTRACT.md` §三)。本版的用户可见变化只有 **Windows 开窗时的白闪修复**
-> (VST3 与 AAX 共用同一套 WebView2 代码);macOS 路径不变。**不涉及契约变更**(wire 协议零改动,
+> package-lock.json 与 `BRIDGE_CONTRACT.md` §三)。本版的用户可见变化是 **Windows 开窗时的白闪修复**
+> (VST3 与 AAX 共用同一套 WebView2 代码;macOS 路径不变),以及 macOS 的安装说明统一装进系统目录
+> `/Library`(INSTALL.txt 与 README 不再给家目录 `~/Library` 的写法)。**不涉及契约变更**(wire 协议零改动,
 > `BRIDGE_CONTRACT_VERSION` 仍为 `2.0`;`BRIDGE_CONTRACT.md` 只改 §三的登记快照)。没有跳过的版本号
 > (1.6.0 之后直接是 1.6.1)。
 
@@ -97,6 +98,10 @@
 
 ### 文档 / 合规
 
+- **macOS 安装说明统一装进系统目录 `/Library`**:发行包 INSTALL.txt(`scripts/package-macos.sh`)、README(中英)、
+  `docs/build-macos.md` 与 `docs/release.md` §3 不再给家目录 `~/Library` 的写法。VST3 / AU 一律装进
+  `/Library/Audio/Plug-Ins/VST3` 与 `/Library/Audio/Plug-Ins/Components`,删除旧版、复制与 `xattr` 都要 `sudo`。
+  CI 里 auval 那一步仍装进 runner 的家目录,那是测试环境,workflow 不变。
 - 新增 `docs/release-notes-template.md`:GitHub Release 双语正文模板(照 v1.5.3 / v1.6.0 的结构)与填写规则(SHA-256 从
   `.sha256` 复制、链接钉 tag、compare 从上一个已发布版本算起、对官网的承诺要成立、发 AAX 时另加的两节)。
   `docs/release.md` §1 改为用 bump 脚本,§5 / §6 / §7.3 链接模板;`CLAUDE.md` §4 / §9 同步。

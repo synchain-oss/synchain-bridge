@@ -95,21 +95,21 @@ The build produces (or the zip contains) `Synchain Bridge.vst3` — a **bundle d
 
 ### macOS
 
-Two formats are produced: `Synchain Bridge.vst3` and `Synchain Bridge.component` (AU). Both are **bundle directories**. Use `ditto` rather than `cp -r` so symlinks and extended attributes survive — and delete the previous install first, because `ditto` *merges* into an existing bundle and would leave stale files (renamed fonts, old helpers) behind:
+Two formats are produced: `Synchain Bridge.vst3` and `Synchain Bridge.component` (AU). Both are **bundle directories**. Install them into the system plug-in folders under `/Library` at the root of the disk, not `~/Library` in your home folder. Those folders belong to root, so the commands need `sudo`. Use `ditto` rather than `cp -r` so symlinks and extended attributes survive — and delete the previous install first, because `ditto` *merges* into an existing bundle and would leave stale files (renamed fonts, old helpers) behind:
 
 ```bash
-rm -rf ~/Library/Audio/Plug-Ins/VST3/"Synchain Bridge.vst3" \
-       ~/Library/Audio/Plug-Ins/Components/"Synchain Bridge.component"
-ditto "<path>/Synchain Bridge.vst3"      ~/Library/Audio/Plug-Ins/VST3/"Synchain Bridge.vst3"
-ditto "<path>/Synchain Bridge.component" ~/Library/Audio/Plug-Ins/Components/"Synchain Bridge.component"
+sudo rm -rf /Library/Audio/Plug-Ins/VST3/"Synchain Bridge.vst3" \
+            /Library/Audio/Plug-Ins/Components/"Synchain Bridge.component"
+sudo ditto "<path>/Synchain Bridge.vst3"      /Library/Audio/Plug-Ins/VST3/"Synchain Bridge.vst3"
+sudo ditto "<path>/Synchain Bridge.component" /Library/Audio/Plug-Ins/Components/"Synchain Bridge.component"
 killall -9 AudioComponentRegistrar   # drop the cached AU component info, otherwise the DAW rescans the old copy
 ```
 
-The macOS builds are **unsigned and un-notarized** (v1). A bundle you built yourself carries no quarantine flag; a zip downloaded from Releases (or via a browser, AirDrop, …) does, and macOS will refuse to load it until the flag is cleared. The commands below are for the per-user paths above and need no `sudo`; installing into `/Library/Audio/Plug-Ins/...` instead requires an admin prompt to copy and `sudo` on both commands:
+The macOS builds are **unsigned and un-notarized** (v1). A bundle you built yourself carries no quarantine flag; a zip downloaded from Releases (or via a browser, AirDrop, …) does, and macOS will refuse to load it until the flag is cleared:
 
 ```bash
-xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/VST3/"Synchain Bridge.vst3"
-xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/Components/"Synchain Bridge.component"
+sudo xattr -dr com.apple.quarantine /Library/Audio/Plug-Ins/VST3/"Synchain Bridge.vst3"
+sudo xattr -dr com.apple.quarantine /Library/Audio/Plug-Ins/Components/"Synchain Bridge.component"
 ```
 
 ### Pro Tools (AAX)
