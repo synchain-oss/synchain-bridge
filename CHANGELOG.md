@@ -8,12 +8,13 @@
 
 ## [1.6.1] — 2026-11-07
 
-> 版本号由 1.6.0 升至 **1.6.1**(patch:只有修复与发版 / 评审工具链改动,没有新功能;唯一真源
+> 版本号由 1.6.0 升至 **1.6.1**(patch:插件代码只有修复,没有新功能,其余是发版 / 评审工具链改动;唯一真源
 > `CMakeLists.txt` 的 `project(... VERSION)`,四镜像同步:web-preview 的 mock-server.mjs / package.json /
-> package-lock.json 与 `BRIDGE_CONTRACT.md` §三)。本版的用户可见变化是 **Windows 开窗时的白闪修复**
-> (VST3 与 AAX 共用同一套 WebView2 代码;macOS 路径不变),以及 macOS 的安装说明统一装进系统目录
-> `/Library`(INSTALL.txt 与 README 不再给家目录 `~/Library` 的写法)。**不涉及契约变更**(wire 协议零改动,
-> `BRIDGE_CONTRACT_VERSION` 仍为 `2.0`;`BRIDGE_CONTRACT.md` 只改 §三的登记快照)。没有跳过的版本号
+> package-lock.json 与 `BRIDGE_CONTRACT.md` §三)。本版的用户可见变化有三项:**Windows 开窗时的白闪修复**
+> (VST3 与 AAX 共用同一套 WebView2 代码;macOS 路径不变);macOS 的安装说明统一装进系统目录
+> `/Library`(INSTALL.txt 与 README 不再给家目录 `~/Library` 的写法);**macOS AAX(Beta,Apple Silicon)首次发布**
+> (CI 自 1.6.0 起就在构建,本版起由维护者在 Mac 上做 PACE 签名后随 Release 提供)。**不涉及契约变更**(wire 协议零改动,
+> `BRIDGE_CONTRACT_VERSION` 仍为 `2.0`;`BRIDGE_CONTRACT.md` 只改 §三的登记快照与产物行)。没有跳过的版本号
 > (1.6.0 之后直接是 1.6.1)。
 
 ### 修复
@@ -98,6 +99,9 @@
 
 ### 文档 / 合规
 
+- **macOS AAX 随本版发布**:README(中英)的下载表、AAX 资产说明、签名说明与路线图,`BRIDGE_CONTRACT.md` §三的产物行,
+  `CLAUDE.md` §9,都从「macOS AAX 稍后 / 暂不发布」改为「macOS arm64 自 v1.6.1 起提供」。签名说明补上一句:macOS 的代码签名用的是
+  自签名身份(没有 Apple Developer ID),且未经公证,所以安装时要去掉隔离属性。
 - **macOS 安装说明统一装进系统目录 `/Library`**:发行包 INSTALL.txt(`scripts/package-macos.sh`)、README(中英)、
   `docs/build-macos.md` 与 `docs/release.md` §3 不再给家目录 `~/Library` 的写法。VST3 / AU 一律装进
   `/Library/Audio/Plug-Ins/VST3` 与 `/Library/Audio/Plug-Ins/Components`,删除旧版、复制与 `xattr` 都要 `sudo`。
