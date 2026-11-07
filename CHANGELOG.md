@@ -6,6 +6,15 @@
 
 ## [未发布]
 
+## [1.6.1] — 2026-11-07
+
+> 版本号由 1.6.0 升至 **1.6.1**(patch:只有修复与发版 / 评审工具链改动,没有新功能;唯一真源
+> `CMakeLists.txt` 的 `project(... VERSION)`,四镜像同步:web-preview 的 mock-server.mjs / package.json /
+> package-lock.json 与 `BRIDGE_CONTRACT.md` §三)。本版的用户可见变化只有 **Windows 开窗时的白闪修复**
+> (VST3 与 AAX 共用同一套 WebView2 代码);macOS 路径不变。**不涉及契约变更**(wire 协议零改动,
+> `BRIDGE_CONTRACT_VERSION` 仍为 `2.0`;`BRIDGE_CONTRACT.md` 只改 §三的登记快照)。没有跳过的版本号
+> (1.6.0 之后直接是 1.6.1)。
+
 ### 修复
 
 - **Windows 开窗时占位之后又闪一下白**(无契约变更):根因在 JUCE 8.0.8 的 WebView2 后端 ——
@@ -45,6 +54,12 @@
   `workflow_dispatch` 手动触发。检查名随之变为 `pr-agent / pr-agent`、`claude-pr-review / review`。
   `review-dispatch`(`/review`)不迁移,仍自带 prompt。(#73)
 
+- **中央 workflow 的引用依次改钉到 v1.3.1 → v1.3.2 → v1.3.3**(仍是 40 位 commit SHA,行尾注释写版本):
+  `claude-review` 与 `pr-agent` 的 workflow 名标出所用模型(`Claude PR Review (Opus 5.5)`、
+  `PR Agent (DeepSeek V4.1 Flash)`);`deepseek-review` 的 prompt 改为「没有行内评论工具,文件级问题在结论里写
+  `文件:行号`」,文件头补上应急手动触发的用法(平时保持 disable);`review-dispatch` 的 deny 列表补上
+  `Read(//github/**)`,与中央 v1.3.2 对齐。(#74、#75、#76)
+
 - **审查数据流登记**:迁移后 PR 的 diff 与标题正文会经第三方网关 `opencode.ai` 处理(此前经
   `api.deepseek.com`)。两者都是外部服务;API key 由维护者持有并写在仓库级 secret 里,轮换时同时更新
   本仓与其他同款仓库。(#72)
@@ -77,6 +92,9 @@
 - 新增 `docs/release-notes-template.md`:GitHub Release 双语正文模板(照 v1.5.3 / v1.6.0 的结构)与填写规则(SHA-256 从
   `.sha256` 复制、链接钉 tag、compare 从上一个已发布版本算起、对官网的承诺要成立、发 AAX 时另加的两节)。
   `docs/release.md` §1 改为用 bump 脚本,§5 / §6 / §7.3 链接模板;`CLAUDE.md` §4 / §9 同步。
+- `CLAUDE.md` §4 按新的 review bot 口径改写(三个 bot 都是中央 workflow 的薄调用方、检查名、`deepseek-review` 只能手动触发),
+  `BEFORE_PUBLIC_CHECKLIST.md` 登记中央 workflow 引用的 SHA 变更;`docs/webview-ui-pattern.md` 补「导航发出之前就挡住」与
+  占位轮廓与外壳同形两节。(#72–#77)
 
 ## [1.6.0] — 2026-10-08
 

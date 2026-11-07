@@ -73,7 +73,7 @@ macOS:
 |---|---|---|
 | Windows x64 | `SynchainBridge-VST3-vX.Y.Z-win64.zip` | `Synchain Bridge.vst3` |
 | macOS arm64 | `SynchainBridge-VST3-AU-vX.Y.Z-macos-arm64.zip` | `Synchain Bridge.vst3` + `Synchain Bridge.component` |
-| Windows x64(Pro Tools) | `SynchainBridge-AAX-v1.6.0-win64.zip` | `Synchain Bridge.aaxplugin`(PACE 签名,签名后手工上传到 Release) |
+| Windows x64(Pro Tools) | `SynchainBridge-AAX-vX.Y.Z-win64.zip` | `Synchain Bridge.aaxplugin`(PACE 签名,签名后手工上传到 Release) |
 | macOS arm64(Pro Tools) | 暂未发布(macOS AAX 稍后) | `Synchain Bridge.aaxplugin` |
 
 每个资产都附同名 `.sha256`。macOS 版**仅 Apple Silicon,且不签名不公证** —— 见 [macOS 已知限制](#macos-已知限制)与下面的解除隔离步骤。
