@@ -95,21 +95,21 @@ Windows x64 的 AAX zip(Beta)自 v1.6.0 起提供,之后的版本沿用同一命
 
 ### macOS
 
-产物有两份:`Synchain Bridge.vst3` 与 `Synchain Bridge.component`(AU),都是 **bundle 目录**。用 `ditto` 而不是 `cp -r`,以原样保留符号链接与扩展属性;并且**先删掉上一版**再拷 —— `ditto` 对已存在的目标目录是**合并**语义,上一版里被删掉的文件(改过名的字体、旧 helper 等)会留在新 bundle 里:
+产物有两份:`Synchain Bridge.vst3` 与 `Synchain Bridge.component`(AU),都是 **bundle 目录**。装进磁盘根目录下 `/Library` 里的系统插件目录,不是家目录下的 `~/Library`;这两个目录属 root,所以命令都要加 `sudo`。用 `ditto` 而不是 `cp -r`,以原样保留符号链接与扩展属性;并且**先删掉上一版**再拷 —— `ditto` 对已存在的目标目录是**合并**语义,上一版里被删掉的文件(改过名的字体、旧 helper 等)会留在新 bundle 里:
 
 ```bash
-rm -rf ~/Library/Audio/Plug-Ins/VST3/"Synchain Bridge.vst3" \
-       ~/Library/Audio/Plug-Ins/Components/"Synchain Bridge.component"
-ditto "<产物路径>/Synchain Bridge.vst3"      ~/Library/Audio/Plug-Ins/VST3/"Synchain Bridge.vst3"
-ditto "<产物路径>/Synchain Bridge.component" ~/Library/Audio/Plug-Ins/Components/"Synchain Bridge.component"
+sudo rm -rf /Library/Audio/Plug-Ins/VST3/"Synchain Bridge.vst3" \
+            /Library/Audio/Plug-Ins/Components/"Synchain Bridge.component"
+sudo ditto "<产物路径>/Synchain Bridge.vst3"      /Library/Audio/Plug-Ins/VST3/"Synchain Bridge.vst3"
+sudo ditto "<产物路径>/Synchain Bridge.component" /Library/Audio/Plug-Ins/Components/"Synchain Bridge.component"
 killall -9 AudioComponentRegistrar   # 清掉 AU 组件缓存,否则 DAW 扫到的仍是旧副本
 ```
 
-macOS 版本**不签名、不公证**(v1)。自己构建出来的 bundle 不带 quarantine 属性;从 Releases(或浏览器、AirDrop)下载来的 zip 会带上 quarantine,系统直接拒绝加载,需解除一次隔离。下面两条对应上面的家目录路径,不需要 sudo;若改装到 `/Library/Audio/Plug-Ins/...`,复制需要管理员授权、两条命令都要加 `sudo`:
+macOS 版本**不签名、不公证**(v1)。自己构建出来的 bundle 不带 quarantine 属性;从 Releases(或浏览器、AirDrop)下载来的 zip 会带上 quarantine,系统直接拒绝加载,需解除一次隔离:
 
 ```bash
-xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/VST3/"Synchain Bridge.vst3"
-xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/Components/"Synchain Bridge.component"
+sudo xattr -dr com.apple.quarantine /Library/Audio/Plug-Ins/VST3/"Synchain Bridge.vst3"
+sudo xattr -dr com.apple.quarantine /Library/Audio/Plug-Ins/Components/"Synchain Bridge.component"
 ```
 
 ### Pro Tools (AAX)

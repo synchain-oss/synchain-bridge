@@ -188,32 +188,22 @@ Synchain Bridge for macOS —— 安装说明
 
 安装路径
 --------
-把压缩包内的两个 bundle 整体复制到(全局安装,所有用户可见):
+把压缩包内的两个 bundle 整体复制到系统插件目录(所有用户可见):
 
   VST3:  /Library/Audio/Plug-Ins/VST3/$VST3_NAME
   AU:    /Library/Audio/Plug-Ins/Components/$AU_NAME
 
-/Library 下这两个目录属 root:admin,复制进去需要管理员授权(访达会弹密码框;
-命令行则要 sudo)。只装给当前用户就换成家目录下的同名位置:
-
-  VST3:  ~/Library/Audio/Plug-Ins/VST3/$VST3_NAME
-  AU:    ~/Library/Audio/Plug-Ins/Components/$AU_NAME
-
-家目录这条路径归你自己所有,复制与下面的 xattr 都不需要 sudo,宿主同样能扫到。
+是磁盘根目录下的 /Library,不是你家目录下的 ~/Library。这两个目录属 root:admin,
+复制进去需要管理员授权(访达会弹密码框;命令行则要 sudo)。
 
 首次加载:去掉隔离属性(U13:v1 不签名、不公证)
 --------------------------------------------
 本插件未签名也未公证。浏览器下载的压缩包会被打上 com.apple.quarantine,
-宿主会以「无法验证开发者」为由拒绝加载。安装到**全局**路径后,在「终端」各执行一条
+宿主会以「无法验证开发者」为由拒绝加载。复制完成后,在「终端」各执行一条
 (路径属 root,不加 sudo 会得到 Operation not permitted):
 
   sudo xattr -dr com.apple.quarantine "/Library/Audio/Plug-Ins/VST3/$VST3_NAME"
   sudo xattr -dr com.apple.quarantine "/Library/Audio/Plug-Ins/Components/$AU_NAME"
-
-装在**家目录**则去掉 sudo、把路径换成 ~/Library/... 下的对应位置:
-
-  xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/VST3/"$VST3_NAME"
-  xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/Components/"$AU_NAME"
 
 AU 没出现在宿主的插件列表里
 ---------------------------

@@ -86,9 +86,10 @@ chmod +x pluginval.app/Contents/MacOS/pluginval
 ./pluginval.app/Contents/MacOS/pluginval --strictness-level 5 --timeout-ms 60000 --skip-gui-tests \
   "build/SynchainBridgeVST_artefacts/Release/VST3/Synchain Bridge.vst3"
 
-# AU:先 ditto 装进 ~/Library(cp -r 会丢符号链接,bundle 会散架),再踢一次注册器强制重扫
-ditto "build/SynchainBridgeVST_artefacts/Release/AU/Synchain Bridge.component" \
-      ~/Library/Audio/Plug-Ins/Components/"Synchain Bridge.component"
+# AU:先 ditto 装进 /Library(与 INSTALL.txt 同一位置;cp -r 会丢符号链接,bundle 会散架),再踢一次注册器强制重扫
+sudo rm -rf /Library/Audio/Plug-Ins/Components/"Synchain Bridge.component"
+sudo ditto "build/SynchainBridgeVST_artefacts/Release/AU/Synchain Bridge.component" \
+           /Library/Audio/Plug-Ins/Components/"Synchain Bridge.component"
 killall -9 AudioComponentRegistrar
 auval -v aufx Snb1 Snch
 ```
@@ -241,7 +242,16 @@ git tag v1.5.0 $sha && git push origin v1.5.0
 >
 > 已实测（2026-10-08）：自签名证书 + PACE 签名的件，零售版 Pro Tools（Windows 11）照常加载；`gh release upload` 可直传 draft（`v0.0.0-test` 彩排）。
 >
-> 仍标 **TO-VALIDATE** 的：Pro Tools Intro 未单独实测；`-KeyFile` 身份与 customer number 发布者这两条备选路径还没真签过；证书放在 `Cert:\LocalMachine\My`（而不是 `CurrentUser\My`）时能否签；macOS 侧全部（脚本照搬同一套写法，但 mac 上没法实测，相关项全部保留标记；`gh release upload` 直传 draft 与平台无关，不在此列）。签名脚本的预检在 flag 不符时会中止并提示；核对完删除脚本与本节里的标记。
+> macOS 已实测（2026-11-07，借用的 Apple Silicon Mac：macOS 15.6.1，wraptool 6.0.2，零售版 Pro Tools Ultimate 26.4.1）：
+>
+> - **工具与参数**：wraptool 装在 `/Applications/PACEAntiPiracy/Eden/Fusion/Versions/6/bin/wraptool`，不设 `PACE_FUSION_HOME` 也能用；`wraptool help` 列得出脚本要用的 flag；不给账号时用 iLok License Manager 的默认账号，取得到 wrap 配置。签 Windows 件的同一个 wcguid 也能签 mac 件。`verify` / `sign` 都收 bundle 目录，`--out` 可以指向新路径。
+> - **未签名件**：CI 构建的 Mach-O 带链接器自动加的 ad-hoc 签名，bundle 里却没有 `_CodeSignature/CodeResources`。`wraptool verify` 因此退出码 3，报 `PlatformResourcesNotFound` / `-67056`，不出现 Windows 上的 `NOT signed`。签名脚本的预检 7b 按这一文案判断「未签名」，前提是 `codesign -dv` 同时显示 `Signature=adhoc` 与 `Sealed Resources=none`。
+> - **签名与加载**：`wraptool sign` 对这种输入先警告 "invalid existing platform digital signature"，再调 `codesign --force --sign <身份>` 重签。已签名件 `wraptool verify` 退出码 0（"The binary was signed, but not wrapped."），`codesign --verify --deep --strict` 通过。自签名身份（`TeamIdentifier` 为空）、不加 `--timestamp` 的签名件，零售版 Pro Tools 照常加载，不需要 Apple Development 证书或 Developer ID。`--verbose` 会回显 wcguid 与默认账号名，脚本已打码。
+> - **符号链接**：签名件里有一个符号链接（`Contents/Resources/__Pace_Eden/Signatures/codesign.dsig`，wraptool 默认开着的 dsig1 兼容），用 `cp` 复制会坏，所以打包与安装一律用 `ditto`。
+>
+> 这次的签名与后检是按 `sign-aax-macos.sh` 的同一组命令手工跑的；脚本的签名段与 `package-aax-macos.sh --mode signed` 还没在 mac 上整体跑过，首次正式签名时核对。
+>
+> 仍标 **TO-VALIDATE** 的：Pro Tools Intro 未单独实测；`-KeyFile` 身份与 customer number 发布者这两条备选路径还没真签过；证书放在 `Cert:\LocalMachine\My`（而不是 `CurrentUser\My`）时能否签；macOS 上的 `--account` / `--prompt-account-password` / customer number、`--timestamp`（V5）、未被信任的自签名身份能否被 `find-identity` 找到（V6），以及用户不去掉隔离属性时 Pro Tools 是否拒绝加载。签名脚本的预检在 flag 不符时会中止并提示；核对完删除脚本与本节里的标记。
 
 ### 7.1 一次性准备（Windows）
 
@@ -277,9 +287,9 @@ git tag v1.5.0 $sha && git push origin v1.5.0
 ### 7.2 一次性准备（借用的 Mac）
 
 - 在一个独立的 macOS 用户下操作（不要用机主自己的用户），签完按本节最后一条清理。
-- 安装 PACE 的 AAX 代码签名工具（含 `wraptool`）与 iLok License Manager。`sign-aax-macos.sh` 依次找 `--wraptool`、`$PACE_FUSION_HOME/bin/wraptool`、PATH、`/Applications/PACEAntiPiracy/Eden/Fusion/Versions/<版本号最高的>/bin/wraptool`（照 Windows 实测的布局推断，TO-VALIDATE）。装完新开一个终端。
+- 安装 PACE 的 AAX 代码签名工具（含 `wraptool`）与 iLok License Manager。`sign-aax-macos.sh` 依次找 `--wraptool`、`$PACE_FUSION_HOME/bin/wraptool`、PATH、`/Applications/PACEAntiPiracy/Eden/Fusion/Versions/<版本号最高的>/bin/wraptool`（6.0.2 实测装在 `Versions/6/bin/`，不设 `PACE_FUSION_HOME` 也能用）。装完新开一个终端。
 - 准备 Keychain 代码签名身份，二选一：Xcode → Settings → Accounts 登录 Apple ID 后创建 **Apple Development** 证书；或「钥匙串访问 → 证书助理 → 创建证书」生成自签名的代码签名证书。
-- 用 `security find-identity -p codesigning` 确认身份的完整名字，签名时原样传给 `--signid`。不加 `-v`：自签名身份未被信任时不会出现在 `-v` 列表里（TO-VALIDATE）。
+- 用 `security find-identity -p codesigning` 确认身份的完整名字，签名时原样传给 `--signid`。不加 `-v`：自签名身份未被信任时不会出现在 `-v` 列表里（TO-VALIDATE；已信任的会在两段列表里各出现一次，脚本按 SHA-1 去重，实测找得到）。自签名证书设为「代码签名：始终信任」后，零售版 Pro Tools 照常加载（2026-11-07 实测）。
 - 第一次签名可能弹出钥匙串授权框，需要人工点「允许」。
 - macOS 版**未经 Apple 公证**（没有 Developer Program 会员）：用户必须按 `INSTALL-AAX.txt` 去掉隔离属性 Pro Tools 才会加载；去掉隔离属性不影响签名。
 - PACE 账号口令：借用的 Mac 上不要用 `sync --password` 把口令存进 wraptool 的钥匙串，签名时加 `--account "<PACE 账号>" --prompt-account-password`，口令交互读入、经 `--pswd-no-save` 传，不保存（TO-VALIDATE）。签名期间不要让他人登录这台 Mac：口令在签名那几秒会以 `--pswd-no-save <明文>` 出现在 wraptool 的进程命令行里，本机其他用户用 `ps` 就能看到（wraptool 只收命令行参数）。
@@ -348,7 +358,7 @@ git tag v1.5.0 $sha && git push origin v1.5.0
 
    `<run-id>` 就是第 2 步查到并下载过的那个 release run（需要 `gh` 已登录；借用的 Mac 上按 §7.2 用短有效期的 `GH_TOKEN`）。给了它，签名脚本会做**来源核对**：该 run 属于本仓库（不是 fork）、是 `release.yml`（或 `ci.yml`）、结论为 success、事件为 push / workflow_dispatch（tag 触发的 release run 是 push）、`head_sha` 等于当前检出（即 tag 所指的提交），再用 `gh run download` 重新取回它的 `aax-unsigned-*` artifact，同名 zip 必须与输入件字节相同 —— 由此确认被盖上签名的字节确实出自这次 tag 的 CI 构建。`.sha256` 只防下载损坏（它与 zip 是同一份下载，防不了替换）。不给 `-SourceRunId` / `--source-run-id` 时这一项只记 WARN、不拦截；只在没有 run 可核对时这样用（§7.4 的本机重建件）。
 
-   脚本依次做：预检（参数组合、`.sha256` 完整性、版本与检出一致、来源核对、签名身份可用（Windows `-CertThumbprint` 的证书在「个人」证书库里、带私钥、未过期、用途含代码签名；`-KeyFile` 在仓库外；macOS 要求钥匙串里与 `--signid` 同名的代码签名身份恰好 1 个）、补齐 `PACE_FUSION_HOME`、wraptool 存在且 `wraptool help` 列出本次要用的 flag、Windows 找到 signtool、输入件确实未签名且 `wraptool verify` 必须失败（Windows 对内层 DLL 执行，要求输出 NOT signed））→ 交互读入口令（只在 `-KeyFile` / `-PromptAccountPassword` 时）→ `wraptool sign` → 后检（`wraptool verify`；Windows 核对 bundle 只有内层 DLL 变了、Authenticode 签名者指纹等于 `-CertThumbprint` / pfx 指纹、摘要算法与时间戳形态符合上一段、默认要求带时间戳，macOS 跑 `codesign --verify --deep --strict` 并核对 `Authority=` 等于 `--signid`、不是 ad-hoc）→ 调用打包脚本的 Signed 模式 → 把产出的 zip 解压回读再验一轮 → 打印第 5 步的上传命令（不自动执行）。产物在 `dist/aax-signed/`（`-OutDir` / `--out-dir` 可改）：`SynchainBridge-AAX-v<X.Y.Z>-win64.zip`（macOS 为 `-macos-arm64.zip`）与同名 `.sha256`。
+   脚本依次做：预检（参数组合、`.sha256` 完整性、版本与检出一致、来源核对、签名身份可用（Windows `-CertThumbprint` 的证书在「个人」证书库里、带私钥、未过期、用途含代码签名；`-KeyFile` 在仓库外；macOS 要求钥匙串里与 `--signid` 同名的代码签名身份恰好 1 个）、补齐 `PACE_FUSION_HOME`、wraptool 存在且 `wraptool help` 列出本次要用的 flag、Windows 找到 signtool、输入件确实未签名且 `wraptool verify` 必须失败（Windows 对内层 DLL 执行，要求输出 NOT signed；macOS 对 bundle 执行，要求输出 NOT signed，或在输入只有链接器 ad-hoc 签名、没有封存资源时报 `PlatformResourcesNotFound` / `-67056`））→ 交互读入口令（只在 `-KeyFile` / `-PromptAccountPassword` 时）→ `wraptool sign` → 后检（`wraptool verify`；Windows 核对 bundle 只有内层 DLL 变了、Authenticode 签名者指纹等于 `-CertThumbprint` / pfx 指纹、摘要算法与时间戳形态符合上一段、默认要求带时间戳，macOS 跑 `codesign --verify --deep --strict` 并核对 `Authority=` 等于 `--signid`、不是 ad-hoc）→ 调用打包脚本的 Signed 模式 → 把产出的 zip 解压回读再验一轮 → 打印第 5 步的上传命令（不自动执行）。产物在 `dist/aax-signed/`（`-OutDir` / `--out-dir` 可改）：`SynchainBridge-AAX-v<X.Y.Z>-win64.zip`（macOS 为 `-macos-arm64.zip`）与同名 `.sha256`。
 
    其他开关：`-DryRun` / `--dry-run` 只跑预检并打印打码后的签名计划（不读口令、不调用 `wraptool sign`、不产出文件）；`-WraptoolPath` / `--wraptool` 显式指定 wraptool；Windows 的 `-SignToolPath` 显式指定 signtool，`-LegacySha1Digest` 回退到 SHA1 文件摘要（见上面「摘要算法」）；`-ExtraWraptoolArgs` / `--extra-arg`（可重复）原样透传给 `wraptool sign`，例如 `--timestampretry 120`（含 `password` / `pswd` 的项与脚本自管的 flag 会被拒收，长短写法都算；Windows 上 `--signtool` / `--explicitsigningoptions` / `--extrasigningoptions` 也归脚本管）。`-ExtraWraptoolArgs` 是数组：只能在 pwsh 会话里用 `&` 调用时传（`-ExtraWraptoolArgs '--timestampretry','120'`），经 `pwsh scripts/sign-aax.ps1 ...` 传会错位（见 §7.4 排障表）。`--explicitsigningoptions` 方式下 wraptool 的 `--timestampretry` 是否还生效没有实测过（TO-VALIDATE）。Windows 确认接受无时间戳的签名时加 `-AllowNoTimestamp`（见 §7.4）。
 
