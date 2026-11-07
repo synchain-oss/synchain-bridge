@@ -79,6 +79,14 @@
 
 ### 内部工程(无契约变更)
 
+- **macOS AAX 签名脚本卡在预检 7b**(`scripts/sign-aax-macos.sh`):2026-11-07 在借用的 Apple Silicon Mac
+  (macOS 15.6.1,wraptool 6.0.2)上首次实测,CI 产出的未签名件 `wraptool verify` 退出码 3、报
+  `PlatformResourcesNotFound` / `-67056`,不出现脚本只认的 Windows 文案 `NOT signed`,签名在预检这一步就中止。
+  原因是 CMake / Ninja 构建的 Mach-O 带链接器自动加的 ad-hoc 签名,bundle 里却没有封存资源。7b 现在也认这条
+  mac 文案,但只在 `codesign -dv` 同时显示 `Signature=adhoc` 与 `Sealed Resources=none` 时才认,其他失败照旧 FAIL。
+  同一次实测确认:签 Windows 件的同一个 wcguid 也能签 mac 件;自签名身份加 PACE 签名的件,零售版 Pro Tools
+  Ultimate 26.4.1 照常加载。脚本头注释与 `docs/release.md` §7 里对应的 TO-VALIDATE 改写为实测结论,
+  没测到的项(`--account` / 口令交互、`--timestamp`、未信任身份、用户不去隔离属性时的表现)保留标记。
 - **新增 `scripts/bump-version.mjs X.Y.Z`**:一次改齐 CMake 真源与 5 处镜像(定点改写,lockfile 里依赖自己的 `version` 不动;
   改动超出版本字段所在的 6 行、JSON 不是 npm 的标准格式、或当前镜像本就不一致时整体放弃),并把 CHANGELOG 的 `[未发布]`
   切成 `[X.Y.Z] — <UTC 日期>`;只改工作区,不提交、不打 tag。定位与读写规则只有一份(`scripts/version-mirrors.mjs`),
