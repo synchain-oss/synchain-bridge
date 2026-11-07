@@ -76,7 +76,7 @@ macOS:
 | Windows x64(Pro Tools) | `SynchainBridge-AAX-vX.Y.Z-win64.zip` | `Synchain Bridge.aaxplugin`(PACE 签名,签名后手工上传到 Release) |
 | macOS arm64(Pro Tools) | `SynchainBridge-AAX-vX.Y.Z-macos-arm64.zip` | `Synchain Bridge.aaxplugin`(在 Mac 上做 PACE 签名,签名后手工上传到 Release) |
 
-每个资产都附同名 `.sha256`。macOS 版**仅 Apple Silicon,且不签名不公证** —— 见 [macOS 已知限制](#macos-已知限制)与下面的解除隔离步骤。
+每个资产都附同名 `.sha256`。macOS 版**仅 Apple Silicon**;其中 VST3/AU zip **不签名不公证**,macOS AAX 带 PACE 签名但未经公证 —— 见 [macOS 已知限制](#macos-已知限制)、[Pro Tools (AAX) 已知限制](#pro-tools-aax-已知限制)与下面的解除隔离步骤。
 
 AAX zip(Beta)的 Windows x64 版自 v1.6.0 起提供,macOS arm64 版自 v1.6.1 起提供,之后的版本沿用同一命名、换成各自的版本号(`SynchainBridge-AAX-vX.Y.Z-win64.zip`、`SynchainBridge-AAX-vX.Y.Z-macos-arm64.zip`)。它们由维护者在本机做 PACE 签名(macOS 版在 Mac 上签),再手工添加到 CI 建好的 Release 草稿上,所以可能比同一版本的 VST3/AU zip 晚出现。名字带 `*-UNSIGNED.zip` 的(CI artifact `aax-unsigned-win64` / `aax-unsigned-macos-arm64`)是签名流程的输入件,**不是发行版**,零售版 Pro Tools 不会加载。
 

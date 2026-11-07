@@ -76,7 +76,7 @@ Prebuilt builds for both platforms are on [GitHub Releases](https://github.com/s
 | Windows x64 (Pro Tools) | `SynchainBridge-AAX-vX.Y.Z-win64.zip` | `Synchain Bridge.aaxplugin` (PACE-signed; uploaded to the Release by hand) |
 | macOS arm64 (Pro Tools) | `SynchainBridge-AAX-vX.Y.Z-macos-arm64.zip` | `Synchain Bridge.aaxplugin` (PACE-signed on a Mac; uploaded to the Release by hand) |
 
-Every asset ships a matching `.sha256`. The macOS build is **Apple Silicon only and is neither signed nor notarized** — see [Known limitations on macOS](#known-limitations-on-macos) and the quarantine step below.
+Every asset ships a matching `.sha256`. The macOS builds are **Apple Silicon only**; the VST3/AU zip is **neither signed nor notarized**, and the macOS AAX is PACE-signed but not notarized — see [Known limitations on macOS](#known-limitations-on-macos), [Known limitations in Pro Tools (AAX)](#known-limitations-in-pro-tools-aax) and the quarantine steps below.
 
 The AAX zips (Beta) are attached starting with v1.6.0 for Windows x64 and v1.6.1 for macOS arm64; later releases use the same names with their own version (`SynchainBridge-AAX-vX.Y.Z-win64.zip`, `SynchainBridge-AAX-vX.Y.Z-macos-arm64.zip`). They are PACE-signed by the maintainer on a local machine (the macOS one on a Mac) and added by hand to the release that CI drafts, so they can appear later than the VST3/AU zips of the same release. A file named `*-UNSIGNED.zip` (CI artifacts `aax-unsigned-win64` / `aax-unsigned-macos-arm64`) is the unsigned input to that signing step, **not a release** — retail Pro Tools will not load it.
 
